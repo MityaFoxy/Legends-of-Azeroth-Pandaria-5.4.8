@@ -523,7 +523,7 @@ void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
 
     if (sPlayerbotAIConfig->disableRandomLevels)
     {
-        level = bot->GetClass() == CLASS_DEATH_KNIGHT ? std::max(uint32(55), sWorld->getIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL)) : uint32(55);
+        level = bot->GetClass() == CLASS_DEATH_KNIGHT ? std::max(sPlayerbotAIConfig->randomBotStartingLevel, sWorld->getIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL)) : sPlayerbotAIConfig->randomBotStartingLevel;
     }
 
     SetValue(bot, "level", level);
