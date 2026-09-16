@@ -159,6 +159,7 @@ void BotFactory::Randomize(bool incremental)
         }
     }
 
+    InitEquipment(incremental);
     InitPet();
  
     bot->SetMoney(urand(level * 100000, level * 5 * 100000));
