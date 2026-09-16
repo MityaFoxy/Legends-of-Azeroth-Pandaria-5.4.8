@@ -43,6 +43,7 @@
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "OutdoorPvPMgr.h"
+#include "RBAC.h"
 #include "PathGenerator.h"
 #include "Pet.h"
 #include "PetBattle.h"
@@ -1450,7 +1451,7 @@ void Spell::EffectPowerBurn(SpellEffIndex effIndex)
         return;
 
     if (unitTarget->GetPowerType() != powerType)
-        if (m_spellInfo->Id != 108222 || GetPowerIndexByClass(powerType, unitTarget->GetClass()) == MAX_POWERS) // Mana Void (Cobalt Globule)
+        if (m_spellInfo->Id != 108222 || sDBCManager.GetPowerIndexByClass(powerType, unitTarget->GetClass()) == MAX_POWERS) // Mana Void (Cobalt Globule)
             return;
 
     // burn x% of target's mana, up to maximum of 2x% of caster's mana (Mana Burn)
@@ -1769,7 +1770,7 @@ void Spell::DoCreateItem(uint32 /*i*/, uint32 itemtype)
             bool cooking = false;
             auto bounds = sSpellMgr->GetSkillLineAbilityMapBounds(m_spellInfo->Id);
             for (auto itr = bounds.first; itr != bounds.second; ++itr)
-                if (itr->second->skillId == SKILL_COOKING || (itr->second->skillId >= SKILL_WAY_OF_THE_GRILL && itr->second->skillId <= SKILL_WAY_OF_THE_BREW))
+                if (itr->second->SkillLine == SKILL_COOKING || (itr->second->SkillLine >= SKILL_WAY_OF_THE_GRILL && itr->second->SkillLine <= SKILL_WAY_OF_THE_BREW))
                     cooking = true;
 
             if (cooking)
@@ -2595,7 +2596,7 @@ void Spell::EffectSummonType(SpellEffIndex effIndex)
                 // Summons a vehicle, but doesn't force anyone to enter it (see SUMMON_CATEGORY_VEHICLE)
                 case SUMMON_TYPE_VEHICLE:
                 case SUMMON_TYPE_VEHICLE2:
-                    summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, duration, m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
+                    summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, Milliseconds(duration), m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
                     break;
                 case SUMMON_TYPE_LIGHTWELL:
                 case SUMMON_TYPE_TOTEM:
@@ -2604,7 +2605,7 @@ void Spell::EffectSummonType(SpellEffIndex effIndex)
                     break;
                 case SUMMON_TYPE_MINIPET:
                 {
-                    summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, duration, m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
+                    summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, Milliseconds(duration), m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
                     if (!summon || !summon->HasUnitTypeMask(UNIT_MASK_MINION))
                         return;
 
@@ -2659,7 +2660,7 @@ void Spell::EffectSummonType(SpellEffIndex effIndex)
                             // randomize position for multiple summons
                             pos = m_caster->GetRandomPoint(*destTarget, radius);
 
-                        summon = m_originalCaster->SummonCreature(entry, pos, summonType, duration, 0, privateObjectOwner);
+                        summon = m_originalCaster->SummonCreature(entry, pos, summonType, Milliseconds(duration), 0, privateObjectOwner);
                         if (!summon)
                             continue;
 
@@ -2679,12 +2680,12 @@ void Spell::EffectSummonType(SpellEffIndex effIndex)
             SummonGuardian(effIndex, entry, properties, numSummons, privateObjectOwner);
             break;
         case SUMMON_CATEGORY_PUPPET:
-            summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, duration, m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
+            summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, Milliseconds(duration), m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
             break;
         case SUMMON_CATEGORY_VEHICLE:
             // Summoning spells (usually triggered by npc_spellclick) that spawn a vehicle and that cause the clicker
             // to cast a ride vehicle spell on the summoned unit.
-            summon = m_originalCaster->GetMap()->SummonCreature(entry, *destTarget, properties, duration, m_caster, m_spellInfo->Id, 0, privateObjectOwner);
+            summon = m_originalCaster->GetMap()->SummonCreature(entry, *destTarget, properties, Milliseconds(duration), m_caster, m_spellInfo->Id, 0, privateObjectOwner);
             if (!summon || !summon->IsVehicle())
                 return;
 
@@ -2979,11 +2980,7 @@ void Spell::EffectDistract(SpellEffIndex /*effIndex*/)
     if (unitTarget->HasUnitState(UNIT_STATE_CONFUSED | UNIT_STATE_STUNNED | UNIT_STATE_FLEEING))
         return;
 
-    unitTarget->SetFacingTo(unitTarget->GetAngle(destTarget));
-    unitTarget->ClearUnitState(UNIT_STATE_MOVING);
-
-    if (unitTarget->GetTypeId() == TYPEID_UNIT)
-        unitTarget->GetMotionMaster()->MoveDistract(damage * IN_MILLISECONDS);
+    unitTarget->GetMotionMaster()->MoveDistract(damage * IN_MILLISECONDS, unitTarget->GetAbsoluteAngle(destTarget));
 }
 
 void Spell::EffectPickPocket(SpellEffIndex /*effIndex*/)
@@ -3087,16 +3084,16 @@ void Spell::EffectLearnSkill(SpellEffIndex effIndex)
 
     uint32 skillid = m_spellInfo->Effects[effIndex].MiscValue;
 
-    auto entry = GetSkillRaceClassInfo(skillid, unitTarget->GetRace(), unitTarget->GetClass());
+    auto entry = sDBCManager.GetSkillRaceClassInfo(skillid, unitTarget->GetRace(), unitTarget->GetClass());
     if (!entry)
     {
         TC_LOG_ERROR("spells", "Spell::EffectLearnSkill skill (%u) not found in SkillRaceClassInfo.dbc", skillid);
         return;
     }
-    auto skillTier = sSkillTiersStore.LookupEntry(entry->SkillTierId);
+    auto skillTier = sSkillTiersStore.LookupEntry(entry->SkillTierID);
     if (!skillTier)
     {
-        TC_LOG_ERROR("spells", "Spell::EffectLearnSkill skill tier (%u) not found for skill %u", entry->SkillTierId, skillid);
+        TC_LOG_ERROR("spells", "Spell::EffectLearnSkill skill tier (%u) not found for skill %u", entry->SkillTierID, skillid);
         return;
     }
 
@@ -3179,7 +3176,7 @@ void Spell::EffectEnchantItemPerm(SpellEffIndex effIndex)
         if (!item_owner)
             return;
 
-        if (item_owner != player && player->GetSession()->GetSecurity() > SEC_PLAYER && sWorld->getBoolConfig(CONFIG_GM_LOG_TRADE))
+        if (item_owner != player && player->GetSession()->HasPermission(rbac::RBAC_PERM_LOG_GM_TRADE))
         {
             sLog->outCommand(player->GetSession()->GetAccountId(), "GM %s (Account: %u) enchanting(perm): %s (Entry: %d) for player: %s (Account: %u)",
                 player->GetName().c_str(), player->GetSession()->GetAccountId(),
@@ -3325,7 +3322,7 @@ void Spell::EffectEnchantItemTmp(SpellEffIndex effIndex)
     if (!item_owner)
         return;
 
-    if (item_owner != player && player->GetSession()->GetSecurity() > SEC_PLAYER && sWorld->getBoolConfig(CONFIG_GM_LOG_TRADE))
+    if (item_owner != player && player->GetSession()->HasPermission(rbac::RBAC_PERM_LOG_GM_TRADE))
     {
         sLog->outCommand(player->GetSession()->GetAccountId(), "GM %s (Account: %u) enchanting(temp): %s (Entry: %d) for player: %s (Account: %u)",
             player->GetName().c_str(), player->GetSession()->GetAccountId(),
@@ -3561,11 +3558,11 @@ void Spell::EffectTaunt(SpellEffIndex /*effIndex*/)
     Player* player = m_caster->ToPlayer();
     if (player && player->GetRoleForGroup() == ROLES_TANK)
     {
-        if (auto currentVictim = unitTarget->GetThreatManager().getCurrentVictim())
+        if (Unit* currentVictim = unitTarget->GetThreatManager().GetCurrentVictim())
         {
             const uint32 spellVengeance = 132365;
 
-            if (AuraEffect* victimVengeance = currentVictim->getTarget()->GetAuraEffect(spellVengeance, EFFECT_0))
+            if (AuraEffect* victimVengeance = currentVictim->GetAuraEffect(spellVengeance, EFFECT_0))
             {
                 AuraEffect* myVengeance = m_caster->GetAuraEffect(spellVengeance, EFFECT_0);
                 if (!myVengeance || myVengeance->GetAmount() < victimVengeance->GetAmount() / 2)
@@ -3580,18 +3577,17 @@ void Spell::EffectTaunt(SpellEffIndex /*effIndex*/)
     }
 
     // Also use this effect to set the taunter's threat to the taunted creature's highest value
-    if (unitTarget->GetThreatManager().getCurrentVictim())
+    if (Unit* currentVictim = unitTarget->GetThreatManager().GetCurrentVictim())
     {
-        float myThreat = unitTarget->GetThreatManager().getThreat(m_caster);
-        float itsThreat = unitTarget->GetThreatManager().getCurrentVictim()->getThreat();
+        float myThreat = unitTarget->GetThreatManager().GetThreat(m_caster);
+        float itsThreat = unitTarget->GetThreatManager().GetThreat(currentVictim);
         if (itsThreat > myThreat)
-            unitTarget->GetThreatManager().addThreat(m_caster, itsThreat - myThreat);
+            unitTarget->GetThreatManager().AddThreat(m_caster, itsThreat - myThreat);
     }
 
     //Set aggro victim to caster
-    if (!unitTarget->GetThreatManager().getOnlineContainer().empty())
-        if (HostileReference* forcedVictim = unitTarget->GetThreatManager().getOnlineContainer().getReferenceByTarget(m_caster))
-            unitTarget->GetThreatManager().setCurrentVictim(forcedVictim);
+    if (unitTarget->GetThreatManager().IsThreatenedBy(m_caster))
+        unitTarget->GetThreatManager().FixateTarget(m_caster);
 
     if ((unitTarget->ToCreature()->IsAIEnabled && !unitTarget->ToCreature()->HasReactState(REACT_PASSIVE)) || (unitTarget->IsPetGuardianStuff() && unitTarget->GetCharmerOrOwnerGUID().IsPlayer()))
         unitTarget->ToCreature()->AI()->AttackStart(m_caster);
@@ -3808,7 +3804,7 @@ void Spell::EffectThreat(SpellEffIndex /*effIndex*/)
     if (!unitTarget->CanHaveThreatList())
         return;
 
-    unitTarget->AddThreat(m_caster, float(damage));
+    unitTarget->GetThreatManager().AddThreat(m_caster, float(damage));
 }
 
 void Spell::EffectHealMaxHealth(SpellEffIndex /*effIndex*/)
@@ -4597,7 +4593,12 @@ void Spell::EffectSanctuary(SpellEffIndex /*effIndex*/)
     if (!unitTarget)
         return;
 
-    unitTarget->getHostileRefManager().UpdateVisibility();
+    {
+        auto threats = unitTarget->GetThreatManager().GetThreatenedByMeList();
+        for (auto const& pair : threats)
+            if (!pair.second->GetOwner()->CanSeeOrDetect(unitTarget))
+                pair.second->ClearThreat();
+    }
 
     Unit::AttackerSet const& attackers = unitTarget->getAttackers();
     for (Unit::AttackerSet::const_iterator itr = attackers.begin(); itr != attackers.end();)
@@ -4612,7 +4613,7 @@ void Spell::EffectSanctuary(SpellEffIndex /*effIndex*/)
     if (m_spellInfo->SpellFamilyName == SPELLFAMILY_ROGUE && (m_spellInfo->SpellFamilyFlags[0] & SPELLFAMILYFLAG0_ROGUE_VANISH))
     {
         // While subterfuge is active the rogue is always visible for mobs. Just ensures that threat will be removed.
-        unitTarget->getHostileRefManager().deleteReferences();
+        unitTarget->GetThreatManager().RemoveMeFromThreatLists();
         return;
     }
 
@@ -5468,24 +5469,31 @@ void Spell::EffectCharge(SpellEffIndex /*effIndex*/)
     if (!unitTarget)
         return;
 
+    Unit* unitCaster = m_caster->ToUnit();
+    if (!unitCaster)
+        return;
+
     if (effectHandleMode == SPELL_EFFECT_HANDLE_LAUNCH_TARGET)
     {
+        // charge changes fall time
+        if (unitCaster->GetTypeId() == TYPEID_PLAYER)
+            unitCaster->ToPlayer()->SetFallInformation(0, unitCaster->GetPositionZ());
+
         // Spell is not using explicit target - no generated path
-        if (!m_preGeneratedPath || m_preGeneratedPath->GetPathType() == PATHFIND_BLANK)
+        if (!m_preGeneratedPath)
         {
-            //unitTarget->GetContactPoint(m_caster, pos.m_positionX, pos.m_positionY, pos.m_positionZ);
-            Position pos = unitTarget->GetFirstCollisionPosition(unitTarget->GetObjectSize(), unitTarget->GetRelativeAngle(m_caster));
-            m_caster->GetMotionMaster()->MoveCharge(pos.m_positionX, pos.m_positionY, pos.m_positionZ);
+            Position pos = unitTarget->GetFirstCollisionPosition(unitTarget->GetCombatReach(), unitTarget->GetRelativeAngle(m_caster));
+            unitCaster->GetMotionMaster()->MoveCharge(pos.m_positionX, pos.m_positionY, pos.m_positionZ);
         }
         else
-            m_caster->GetMotionMaster()->MoveCharge(*m_preGeneratedPath);
+            unitCaster->GetMotionMaster()->MoveCharge(*m_preGeneratedPath);
     }
 
     if (effectHandleMode == SPELL_EFFECT_HANDLE_HIT_TARGET)
     {
         // not all charge effects used in negative spells
         if (!m_spellInfo->IsPositive() && m_caster->GetTypeId() == TYPEID_PLAYER)
-            m_caster->Attack(unitTarget, true);
+            unitCaster->Attack(unitTarget, true);
     }
 }
 
@@ -5847,7 +5855,7 @@ void Spell::EffectModifyThreatPercent(SpellEffIndex /*effIndex*/)
     if (!unitTarget)
         return;
 
-    unitTarget->GetThreatManager().modifyThreatPercent(m_caster, damage);
+    unitTarget->GetThreatManager().ModifyThreatByPercent(m_caster, damage);
 }
 
 void Spell::EffectTransmitted(SpellEffIndex effIndex)
@@ -6553,7 +6561,7 @@ void Spell::SummonGuardian(uint32 i, uint32 entry, SummonPropertiesEntry const* 
             // randomize position for multiple summons
             pos = m_caster->GetRandomPoint(*destTarget, radius);
 
-        TempSummon* summon = map->SummonCreature(entry, pos, properties, duration, caster, m_spellInfo->Id, 0, privateObjectOwner);
+        TempSummon* summon = map->SummonCreature(entry, pos, properties, Milliseconds(duration), caster, m_spellInfo->Id, 0, privateObjectOwner);
         if (!summon)
             return;
         if (summon->HasUnitTypeMask(UNIT_MASK_GUARDIAN))
@@ -6614,7 +6622,7 @@ void Spell::SummonGuardian(uint32 i, uint32 entry, SummonPropertiesEntry const* 
 
 TempSummon* Spell::SummonTotem(uint32 entry, SummonPropertiesEntry const* properties, uint32 duration, ObjectGuid privateObjectOwner)
 {
-    auto summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, duration, m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
+    auto summon = m_caster->GetMap()->SummonCreature(entry, *destTarget, properties, Milliseconds(duration), m_originalCaster, m_spellInfo->Id, 0, privateObjectOwner);
     if (!summon || !summon->IsTotem())
         return nullptr;
 

@@ -464,7 +464,7 @@ void SmartAI::RemoveAuras()
     }
 }
 
-void SmartAI::EnterEvadeMode()
+void SmartAI::EnterEvadeMode(EvadeReason why)
 {
     if (!me->IsAlive() || me->IsInEvadeMode())
         return;
@@ -478,7 +478,8 @@ void SmartAI::EnterEvadeMode()
     RemoveAuras();
 
     me->AddUnitState(UNIT_STATE_EVADE);
-    me->DeleteThreatList();
+    me->GetThreatManager().RemoveMeFromThreatLists();
+    me->GetThreatManager().ClearAllThreat();
     me->CombatStop(true);
     me->LoadCreaturesAddon();
     me->ApplyInstanceAuraIfNeeded();
@@ -533,7 +534,7 @@ void SmartAI::MoveInLineOfSight(Unit* who)
             else/* if (me->GetMap()->IsDungeon())*/
             {
                 who->SetInCombatWith(me);
-                me->AddThreat(who, 0.0f);
+                me->GetThreatManager().AddThreat(who, 0.0f);
             }
         }
     }
@@ -577,7 +578,7 @@ bool SmartAI::AssistPlayerInCombat(Unit* who)
         else
         {
             who->SetInCombatWith(me);
-            me->AddThreat(who, 0.0f);
+            me->GetThreatManager().AddThreat(who, 0.0f);
             return true;
         }
     }
@@ -587,6 +588,11 @@ bool SmartAI::AssistPlayerInCombat(Unit* who)
 
 void SmartAI::JustAppeared()
 {
+    CreatureAI::JustAppeared();
+
+    if (me->isDead())
+        return;
+
     mDespawnTime = 0;
     mDespawnState = 0;
     mEscortState = SMART_ESCORT_NONE;
@@ -634,6 +640,8 @@ void SmartAI::JustReachedHome()
 
 void SmartAI::JustEngagedWith(Unit* enemy)
 {
+    CreatureAI::JustEngagedWith(enemy);
+
     me->InterruptNonMeleeSpells(false); // must be before ProcessEvents
     GetScript()->ProcessEventsFor(SMART_EVENT_AGGRO, enemy);
     mLastOOCPos = me->GetPosition();

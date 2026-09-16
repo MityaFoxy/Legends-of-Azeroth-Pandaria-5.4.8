@@ -214,7 +214,7 @@ m_PlayerDamageReq(0), m_lootRecipient(), m_lootRecipientGroup(0), m_corpseRemove
 m_respawnDelay(300), m_corpseDelay(60), m_wanderDistance(0.0f), m_WalkMode(0.0f), m_reactState(REACT_AGGRESSIVE),
 m_defaultMovementType(IDLE_MOTION_TYPE), m_spawnId(0), m_equipmentId(0), m_originalEquipmentId(0), m_AlreadyCallAssistance(false),
 m_AlreadySearchedAssistance(false), m_cannotReachTarget(false), m_cannotReachTimer(0), m_regenHealth(true), m_AI_locked(false), _isMissingSwimmingFlagOutOfCombat(false), m_meleeDamageSchoolMask(SPELL_SCHOOL_MASK_NORMAL),
-m_creatureInfo(nullptr), m_creatureData(nullptr), m_path_id(0), m_formation(nullptr), m_triggerJustAppeared(false), m_respawnDelayMax(0), dynamicHealthPlayersCount(0)
+m_creatureInfo(nullptr), m_creatureData(nullptr), m_path_id(0), m_formation(nullptr), m_triggerJustAppeared(true), m_respawnDelayMax(0), dynamicHealthPlayersCount(0)
 {
     m_regenTimer = 0;
     m_valuesCount = UNIT_END;
@@ -506,6 +506,8 @@ bool Creature::UpdateEntry(uint32 Entry, uint32 team, const CreatureData* data)
         ApplySpellImmune(0, IMMUNITY_EFFECT, SPELL_EFFECT_ATTACK_ME, true);
     }
 
+    SetIsCombatDisallowed((cInfo->flags_extra & CREATURE_FLAG_EXTRA_NO_COMBAT) != 0);
+
     if (cInfo->flags_extra & CREATURE_FLAG_EXTRA_NO_KNOCK_BACK)
     {
         ApplySpellImmune(0, IMMUNITY_EFFECT, SPELL_EFFECT_KNOCK_BACK, true);
@@ -543,7 +545,7 @@ void Creature::SetPhaseMask(uint32 newPhaseMask, bool update)
 
 void Creature::Update(uint32 diff)
 {
-    if (IsAIEnabled && m_triggerJustAppeared)
+    if (IsAIEnabled && m_triggerJustAppeared && m_deathState != DEAD)
     {
         m_triggerJustAppeared = false;
         AI()->JustAppeared();
@@ -817,8 +819,11 @@ bool Creature::Create(uint32 guidlow, Map* map, uint32 phaseMask, uint32 Entry, 
         SetPhased(data->phaseid, false, true);
 
     if (data && data->phaseGroup)
-        for (auto ph : GetPhasesForGroup(data->phaseGroup))
-            SetPhased(ph, false, true);
+    {
+        std::vector<uint32> const* phasesInGroup = sDBCManager.GetPhasesForGroup(data->phaseGroup);
+        for (uint32 phaseId : *phasesInGroup)
+            SetPhased(phaseId, false, true);
+    }
 
     CreatureTemplate const* cinfo = sObjectMgr->GetCreatureTemplate(Entry);
     if (!cinfo)
@@ -896,6 +901,8 @@ bool Creature::Create(uint32 guidlow, Map* map, uint32 phaseMask, uint32 Entry, 
 
     if (Entry == VISUAL_WAYPOINT)
         SetVisible(false);
+
+    GetThreatManager().Initialize();
 
     return true;
 }
@@ -1178,27 +1185,14 @@ void Creature::SelectLevel(const CreatureTemplate* cinfo)
     uint8 dbminlevel = cinfo->minlevel;
     uint8 dbmaxlevel = cinfo->maxlevel;
     float hpmod = cinfo->ModHealth;
-    float mindmg = cinfo->mindmg;
-    float maxdmg = cinfo->maxdmg;
-    float minrangedmg = cinfo->minrangedmg;
-    float maxrangedmg = cinfo->maxrangedmg;
-    uint32 attackpower = cinfo->attackpower;
-    uint32 rangedattackpower = cinfo->rangedattackpower;
 
-    CreatureDifficultyInfo const* difficultyInfo = nullptr;
     if (GetMap()->GetDifficulty() > REGULAR_DIFFICULTY || GetMap()->IsBattleground())
     {
-        difficultyInfo = sObjectMgr->SelectDifficultyInfo(GetMap(), GetEntry());
-        if (difficultyInfo)
+        if (auto difficultyInfo = sObjectMgr->SelectDifficultyInfo(GetMap(), GetEntry()))
         {
             dbminlevel = difficultyInfo->LevelMin;
             dbmaxlevel = difficultyInfo->LevelMax;
             hpmod = difficultyInfo->HealthMod;
-            mindmg = difficultyInfo->MinDamage;
-            maxdmg = difficultyInfo->MaxDamage;
-            minrangedmg = difficultyInfo->MinRangeDamage;
-            maxrangedmg = difficultyInfo->MaxRangeDamage;
-            rangedattackpower = difficultyInfo->RangedAttackPower;
         }
     }
 
@@ -1257,15 +1251,8 @@ void Creature::SelectLevel(const CreatureTemplate* cinfo)
     SetModifierValue(UNIT_MOD_MANA, BASE_VALUE, (float)mana);
 
     float basedamage = stats->BaseDamage[cinfo->expansion];
-    if (basedamage && !difficultyInfo)
-    {
-        mindmg = basedamage;
-        maxdmg = basedamage * 1.5f;
-        minrangedmg = mindmg;
-        maxrangedmg = maxdmg;
-        attackpower = stats->AttackPower;
-        rangedattackpower = stats->RangedAttackPower;
-    }
+    float mindmg = basedamage;
+    float maxdmg = basedamage * 1.5f;
 
     SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, mindmg);
     SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, maxdmg);
@@ -1273,11 +1260,11 @@ void Creature::SelectLevel(const CreatureTemplate* cinfo)
     SetBaseWeaponDamage(OFF_ATTACK, MINDAMAGE, mindmg);
     SetBaseWeaponDamage(OFF_ATTACK, MAXDAMAGE, maxdmg);
 
-    SetBaseWeaponDamage(RANGED_ATTACK, MINDAMAGE, minrangedmg);
-    SetBaseWeaponDamage(RANGED_ATTACK, MAXDAMAGE, maxrangedmg);
+    SetBaseWeaponDamage(RANGED_ATTACK, MINDAMAGE, mindmg);
+    SetBaseWeaponDamage(RANGED_ATTACK, MAXDAMAGE, maxdmg);
 
-    SetModifierValue(UNIT_MOD_ATTACK_POWER, BASE_VALUE, attackpower);
-    SetModifierValue(UNIT_MOD_ATTACK_POWER_RANGED, BASE_VALUE, attackpower);
+    SetModifierValue(UNIT_MOD_ATTACK_POWER, BASE_VALUE, stats->AttackPower);
+    SetModifierValue(UNIT_MOD_ATTACK_POWER_RANGED, BASE_VALUE, stats->RangedAttackPower);
 }
 
 float Creature::_GetHealthMod(int32 Rank)
@@ -2370,7 +2357,7 @@ void Creature::SetInCombatWithZone()
             {
                 this->SetInCombatWith(player);
                 player->SetInCombatWith(this);
-                AddThreat(player, 0.0f);
+                GetThreatManager().AddThreat(player, 0.0f);
             }
         }
     }
@@ -2488,13 +2475,12 @@ void Creature::FixateOnTarget(ObjectGuid targetGUID, uint32 timer)
 {
     if (Unit* target = ObjectAccessor::GetUnit(*this, targetGUID))
     {
-        GetThreatManager().clearReferences();
-        GetThreatManager().addThreat(target, std::numeric_limits<float>::max());
+        GetThreatManager().ClearAllThreat();
+        GetThreatManager().AddThreat(target, std::numeric_limits<float>::max());
+        GetThreatManager().FixateTarget(target);
 
         if (AI())
             AI()->AttackStart(target);
-
-        TauntApply(target);
 
         ApplySpellImmune(0, IMMUNITY_STATE, SPELL_AURA_MOD_TAUNT, true);
         ApplySpellImmune(0, IMMUNITY_STATE, SPELL_AURA_MOD_THREAT, true);

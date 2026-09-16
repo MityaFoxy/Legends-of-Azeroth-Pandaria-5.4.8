@@ -1536,7 +1536,7 @@ class spell_sha_natures_guardian : public AuraScript
         PreventDefaultAction();
         GetUnitOwner()->CastCustomSpell(SPELL_SHA_NATURES_GUARDIAN, SPELLVALUE_BASE_POINT0, eff->GetAmount(), GetUnitOwner(), true);
         if (eventInfo.GetActor() && eventInfo.GetActor()->CanHaveThreatList())
-            eventInfo.GetActor()->GetThreatManager().modifyThreatPercent(GetUnitOwner(), -10.f); // No idea
+            eventInfo.GetActor()->GetThreatManager().ModifyThreatByPercent(GetUnitOwner(), -10.f); // No idea
         m_caster->AddSpellCooldown(SPELL_SHA_NATURES_GUARDIAN, Seconds(30));
     }
 
@@ -2449,7 +2449,7 @@ struct npc_sha_spirit_wolf : public ScriptedAI
         DoMeleeAttackIfReady();
     }
 
-    void EnterEvadeMode() override
+    void EnterEvadeMode(EvadeReason why = EVADE_REASON_OTHER) override
     {
         scheduler.CancelAll();
 
@@ -2782,7 +2782,7 @@ struct npc_sha_spiritwalker_champion : public PassiveAI
         me->SetPower(POWER_MANA, me->GetMaxPower(POWER_MANA));
     }
 
-    void EnterEvadeMode() override 
+    void EnterEvadeMode(EvadeReason why = EVADE_REASON_OTHER) override 
     {
         Unit* owner = me->GetCharmerOrOwner();
         if (owner && !me->HasUnitState(UNIT_STATE_FOLLOW))
@@ -2934,8 +2934,8 @@ struct npc_sha_earth_elemental : public ScriptedAI
             ctx.Repeat(Milliseconds(5000));
 
             if (Unit* target = me->GetVictim())
-                if (target->GetThreatManager().getCurrentVictim())
-                    if (Unit* tank = target->GetThreatManager().getCurrentVictim()->getTarget())
+                if (target->GetThreatManager().GetCurrentVictim())
+                    if (Unit* tank = target->GetThreatManager().GetCurrentVictim())
                         if (tank->GetTypeId() == TYPEID_PLAYER && tank->ToPlayer()->GetRoleForGroup() == ROLES_TANK)
                             return;
 

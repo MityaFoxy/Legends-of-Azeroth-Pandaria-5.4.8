@@ -22,6 +22,7 @@
 #include "Object.h"
 #include "Bag.h"
 #include "Creature.h"
+#include "DB2Stores.h"
 #include "DynamicObject.h"
 #include "GameObject.h"
 #include "TemporarySummon.h"
@@ -826,15 +827,6 @@ struct DungeonEncounter
 typedef std::list<DungeonEncounter const*> DungeonEncounterList;
 typedef std::unordered_map<uint32, DungeonEncounterList> DungeonEncounterContainer;
 
-struct HotfixInfo
-{
-    uint32 Type;
-    uint32 Timestamp;
-    uint32 Entry;
-};
-
-typedef std::vector<HotfixInfo> HotfixData;
-
 struct ResearchDigsiteInfo
 {
     uint32 digsiteId;
@@ -880,12 +872,6 @@ struct CreatureDifficultyInfo
     uint8 LevelMax;
     float DamageMod;
     float HealthMod;
-    float MinDamage;
-    float MaxDamage;
-    float MinRangeDamage;
-    float MaxRangeDamage;
-    uint32 AttackPower;
-    uint32 RangedAttackPower;
 };
 
 typedef std::unordered_map<uint32, ResearchProjectRequirements> ResearchProjectRequirementContainer;
@@ -1736,8 +1722,6 @@ class ObjectMgr
         void LoadHotfixData();
         HotfixData const& GetHotfixData() const { return _hotfixData; }
         time_t GetHotfixDate(uint32 entry, uint32 type) const;
-
-        void LoadMissingKeyChains();
 
         void LoadResearchDigsiteInfo();
         void LoadArchaeologyFindInfo();

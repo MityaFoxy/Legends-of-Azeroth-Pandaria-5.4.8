@@ -1,5 +1,5 @@
 /*
-* This file is part of the Legends of Azeroth Pandria Project. See THANKS file for Copyright information
+* This file is part of the Legends of Azeroth Pandaria Project. See THANKS file for Copyright information
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms of the GNU General Public License as published by the
@@ -36,6 +36,7 @@
 #include "SkillDiscovery.h"
 #include "World.h"
 #include "AccountMgr.h"
+#include "RBAC.h"
 #include "AchievementMgr.h"
 #include "AuctionHouseBot.h"
 #include "AuctionHouseMgr.h"
@@ -351,7 +352,7 @@ void World::AddSession_(WorldSession* s)
     if (decrease_session)
         --Sessions;
 
-    if (pLimit > 0 && Sessions >= pLimit && !s->GetSecurity() == SEC_PLAYER && !HasRecentlyDisconnected(s))
+    if (pLimit > 0 && Sessions >= pLimit && !s->HasPermission(rbac::RBAC_PERM_SKIP_QUEUE) && !HasRecentlyDisconnected(s))
     {
         AddQueuedPlayer(s);
         UpdateMaxSessionCounters();
@@ -1754,11 +1755,13 @@ void World::SetInitialWorldSettings()
 
     ///- Initialize VMapManager function pointers (to untangle game/collision circular deps)
     VMAP::VMapManager2* vmmgr2 = VMAP::VMapFactory::createOrGetVMapManager();
-    vmmgr2->GetLiquidFlagsPtr = &GetLiquidFlags;
+    vmmgr2->GetLiquidFlagsPtr = &DBCManager::GetLiquidFlags;
     vmmgr2->IsVMAPDisabledForPtr = &DisableMgr::IsVMAPDisabledFor;
 
     ///- Initialize config settings
     LoadConfigSettings();
+
+    sAccountMgr->LoadRBAC();
 
     ///- Initialize Allowed Security Level
     LoadDBAllowedSecurityLevel();
@@ -1808,8 +1811,13 @@ void World::SetInitialWorldSettings()
 
     ///- Load the DBC files
     TC_LOG_INFO("server.loading", "Initialize data stores...");
-    LoadDBCStores(m_dataPath, m_availableDbcLocaleMask);
-    LoadDB2Stores(m_dataPath, m_availableDbcLocaleMask);
+    sDBCManager.LoadDBCStores(m_dataPath, m_defaultDbcLocale);
+    m_availableDbcLocaleMask = sDB2Manager.LoadStores(m_dataPath, m_defaultDbcLocale);
+    if (!(m_availableDbcLocaleMask & (1 << m_defaultDbcLocale)))
+    {
+        TC_LOG_FATAL("server.loading", "Unable to load db2/dbc files for %s locale specified in DBC.Locale config!", localeNames[m_defaultDbcLocale]);
+        exit(1);
+    }
 
     // Load cinematic cameras
     LoadM2Cameras(m_dataPath);
@@ -1898,6 +1906,9 @@ void World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Transport templates...");
     sTransportMgr->LoadTransportTemplates();
+
+    TC_LOG_INFO("server.loading", "Loading Transport animations and rotations...");
+    sTransportMgr->LoadTransportAnimationAndRotation();
 
     TC_LOG_INFO("server.loading", "Loading Spell Rank Data...");
     sSpellMgr->LoadSpellRanks();
@@ -2457,9 +2468,6 @@ void World::SetInitialWorldSettings()
     TC_LOG_INFO("server.loading", "Loading black market auctions...");
     sBlackMarketMgr->LoadAuctions();
 
-    TC_LOG_INFO("server.loading", "Loading missing KeyChains...");
-    sObjectMgr->LoadMissingKeyChains();
-
     TC_LOG_INFO("server.loading", "Loading realm completed challenges...");
     sObjectMgr->LoadRealmCompletedChallenges();
 
@@ -2868,12 +2876,11 @@ void World::SendGlobalGMMessage(WorldPacket* packet, WorldSession* self, uint32 
     {
         // check if session and can receive global GM Messages and its not self
         WorldSession* session = itr->second;
-        Player* player = session->GetPlayer();
 
-        if (session == self || session->GetSecurity() < SEC_GAMEMASTER)
+        if (!session || session == self || !session->HasPermission(rbac::RBAC_PERM_RECEIVE_GLOBAL_GM_TEXTMESSAGE))
             continue;
 
-        // Player should be in world
+        Player* player = session->GetPlayer();
         if (!player || !player->IsInWorld())
             continue;
 
@@ -2972,7 +2979,7 @@ void World::SendGMText(int32 string_id, ...)
     {
         // Session should have permissions to receive global gm messages
         WorldSession* session = itr->second;
-        if (session->GetSecurity() < SEC_GAMEMASTER)
+        if (!session || !session->HasPermission(rbac::RBAC_PERM_RECEIVE_GLOBAL_GM_TEXTMESSAGE))
             continue;
 
         // Player should be in world
@@ -4012,6 +4019,15 @@ void World::ProcessQueryCallbacks()
     //         lResult.cancel();
     //     }
     // }
+}
+
+void World::ReloadRBAC()
+{
+    // Passive reload, we mark the data as invalidated and next time a permission is checked it will be reloaded
+    TC_LOG_INFO("rbac", "World::ReloadRBAC()");
+    for (SessionMap::const_iterator itr = m_sessions.begin(); itr != m_sessions.end(); ++itr)
+        if (WorldSession* session = itr->second)
+            session->InvalidateRBACData();
 }
 
 /**

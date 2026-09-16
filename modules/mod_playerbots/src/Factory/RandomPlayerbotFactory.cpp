@@ -1,7 +1,19 @@
 ﻿/*
- * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU GPL v2 license, you may redistribute it
- * and/or modify it under version 2 of the License, or (at your option), any later version.
- */
+* This file is part of the Legends of Azeroth Pandaria Project. See THANKS file for Copyright information
+*
+* This program is free software; you can redistribute it and/or modify it
+* under the terms of the GNU General Public License as published by the
+* Free Software Foundation; either version 2 of the License, or (at your
+* option) any later version.
+*
+* This program is distributed in the hope that it will be useful, but WITHOUT
+* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+* more details.
+*
+* You should have received a copy of the GNU General Public License along
+* with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #include "Helper.h"
 #include "RandomPlayerbotFactory.h"
@@ -316,21 +328,21 @@ Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes c
         const CharSectionsEntry* charSection = sChrSectionStore.LookupEntry(index);
 
         if (!charSection) continue;
-        if (charSection->Race != race || charSection->Gender != gender) continue;
+        if (charSection->RaceID != race || charSection->SexID != gender) continue;
 
-        switch (charSection->GenType)
+        switch (charSection->BaseSection)
         {
             case SECTION_TYPE_SKIN:
-                skinColors.push_back(charSection->Color);
+                skinColors.push_back(charSection->ColorIndex);
                 break;
             case SECTION_TYPE_FACE:
-                faces.push_back(std::pair<uint8, uint8>(charSection->Type, charSection->Color));
+                faces.push_back(std::pair<uint8, uint8>(charSection->VariationIndex, charSection->ColorIndex));
                 break;
             case SECTION_TYPE_FACIAL_HAIR:
-                facialHairTypes.push_back(charSection->Type);
+                facialHairTypes.push_back(charSection->VariationIndex);
                 break;
             case SECTION_TYPE_HAIR:
-                hairs.push_back(std::pair<uint8, uint8>(charSection->Type, charSection->Color));
+                hairs.push_back(std::pair<uint8, uint8>(charSection->VariationIndex, charSection->ColorIndex));
                 break;
         }
     }
@@ -575,7 +587,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
         TC_LOG_INFO("playerbots", "Creating random bot characters for account: [%u/%u]", accountNumber + 1, sPlayerbotAIConfig->randomBotAccountCount);
         RandomPlayerbotFactory factory(accountId);
 
-        WorldSession* session = new WorldSession(accountId, nullptr, AccountTypes::SEC_PLAYER, EXPANSION_MISTS_OF_PANDARIA,
+        WorldSession* session = new WorldSession(accountId, accountName, nullptr, AccountTypes::SEC_PLAYER, EXPANSION_MISTS_OF_PANDARIA,
             time_t(0), LOCALE_enUS, 0, false, false, true);
         //session->SetVirtualRealmID(1);
         sessionBots.push_back(session);

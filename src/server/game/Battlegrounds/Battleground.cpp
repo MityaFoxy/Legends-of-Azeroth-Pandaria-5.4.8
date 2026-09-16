@@ -1086,7 +1086,7 @@ void Battleground::EndBattleground(uint32 winner)
         {
             //needed cause else in av some creatures will kill the players at the end
             player->CombatStop();
-            player->getHostileRefManager().deleteReferences();
+            player->GetThreatManager().RemoveMeFromThreatLists();
         }
 
         // per player calculation
@@ -2633,7 +2633,7 @@ void Battleground::StartCriteria(CriteriaStartTypes type, uint32 entry)
 void Battleground::SetBracket(PvPDifficultyEntry const* bracketEntry)
 {
     m_BracketId = bracketEntry->GetBracketId();
-    SetLevelRange(bracketEntry->minLevel, bracketEntry->maxLevel);
+    SetLevelRange(bracketEntry->MinLevel, bracketEntry->MaxLevel);
 }
 
 void Battleground::RewardXPAtKill(Player* killer, Player* victim)

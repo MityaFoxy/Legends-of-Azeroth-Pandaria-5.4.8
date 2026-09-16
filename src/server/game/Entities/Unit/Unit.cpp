@@ -44,6 +44,7 @@
 #include "PassiveAI.h"
 #include "PetAI.h"
 #include "Pet.h"
+#include "GameClient.h"
 #include "Player.h"
 #include "PlayerAI.h"
 #include "QuestDef.h"
@@ -190,11 +191,10 @@ uint32 ProcEventInfo::GetDamageWithoutResilience() const
 Unit::Unit(bool isWorldObject) :
 WorldObject(isWorldObject), m_movedPlayer(NULL), m_lastSanctuaryTime(0),
 IsAIEnabled(false), NeedChangeAI(false), LastCharmerGUID(),
-m_ControlledByPlayer(false), movespline(new Movement::MoveSpline()),
+m_ControlledByPlayer(false), movespline(new Movement::MoveSpline()), _gameClientMovingMe(nullptr),
 i_AI(NULL), i_disabledAI(NULL), m_procDeep(0),
-m_removedAurasCount(0), i_motionMaster(new MotionMaster(this)), m_ThreatManager(this),
+m_removedAurasCount(0), i_motionMaster(new MotionMaster(this)), m_ThreatManager(this), m_CombatManager(this),
 m_vehicle(NULL), m_vehicleKit(NULL), m_unitTypeMask(UNIT_MASK_NONE),
-m_HostileRefManager(this),
 _aiAnimKitId(0), _movementAnimKitId(0), _meleeAnimKitId(0)
 {
 #ifdef _MSC_VER
@@ -351,6 +351,7 @@ Unit::~Unit()
     ASSERT(m_removedAuras.empty());
     ASSERT(m_gameObj.empty());
     ASSERT(m_dynObj.empty());
+    ASSERT(!_gameClientMovingMe || _gameClientMovingMe->GetBasePlayer() == this);
 }
 
 void Unit::Update(uint32 p_time)
@@ -394,8 +395,8 @@ void Unit::Update(uint32 p_time)
     // Having this would prevent spells from being proced, so let's crash
     ASSERT(!m_procDeep);
 
-    if (CanHaveThreatList() && GetThreatManager().isNeedUpdateToClient(p_time))
-        SendThreatListUpdate();
+    m_CombatManager.Update(p_time);
+    GetThreatManager().Update(p_time);
 
     // update combat timer only for players and pets (only pets with PetAI)
     if (IsInCombat())
@@ -425,20 +426,21 @@ void Unit::Update(uint32 p_time)
 
             if (canResetCombat && !m_combatTimerPvP)    // We are not fighting boss and PvP timer is expired or never was
             {
-                if (m_HostileRefManager.isEmpty())      // No enemies, exit combat now
+                if (GetThreatManager().GetThreatenedByMeList().empty())      // No enemies, exit combat now
                     ClearInCombat();
                 else if (!m_combatTimerPvE)             // Okay, we have some enemies and PvE combat timer is expired, check if they can reach us
                 {
-                    auto ref = m_HostileRefManager.getFirst();
-                    do
+                    std::vector<ThreatReference*> threats;
+                    for (auto const& pair : GetThreatManager().GetThreatenedByMeList())
+                        threats.push_back(pair.second);
+                    for (ThreatReference* threat : threats)
                     {
-                        Unit* target = ref->GetSource()->GetOwner();
-                        ref = ref->next();
+                        Unit* target = threat->GetOwner();
                         if (Creature* creature = target->ToCreature())
                             if (!creature->CanCreatureAttack(this, false))
-                                m_HostileRefManager.deleteReference(target);
-                    } while (ref);
-                    if (m_HostileRefManager.isEmpty())
+                                threat->ClearThreat();
+                    }
+                    if (GetThreatManager().GetThreatenedByMeList().empty())
                         ClearInCombat();
                     else
                         m_combatTimerPvE = 5000;
@@ -635,7 +637,7 @@ void Unit::GetRandomContactPoint(const Unit* obj, float &x, float &y, float &z, 
     uint32 attacker_number = getAttackers().size();
     if (attacker_number > 0)
         --attacker_number;
-    GetNearPoint(obj, x, y, z, obj->GetCombatReach(), distance2dMin + (distance2dMax - distance2dMin) * (float) rand_norm(),
+    GetNearPoint(obj, x, y, z, distance2dMin + (distance2dMax - distance2dMin) * (float) rand_norm(),
                  GetAngle(obj) + (attacker_number ? (static_cast<float>(M_PI / 2) - static_cast<float>(M_PI) * (float) rand_norm()) * float(attacker_number) / combat_reach * 0.3f : 0));
 }
 
@@ -1037,7 +1039,7 @@ uint32 Unit::DealDamage(Unit* victim, uint32 damage, CleanDamage const* cleanDam
             victim->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_DIRECT_DAMAGE, spellProto ? spellProto->Id : 0);
 
         if (victim->GetTypeId() != TYPEID_PLAYER)
-            victim->AddThreat(this, float(damage), damageSchoolMask, spellProto);
+            victim->GetThreatManager().AddThreat(this, float(damage), spellProto);
         else                                                // victim is a player
         {
             // random durability for items (HIT TAKEN)
@@ -3643,6 +3645,27 @@ bool Unit::IsNonMeleeSpellCasted(bool withDelayed, bool skipChanneled, bool skip
         return true;
 
     return false;
+}
+
+bool Unit::IsMovementPreventedByCasting() const
+{
+    // can always move when not casting
+    if (!HasUnitState(UNIT_STATE_CASTING))
+        return false;
+
+    if (Spell* spell = m_currentSpells[CURRENT_GENERIC_SPELL])
+        if (spell->getState() == SPELL_STATE_FINISHED ||
+            !(spell->m_spellInfo->InterruptFlags & SPELL_INTERRUPT_FLAG_MOVEMENT))
+            return false;
+
+    // channeled spells during channel stage (after the initial cast timer) allow movement if not interrupted by move/turn
+    if (Spell* spell = m_currentSpells[CURRENT_CHANNELED_SPELL])
+        if (spell->getState() != SPELL_STATE_FINISHED && spell->IsChannelActive())
+            if (!(spell->m_spellInfo->ChannelInterruptFlags & (AURA_INTERRUPT_FLAG_MOVE | AURA_INTERRUPT_FLAG_TURNING)))
+                return false;
+
+    // prohibit movement for all other spell casts
+    return true;
 }
 
 void Unit::InterruptNonMeleeSpells(bool withDelayed, uint32 spell_id, bool withInstant)
@@ -6687,6 +6710,7 @@ bool Unit::HandleDummyAuraProc(Unit* victim, uint32 damage, AuraEffect* triggere
                                 if (!target)
                                     return false;
                             }
+
                             if (IsFriendlyTo(target))
                                 return false;
                         }
@@ -7607,7 +7631,7 @@ bool Unit::HandleDummyAuraProc(Unit* victim, uint32 damage, AuraEffect* triggere
                     triggered_spell_id = 54445;
                     target = this;
                     float addThreat = float(CalculatePct(procSpell->Effects [0].CalcValue(this), triggerAmount));
-                    victim->AddThreat(this, addThreat);
+                    victim->GetThreatManager().AddThreat(this, addThreat);
                     break;
                 }
                 // Silverback
@@ -8776,7 +8800,7 @@ bool Unit::Attack(Unit* victim, bool meleeAttack)
         SetInCombatWith(victim);
         if (victim->GetTypeId() == TYPEID_PLAYER)
             victim->SetInCombatWith(this);
-        AddThreat(victim, 0.0f);
+        GetThreatManager().AddThreat(victim, 0.0f);
 
         ToCreature()->SendAIReaction(AI_REACTION_HOSTILE);
         ToCreature()->CallAssistance();
@@ -8845,6 +8869,8 @@ void Unit::CombatStop(bool includingCast)
     RemoveAllAttackers();
     if (GetTypeId() == TYPEID_PLAYER)
         ToPlayer()->SendAttackSwingCancelAttack();     // melee and ranged forced attack cancel
+    m_CombatManager.EndAllPvECombat();
+    m_CombatManager.SuppressPvPCombat();
     ClearInCombat();
 }
 
@@ -9754,7 +9780,7 @@ void Unit::EnergizeBySpell(Unit* victim, uint32 spellId, int32 damage, Powers po
     SendEnergizeSpellLog(victim, spellId, damage, powerType);
     // needs to be called after sending spell log
     victim->ModifyPower(powerType, damage);
-    victim->getHostileRefManager().threatAssist(this, float(damage) * 0.5f, spellInfo);
+    victim->GetThreatManager().ForwardThreatForAssistingMe(this, float(damage) * 0.5f, spellInfo);
 }
 
 int32 Unit::SpellDamageBonusDone(Unit* victim, SpellInfo const* spellProto, uint32 effIndex, int32 damage, DamageEffectType damagetype, uint32 stack) const
@@ -12453,8 +12479,8 @@ void Unit::setDeathState(DeathState s)
     if (s != ALIVE && s != JUST_RESPAWNED)
     {
         CombatStop();
-        DeleteThreatList();
-        getHostileRefManager().deleteReferences();
+        GetThreatManager().RemoveMeFromThreatLists();
+        GetThreatManager().ClearAllThreat();
 
         if (IsNonMeleeSpellCasted(false))
             InterruptNonMeleeSpells(false);
@@ -12511,126 +12537,6 @@ void Unit::setDeathState(DeathState s)
 ########       AGGRO SYSTEM       ########
 ########                          ########
 ########################################*/
-bool Unit::CanHaveThreatList() const
-{
-    // only creatures can have threat list
-    if (GetTypeId() != TYPEID_UNIT)
-        return false;
-
-    // only alive units can have threat list
-    if (!IsAlive() || isDying())
-        return false;
-
-    // totems can not have threat list
-    if (ToCreature()->IsTotem())
-        return false;
-
-    // vehicles can not have threat list
-    //if (ToCreature()->IsVehicle())
-    //    return false;
-
-    // summons can not have a threat list, unless they are controlled by a creature
-    if (HasUnitTypeMask(UNIT_MASK_MINION | UNIT_MASK_GUARDIAN | UNIT_MASK_CONTROLABLE_GUARDIAN) && ((Pet*)this)->GetOwnerGUID().IsPlayer())
-        return false;
-
-    return true;
-}
-
-//======================================================================
-
-float Unit::ApplyTotalThreatModifier(float fThreat, SpellSchoolMask schoolMask)
-{
-    if (!HasAuraType(SPELL_AURA_MOD_THREAT) || fThreat < 0)
-        return fThreat;
-
-    SpellSchools school = GetFirstSchoolInMask(schoolMask);
-
-    return fThreat * m_threatModifier [school];
-}
-
-//======================================================================
-
-void Unit::AddThreat(Unit* victim, float fThreat, SpellSchoolMask schoolMask, SpellInfo const* threatSpell)
-{
-    // Only mobs can manage threat lists
-    if (CanHaveThreatList())
-        m_ThreatManager.addThreat(victim, fThreat, schoolMask, threatSpell);
-}
-
-//======================================================================
-
-void Unit::DeleteThreatList()
-{
-    if (CanHaveThreatList() && !m_ThreatManager.isThreatListEmpty())
-        SendClearThreatListOpcode();
-    m_ThreatManager.clearReferences();
-}
-
-//======================================================================
-
-void Unit::TauntApply(Unit* taunter)
-{
-    ASSERT(GetTypeId() == TYPEID_UNIT);
-
-    if (!taunter || (taunter->GetTypeId() == TYPEID_PLAYER && taunter->ToPlayer()->IsGameMaster()))
-        return;
-
-    if (!CanHaveThreatList())
-        return;
-
-    Creature* creature = ToCreature();
-
-    if (creature->HasReactState(REACT_PASSIVE))
-        return;
-
-    Unit* target = GetVictim();
-    if (target && target == taunter)
-        return;
-
-    SetInFront(taunter);
-    if (creature->IsAIEnabled)
-        creature->AI()->AttackStart(taunter);
-
-    //m_ThreatManager.tauntApply(taunter);
-}
-
-//======================================================================
-
-void Unit::TauntFadeOut(Unit* taunter)
-{
-    ASSERT(GetTypeId() == TYPEID_UNIT);
-
-    if (!taunter || (taunter->GetTypeId() == TYPEID_PLAYER && taunter->ToPlayer()->IsGameMaster()))
-        return;
-
-    if (!CanHaveThreatList())
-        return;
-
-    Creature* creature = ToCreature();
-
-    if (creature->HasReactState(REACT_PASSIVE))
-        return;
-
-    Unit* target = GetVictim();
-    if (!target || target != taunter)
-        return;
-
-    if (m_ThreatManager.isThreatListEmpty())
-    {
-        if (creature->IsAIEnabled)
-            creature->AI()->EnterEvadeMode();
-        return;
-    }
-
-    target = creature->SelectVictim();  // might have more taunt auras remaining
-
-    if (target && target != taunter)
-    {
-        SetInFront(target);
-        if (creature->IsAIEnabled)
-            creature->AI()->AttackStart(target);
-    }
-}
 
 //======================================================================
 
@@ -12692,9 +12598,9 @@ Unit* Creature::SelectVictim()
 
     if (CanHaveThreatList())
     {
-        if (!target && !m_ThreatManager.isThreatListEmpty())
+        if (!target && !GetThreatManager().IsThreatListEmpty())
             // No taunt aura or taunt aura caster is dead standard target selection
-            target = m_ThreatManager.getHostilTarget();
+            target = GetThreatManager().GetCurrentVictim();
     }
     else if (!HasReactState(REACT_PASSIVE))
     {
@@ -13719,7 +13625,7 @@ uint32 Unit::GetPowerIndex(uint32 powerType) const
             }
         }
     }
-    return GetPowerIndexByClass(powerType, classId);
+    return sDBCManager.GetPowerIndexByClass(static_cast<Powers>(powerType), classId);
 }
 
 int32 Unit::GetCreatePowers(Powers power) const
@@ -13785,6 +13691,7 @@ void Unit::AddToWorld()
     {
         WorldObject::AddToWorld();
     }
+    GetMotionMaster()->AddToWorld();
     RebuildTerrainSwaps();
 }
 
@@ -13843,7 +13750,7 @@ void Unit::RemoveFromWorld()
             }
         }
 
-        getHostileRefManager().clearReferences();
+        GetThreatManager().RemoveMeFromThreatLists();
 
         WorldObject::RemoveFromWorld();
         m_duringRemoveFromWorld = false;
@@ -13871,8 +13778,8 @@ void Unit::CleanupBeforeRemoveFromMap(bool finalCleanup)
     m_Events.KillAllEvents(false);                      // non-delatable (currently casted spells) will not deleted now but it will deleted at call in Map::RemoveAllObjectsInRemoveList
     CombatStop(true);                                   // Because scripts in RemoveAllAuras can trigger fucking spells, need to call InterruptNonMeleeSpells another time
     ClearComboPointHolders();
-    DeleteThreatList();
-    getHostileRefManager().setOnlineOfflineState(false);
+    GetThreatManager().RemoveMeFromThreatLists();
+    GetThreatManager().ClearAllThreat();
     GetMotionMaster()->Clear(false);                    // remove different non-standard movement generators.
 }
 
@@ -16171,7 +16078,8 @@ void Unit::Kill(Unit* victim, bool durabilityLoss, SpellInfo const* spellInfo)
 
         if (!creature->IsPet())
         {
-            creature->DeleteThreatList();
+            creature->GetThreatManager().RemoveMeFromThreatLists();
+            creature->GetThreatManager().ClearAllThreat();
             CreatureTemplate const* cInfo = creature->GetCreatureTemplate();
             if (cInfo && (cInfo->lootid || cInfo->maxgold > 0))
                 creature->SetFlag(OBJECT_FIELD_DYNAMIC_FLAGS, UNIT_DYNFLAG_LOOTABLE);
@@ -16561,7 +16469,8 @@ bool Unit::SetCharmedBy(Unit* charmer, CharmType type, AuraApplication const* au
     if (!aurApp || (aurApp->GetBase()->GetId() != 145065 && aurApp->GetBase()->GetId() != 145171))
     {
         CombatStop(); /// @todo CombatStop(true) may cause crash (interrupt spells)
-        DeleteThreatList();
+        GetThreatManager().RemoveMeFromThreatLists();
+        GetThreatManager().ClearAllThreat();
     }
 
     // Charmer stop charming
@@ -16655,7 +16564,6 @@ bool Unit::SetCharmedBy(Unit* charmer, CharmType type, AuraApplication const* au
                 if (this->GetEntry() != 69458 && this->GetEntry() != 67275 && this->GetEntry() != 68849 && this->GetEntry() != 72952)
                     charmer->ToPlayer()->SetMover(this);
 
-                charmer->ToPlayer()->SetViewpoint(this, true);
                 charmer->ToPlayer()->VehicleSpellInitialize();
                 break;
             case CHARM_TYPE_POSSESS:
@@ -16664,7 +16572,6 @@ bool Unit::SetCharmedBy(Unit* charmer, CharmType type, AuraApplication const* au
                 charmer->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_DISABLE_MOVE);
                 charmer->ToPlayer()->SetMover(this);
                 charmer->ToPlayer()->SetClientControl(this, !HasUnitState(UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED));
-                charmer->ToPlayer()->SetViewpoint(this, true);
                 charmer->ToPlayer()->PossessSpellInitialize();
                 break;
             case CHARM_TYPE_CHARM:
@@ -16734,8 +16641,8 @@ void Unit::RemoveCharmedBy(Unit* charmer)
 
     if (this->GetMapId() != 1136) // look up
     {
-        getHostileRefManager().deleteReferences();
-        DeleteThreatList();
+        GetThreatManager().RemoveMeFromThreatLists();
+        GetThreatManager().ClearAllThreat();
     }
 
     Map* map = GetMap();
@@ -16798,7 +16705,6 @@ void Unit::RemoveCharmedBy(Unit* charmer)
         {
             case CHARM_TYPE_VEHICLE:
                 charmer->ToPlayer()->SetClientControl(charmer, 1);
-                charmer->ToPlayer()->SetViewpoint(this, false);
                 charmer->ToPlayer()->SetClientControl(this, 0);
                 if (GetTypeId() == TYPEID_PLAYER)
                     ToPlayer()->SetMover(this);
@@ -16806,7 +16712,6 @@ void Unit::RemoveCharmedBy(Unit* charmer)
             case CHARM_TYPE_POSSESS:
                 if (!charmer->ToPlayer()->HasUnitState(UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED))
                     charmer->ToPlayer()->SetClientControl(charmer, 1);
-                charmer->ToPlayer()->SetViewpoint(this, false);
                 charmer->ToPlayer()->SetClientControl(this, 0);
                 charmer->RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_DISABLE_MOVE);
                 if (GetTypeId() == TYPEID_PLAYER)
@@ -17348,37 +17253,9 @@ void Unit::SetPhaseMask(uint32 newPhaseMask, bool update)
     {
         RemoveBoundAuras(newPhaseMask, false);             // we can lost access to caster or target
 
-        // modify hostile references for new phasemask, some special cases deal with hostile references themselves
-        if (GetTypeId() == TYPEID_UNIT || (!ToPlayer()->IsGameMaster() && !ToPlayer()->GetSession()->PlayerLogout()))
-        {
-            HostileRefManager& refManager = getHostileRefManager();
-            HostileReference* ref = refManager.getFirst();
-
-            while (ref)
-            {
-                if (Unit* unit = ref->GetSource()->GetOwner())
-                    if (Creature* creature = unit->ToCreature())
-                        refManager.setOnlineOfflineState(creature, creature->InSamePhase(newPhaseMask));
-
-                ref = ref->next();
-            }
-
-            // modify threat lists for new phasemask
-            if (GetTypeId() != TYPEID_PLAYER)
-            {
-                std::list<HostileReference*> threatList = GetThreatManager().getThreatList();
-                std::list<HostileReference*> offlineThreatList = GetThreatManager().getOfflineThreatList();
-
-                // merge expects sorted lists
-                threatList.sort();
-                offlineThreatList.sort();
-                threatList.merge(offlineThreatList);
-
-                for (std::list<HostileReference*>::const_iterator itr = threatList.begin(); itr != threatList.end(); ++itr)
-                    if (Unit* unit = (*itr)->getTarget())
-                        unit->getHostileRefManager().setOnlineOfflineState(ToCreature(), unit->InSamePhase(newPhaseMask));
-            }
-        }
+// re-evaluate threat list online/offline state after the phase change
+            if (GetTypeId() == TYPEID_UNIT || (!ToPlayer()->IsGameMaster() && !ToPlayer()->GetSession()->PlayerLogout()))
+                GetThreatManager().EvaluateSuppressed(true);
     }
 
     WorldObject::SetPhaseMask(newPhaseMask, update);
@@ -17415,33 +17292,8 @@ bool Unit::SetPhased(uint32 id, bool update, bool apply)
 
     if (GetTypeId() == TYPEID_UNIT || (!ToPlayer()->IsGameMaster() && !ToPlayer()->GetSession()->PlayerLogout()))
     {
-        HostileRefManager& refManager = getHostileRefManager();
-        HostileReference* ref = refManager.getFirst();
-
-        while (ref)
-        {
-            if (Unit* unit = ref->GetSource()->GetOwner())
-                if (Creature* creature = unit->ToCreature())
-                    refManager.setOnlineOfflineState(creature, creature->IsPhased(this));
-
-            ref = ref->next();
-        }
-
-        // modify threat lists for new phasemask
-        if (GetTypeId() != TYPEID_PLAYER)
-        {
-            std::list<HostileReference*> threatList = GetThreatManager().getThreatList();
-            std::list<HostileReference*> offlineThreatList = GetThreatManager().getOfflineThreatList();
-
-            // merge expects sorted lists
-            threatList.sort();
-            offlineThreatList.sort();
-            threatList.merge(offlineThreatList);
-
-            for (std::list<HostileReference*>::const_iterator itr = threatList.begin(); itr != threatList.end(); ++itr)
-                if (Unit* unit = (*itr)->getTarget())
-                    unit->getHostileRefManager().setOnlineOfflineState(ToCreature(), unit->IsPhased(this));
-        }
+        // re-evaluate threat list online/offline state after the phase change
+        GetThreatManager().EvaluateSuppressed(true);
     }
 
     for (ControlList::const_iterator itr = m_Controlled.begin(); itr != m_Controlled.end(); ++itr)
@@ -17522,10 +17374,17 @@ void Unit::OnRelocated()
 void Unit::UpdateObjectVisibility(bool forced)
 {
     if (forced)
+    {
         VisibilityUpdateTask::UpdateVisibility(this);
+        // call MoveInLineOfSight for nearby creatures
+        Trinity::AIRelocationNotifier notifier(*this);
+        Cell::VisitAllObjects(this, notifier, GetVisibilityRange());
+    }
     else
+    {
         m_Events.AddEvent(new VisibilityUpdateTask(this), m_Events.CalculateTime(1));
-    AINotifyTask::ScheduleAINotify(this);
+        AINotifyTask::ScheduleAINotify(this);
+    }
 }
 
 void Unit::SendMoveKnockBack(Player* player, float speedXY, float speedZ, float vcos, float vsin)
@@ -18482,7 +18341,7 @@ void Unit::WriteMovementInfo(WorldPacket& data, Movement::ExtraMovementStatusEle
     bool hasMountDisplayId = GetUInt32Value(UNIT_FIELD_MOUNT_DISPLAY_ID) != 0;
     bool hasMovementFlags = GetUnitMovementFlags() != 0;
     bool hasMovementFlags2 = GetExtraUnitMovementFlags() != 0;
-    bool hasTimestamp = mi.time;
+    bool hasTimestamp = true;
     bool hasOrientation = !G3D::fuzzyEq(GetOrientation(), 0.0f);
     bool hasTransportData = GetTransGUID() != 0;
     bool hasSpline = IsSplineEnabled();
@@ -18614,7 +18473,7 @@ void Unit::WriteMovementInfo(WorldPacket& data, Movement::ExtraMovementStatusEle
             break;
         case MSETimestamp:
             if (hasTimestamp)
-                data << mi.time;
+                data << getMSTime();
             break;
         case MSEPositionX:
             data << GetPositionX();
@@ -18730,7 +18589,7 @@ void Unit::WriteMovementInfo(WorldPacket& data, Movement::ExtraMovementStatusEle
     }
 }
 
-void Unit::SendTeleportPacket(Position& pos)
+void Unit::SendTeleportPacket(Position& pos, bool teleportingTransport /*= false*/)
 {
     // SMSG_MOVE_UPDATE_TELEPORT is sent to nearby players to signal the teleport
     // SMSG_MOVE_TELEPORT is sent to self in order to trigger CMSG_MOVE_TELEPORT_ACK and update the position server side
@@ -18740,6 +18599,17 @@ void Unit::SendTeleportPacket(Position& pos)
 
     if (GetTypeId() == TYPEID_UNIT)
         Relocate(&pos); // Relocate the unit to its new position in order to build the packets correctly.
+
+    // if the unit is on a transport and it is the unit (not the transport) that is teleported,
+    // recalculate the transport offset so the packet contains the correct offset
+    TransportBase* transportBase = GetDirectTransport();
+    if (!teleportingTransport && transportBase)
+    {
+        float x, y, z, o;
+        pos.GetPosition(x, y, z, o);
+        transportBase->CalculatePassengerOffset(x, y, z, &o);
+        m_movementInfo.transport.pos.Relocate(x, y, z, o);
+    }
 
     WorldPacket data(SMSG_MOVE_UPDATE_TELEPORT);
     BuildTeleportUpdateData(&data);
@@ -18823,11 +18693,11 @@ void Unit::UpdateHeight(float newZ)
         GetVehicleKit()->RelocatePassengers();
 }
 
-void Unit::SendThreatListUpdate()
+void Unit::SendThreatListUpdate(std::vector<std::pair<Unit*, float>> const& threats)
 {
-    if (!GetThreatManager().isThreatListEmpty())
+    if (!threats.empty())
     {
-        uint32 count = GetThreatManager().getThreatList().size();
+        uint32 count = uint32(threats.size());
 
         TC_LOG_DEBUG("entities.unit", "WORLD: Send SMSG_THREAT_UPDATE Message");
 
@@ -18843,10 +18713,9 @@ void Unit::SendThreatListUpdate()
         data.WriteBit(Guid[4]);
         data.WriteBits(count, 21);
 
-        ThreatContainer::StorageType const &tlist = GetThreatManager().getThreatList();
-        for (ThreatContainer::StorageType::const_iterator itr = tlist.begin(); itr != tlist.end(); ++itr)
+        for (auto const& pair : threats)
         {
-            ObjectGuid unitGuid = (*itr)->getUnitGuid();
+            ObjectGuid unitGuid = pair.first->GetGUID();
             data.WriteBit(unitGuid[2]);
             data.WriteBit(unitGuid[3]);
             data.WriteBit(unitGuid[6]);
@@ -18861,9 +18730,9 @@ void Unit::SendThreatListUpdate()
 
         data.FlushBits();
 
-        for (ThreatContainer::StorageType::const_iterator itr = tlist.begin(); itr != tlist.end(); ++itr)
+        for (auto const& pair : threats)
         {
-            ObjectGuid unitGuid = (*itr)->getUnitGuid();
+            ObjectGuid unitGuid = pair.first->GetGUID();
             data.WriteByteSeq(unitGuid[6]);
             data.WriteByteSeq(unitGuid[7]);
             data.WriteByteSeq(unitGuid[0]);
@@ -18872,7 +18741,7 @@ void Unit::SendThreatListUpdate()
             data.WriteByteSeq(unitGuid[5]);
             data.WriteByteSeq(unitGuid[3]);
             data.WriteByteSeq(unitGuid[4]);
-            data << uint32((*itr)->getThreat());
+            data << uint32(pair.second);
         }
 
         data.WriteByteSeq(Guid[1]);
@@ -18888,15 +18757,15 @@ void Unit::SendThreatListUpdate()
     }
 }
 
-void Unit::SendChangeCurrentVictimOpcode(HostileReference* pHostileReference)
+void Unit::SendChangeCurrentVictimOpcode(Unit* victim, std::vector<std::pair<Unit*, float>> const& threats)
 {
-    if (!GetThreatManager().isThreatListEmpty())
+    if (!threats.empty())
     {
-        uint32 count = GetThreatManager().getThreatList().size();
+        uint32 count = uint32(threats.size());
 
         TC_LOG_DEBUG("entities.unit", "WORLD: Send SMSG_HIGHEST_THREAT_UPDATE Message");
-        ObjectGuid unitGuid = pHostileReference->getUnitGuid();
-        ObjectGuid guid = GetGUID(); 
+        ObjectGuid unitGuid = victim->GetGUID();
+        ObjectGuid guid = GetGUID();
         WorldPacket data(SMSG_HIGHEST_THREAT_UPDATE, 8 + 8 + count * 8);
 
         data.WriteBit(unitGuid[3]);
@@ -18914,10 +18783,9 @@ void Unit::SendChangeCurrentVictimOpcode(HostileReference* pHostileReference)
         data.WriteBit(guid[4]);
         data.WriteBits(count, 21);
 
-        ThreatContainer::StorageType const &tlist = GetThreatManager().getThreatList();
-        for (ThreatContainer::StorageType::const_iterator itr = tlist.begin(); itr != tlist.end(); ++itr)
+        for (auto const& pair : threats)
         {
-            ObjectGuid UnitGuid = (*itr)->getUnitGuid();
+            ObjectGuid UnitGuid = pair.first->GetGUID();
             data.WriteBit(UnitGuid[6]);
             data.WriteBit(UnitGuid[1]);
             data.WriteBit(UnitGuid[0]);
@@ -18936,13 +18804,13 @@ void Unit::SendChangeCurrentVictimOpcode(HostileReference* pHostileReference)
 
         data.WriteByteSeq(guid[4]);
 
-        for (ThreatContainer::StorageType::const_iterator itr = tlist.begin(); itr != tlist.end(); ++itr)
+        for (auto const& pair : threats)
         {
-            ObjectGuid UnitGuid = (*itr)->getUnitGuid();
+            ObjectGuid UnitGuid = pair.first->GetGUID();
 
             data.WriteByteSeq(UnitGuid[6]);
 
-            data << uint32((*itr)->getThreat());
+            data << uint32(pair.second);
 
             data.WriteByteSeq(UnitGuid[4]);
             data.WriteByteSeq(UnitGuid[0]);
@@ -19000,11 +18868,11 @@ void Unit::SendClearThreatListOpcode()
     SendMessageToSet(&data, false);
 }
 
-void Unit::SendRemoveFromThreatListOpcode(HostileReference* pHostileReference)
+void Unit::SendRemoveFromThreatListOpcode(Unit* victim)
 {
     TC_LOG_DEBUG("entities.unit", "WORLD: Send SMSG_THREAT_REMOVE Message");
     ObjectGuid victimGUID = GetGUID();
-    ObjectGuid hostileGUID = pHostileReference->getUnitGuid();
+    ObjectGuid hostileGUID = victim->GetGUID();
 
     WorldPacket data(SMSG_THREAT_REMOVE, 1 + 1 + 8 + 8);
 
@@ -19102,7 +18970,11 @@ void Unit::StopAttackFaction(uint32 faction_id)
             ++itr;
     }
 
-    getHostileRefManager().deleteReferencesForFaction(faction_id);
+    auto threats = GetThreatManager().GetThreatenedByMeList();
+    for (auto const& pair : threats)
+        if (pair.second->GetOwner()->GetFactionTemplateEntry() &&
+            pair.second->GetOwner()->GetFactionTemplateEntry()->faction == faction_id)
+            pair.second->ClearThreat();
 
     for (ControlList::const_iterator itr = m_Controlled.begin(); itr != m_Controlled.end(); ++itr)
         (*itr)->StopAttackFaction(faction_id);
@@ -19335,7 +19207,7 @@ bool CharmInfo::IsReturning()
 void Unit::SetInFront(WorldObject const* target)
 {
     if (!HasUnitState(UNIT_STATE_CANNOT_TURN))
-        UpdateOrientation(GetAngle(target));
+        SetOrientation(GetAbsoluteAngle(target));
 }
 
 void Unit::SetFacingTo(float ori)
@@ -19462,6 +19334,13 @@ bool Unit::SetCanFly(bool enable)
         AddUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
         RemoveUnitMovementFlag(MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_SPLINE_ELEVATION);
         SetFall(false);
+        // A client-controlled creature that is put into flight gets full 3D
+        // control (pitch) on top of CAN_FLY. TC's 3.3.5/4.3.4 clients grant this
+        // natively for a controlled flyer; the 5.4.8 client needs the
+        // ALWAYS_ALLOW_PITCHING flag delivered, so the Eye of Acherus and similar
+        // possessed flyers can descend.
+        if (IsMovedByClient())
+            SetAlwaysAllowPitching(true);
     }
     else
     {
@@ -19474,6 +19353,31 @@ bool Unit::SetCanFly(bool enable)
         Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_FLYING, SMSG_MOVE_SET_CAN_FLY).Send();
     else
         Movement::PacketSender(this, SMSG_SPLINE_MOVE_UNSET_FLYING, SMSG_MOVE_UNSET_CAN_FLY).Send();
+
+    return true;
+}
+
+bool Unit::SetAlwaysAllowPitching(bool enable)
+{
+    if (enable == HasExtraUnitMovementFlag(MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING))
+        return false;
+
+    if (enable)
+        AddExtraUnitMovementFlag(MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING);
+    else
+        RemoveExtraUnitMovementFlag(MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING);
+
+    // Push an immediate movement update straight to the controlling player so the
+    // client sees ALWAYS_ALLOW_PITCHING (hasPitch=true) right away, instead of
+    // waiting for the next grid broadcast (which cannot reach a remote mover like
+    // the Eye of Acherus, 1000+ yd from the player). Mirrors TC Master's
+    // Unit::SetAlwaysAllowPitching().
+    if (GameClient* controller = GetGameClientMovingMe())
+    {
+        WorldPacket data(SMSG_PLAYER_MOVE, 100);
+        WriteMovementInfo(data);
+        controller->SendDirectMessage(&data);
+    }
 
     return true;
 }
@@ -20196,9 +20100,9 @@ float Unit::GetScallingDamageMod() const
     // calculate celestials scalling mod
     if (GetEntry() == 71955 || GetEntry() == 71953 || GetEntry() == 71952 || GetEntry() == 71954)
     {
-        auto threatList = const_cast<Unit*>(this)->GetThreatManager().getThreatList();
-        for (auto&& itr : threatList)
-            if (Unit* unit = ObjectAccessor::GetUnit(*this, itr->getUnitGuid()))
+        auto threatList = const_cast<Unit*>(this)->GetThreatManager().GetUnsortedThreatList();
+        for (auto&& ref : threatList)
+            if (Unit* unit = ObjectAccessor::GetUnit(*this, ref->GetVictim()->GetGUID()))
                 if (unit->GetTypeId() == TYPEID_PLAYER && unit->IsWithinDist(this, 100.0f))
                     members++;
     }

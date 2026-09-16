@@ -18,17 +18,17 @@ public:
             return;
         }
         Player* bot = botAI->GetBot();
-        float threat = threatMgr->getThreat(bot);
+        float threat = threatMgr->GetThreat(bot);
         if (!result)
         {
             minThreat = threat;
             result = creature;
         }
         // neglect if victim is main tank, or no victim (for untauntable target)
-        if (threatMgr->getCurrentVictim())
+        if (threatMgr->GetCurrentVictim())
         {
-            // float max_threat = threatMgr->GetThreat(threatMgr->getCurrentVictim()->getTarget());
-            Unit* victim = threatMgr->getCurrentVictim()->getTarget();
+            // float max_threat = threatMgr->GetThreat(threatMgr->GetCurrentVictim()->GetVictim());
+            Unit* victim = threatMgr->GetCurrentVictim()->GetVictim();
             if (victim && victim->ToPlayer() && PlayerBotSpec::IsMainTank(victim->ToPlayer()))
             {
                 return;
@@ -79,8 +79,8 @@ public:
             if (new_unit == currentTarget)
                 return true;
         }
-        float new_threat = new_unit->GetThreatManager().getThreat(bot);
-        float old_threat = old_unit->GetThreatManager().getThreat(bot);
+        float new_threat = new_unit->GetThreatManager().GetThreat(bot);
+        float old_threat = old_unit->GetThreatManager().GetThreat(bot);
         float new_dis = bot->GetDistance(new_unit);
         float old_dis = bot->GetDistance(old_unit);
         // hasAggro? -> withinMelee? -> threat

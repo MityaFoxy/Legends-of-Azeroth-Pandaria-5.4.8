@@ -1208,7 +1208,7 @@ class spell_warl_soulshatter : public SpellScriptLoader
                 Unit* caster = GetCaster();
                 if (Unit* target = GetHitUnit())
                 {
-                    if (target->CanHaveThreatList() && target->GetThreatManager().getThreat(caster) > 0.0f)
+                    if (target->CanHaveThreatList() && target->GetThreatManager().GetThreat(caster) > 0.0f)
                         caster->CastSpell(target, SPELL_SOULSHATTER, true);
                 }
             }
@@ -3372,8 +3372,6 @@ class spell_warl_havoc_target_selector : public SpellScript
     {
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_0, TARGET_UNIT_TARGET_ENEMY);
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_1, TARGET_UNIT_TARGET_ENEMY);
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_2, TARGET_UNIT_TARGET_ENEMY);
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_3, TARGET_UNIT_TARGET_ENEMY);
         AfterCast += SpellCastFn(spell_warl_havoc_target_selector::HandleCast);
     }
 };
@@ -3565,7 +3563,7 @@ class spell_warl_command_demon : public SpellScript
     void Register() override
     {
         OnCheckCast += SpellCheckCastFn(spell_warl_command_demon::CheckCast);
-        OnEffectHitTarget += SpellEffectFn(spell_warl_command_demon::SuppressDefault, EFFECT_0, SPELL_EFFECT_FORCE_CAST);
+        OnEffectHitTarget += SpellEffectFn(spell_warl_command_demon::SuppressDefault, EFFECT_0, SPELL_EFFECT_DUMMY);
     }
 };
 

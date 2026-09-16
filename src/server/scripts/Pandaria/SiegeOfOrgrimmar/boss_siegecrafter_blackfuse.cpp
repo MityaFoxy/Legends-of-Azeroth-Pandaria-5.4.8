@@ -386,7 +386,7 @@ class boss_siegecrafter_blackfuse : public CreatureScript
                 }
             }
 
-            void EnterEvadeMode() override
+            void EnterEvadeMode(EvadeReason why = EVADE_REASON_OTHER) override
             {
                 if (hasEvade)
                     return;
@@ -555,12 +555,12 @@ class boss_siegecrafter_blackfuse : public CreatureScript
 
                 ObjectGuid getSawbladeTargetGUID()
                 {
-                    ThreatContainer::StorageType const& threatlist = me->GetThreatManager().getThreatList();
+                    auto threatlist = me->GetThreatManager().GetUnsortedThreatList();
                     std::list<Unit*> targetList, tempTargetList;
 
-                    for (ThreatContainer::StorageType::const_iterator itr = threatlist.begin(); itr != threatlist.end(); ++itr)
-                        if ((*itr)->getTarget())
-                            targetList.push_back((*itr)->getTarget());
+                    for (ThreatReference const* ref : threatlist)
+                        if (ref->GetVictim())
+                            targetList.push_back(ref->GetVictim());
 
                     tempTargetList = targetList;
 
@@ -784,7 +784,7 @@ struct npc_siegecrafter_sawblade : public ScriptedAI
         return magnetGUID;
     }
 
-    void EnterEvadeMode() override { }
+    void EnterEvadeMode(EvadeReason why = EVADE_REASON_OTHER) override { }
 
     void UpdateAI(uint32 diff) override 
     {
@@ -840,7 +840,7 @@ struct npc_soo_siegecrafter_helper : public ScriptedAI
         ActivatedConveyorDict.insert(std::pair<uint32, uint32>(NPC_DEACTIVATED_DEATHDEALER_TURRET, SPELL_SUMMON_ACTIVATED_DEATHDEALER_TURRET));
     }
 
-    void EnterEvadeMode() override 
+    void EnterEvadeMode(EvadeReason why = EVADE_REASON_OTHER) override 
     { 
         if (hasEvade)
             return;

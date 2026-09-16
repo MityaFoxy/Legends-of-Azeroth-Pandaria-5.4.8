@@ -17,6 +17,7 @@
 
 #include <mutex>
 #include "AccountMgr.h"
+#include "RBAC.h"
 #include "AchievementMgr.h"
 #include "ArenaTeam.h"
 #include "Battlefield.h"
@@ -359,16 +360,13 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
     for (auto itr = m.begin(); itr != m.end() && displaycount <= sWorld->getIntConfig(CONFIG_MAX_WHO); ++itr)
     {
         Player* target = itr->second;
-        if (security == SEC_PLAYER)
-        {
-            // player can see member of other team only if CONFIG_ALLOW_TWO_SIDE_WHO_LIST
-            if (target->GetTeam() != team && !allowTwoSideWhoList)
-                continue;
+        // player can see member of other team only if CONFIG_ALLOW_TWO_SIDE_WHO_LIST
+        if (target->GetTeam() != team && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_WHO_LIST))
+            continue;
 
-            // player can see MODERATOR, GAME MASTER, ADMINISTRATOR only if CONFIG_GM_IN_WHO_LIST
-            if (target->GetSession()->GetSecurity() > AccountTypes(gmLevelInWhoList))
-                continue;
-        }
+        // player can see MODERATOR, GAME MASTER, ADMINISTRATOR only if CONFIG_GM_IN_WHO_LIST
+        if (!HasPermission(rbac::RBAC_PERM_WHO_SEE_ALL_SEC_LEVELS) && target->GetSession()->GetSecurity() > AccountTypes(gmLevelInWhoList))
+            continue;
 
         // do not process players which are not in world
         if (!target->IsInWorld())
@@ -558,7 +556,7 @@ void WorldSession::HandleLogoutRequestOpcode(WorldPacket& /*recvData*/)
         DoLootRelease(lguid);
 
     bool instantLogout = GetPlayer()->HasFlag(PLAYER_FIELD_PLAYER_FLAGS, PLAYER_FLAGS_RESTING) || GetPlayer()->IsInFlight() ||
-        GetSecurity() >= AccountTypes(sWorld->getIntConfig(CONFIG_INSTANT_LOGOUT));
+        HasPermission(rbac::RBAC_PERM_INSTANT_LOGOUT);
 
     /// TODO: Possibly add RBAC permission to log out in combat
     bool canLogoutInCombat = GetPlayer()->HasFlag(PLAYER_FIELD_PLAYER_FLAGS, PLAYER_FLAGS_RESTING);
@@ -817,13 +815,13 @@ void WorldSession::HandleAddFriendOpcode(WorldPacket& recvData)
             team = Player::TeamForRace(fields[1].GetUInt8());
             friendAccountId = fields[2].GetUInt32();
 
-            if (GetSecurity() >= SEC_MODERATOR || sWorld->getBoolConfig(CONFIG_ALLOW_GM_FRIEND) || AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm) < SEC_MODERATOR)
+            if (HasPermission(rbac::RBAC_PERM_ALLOW_GM_FRIEND) || AccountMgr::GetSecurity(friendAccountId, realm.Id.Realm) < SEC_MODERATOR)
             {
                 if (friendGuid)
                 {
                     if (friendGuid == GetPlayer()->GetGUID())
                         friendResult = FRIEND_SELF;
-                    else if (GetPlayer()->GetTeam() != team && !sWorld->getBoolConfig(CONFIG_ALLOW_TWO_SIDE_ADD_FRIEND) && GetSecurity() < SEC_MODERATOR)
+                    else if (GetPlayer()->GetTeam() != team && !HasPermission(rbac::RBAC_PERM_TWO_SIDE_ADD_FRIEND))
                         friendResult = FRIEND_ENEMY;
                     else if (GetPlayer()->GetSocial()->HasFriend(friendGuid))
                         friendResult = FRIEND_ALREADY;
@@ -1710,7 +1708,7 @@ void WorldSession::HandleWorldTeleportOpcode(WorldPacket& recvData)
     TC_LOG_DEBUG("network", "CMSG_WORLD_TELEPORT: Player = %s, Time = %u, map = %u, x = %f, y = %f, z = %f, o = %f",
         GetPlayer()->GetName().c_str(), time, mapid, PositionX, PositionY, PositionZ, Orientation);
 
-    if (GetSecurity() >= SEC_ADMINISTRATOR)
+    if (HasPermission(rbac::RBAC_PERM_OPCODE_WORLD_TELEPORT))
         GetPlayer()->TeleportTo(mapid, PositionX, PositionY, PositionZ, Orientation);
     else
         SendNotification(LANG_YOU_NOT_HAVE_PERMISSION);
@@ -1722,7 +1720,7 @@ void WorldSession::HandleWhoisOpcode(WorldPacket& recvData)
     std::string charname;
     recvData >> charname;
 
-    if (GetSecurity() < SEC_ADMINISTRATOR)
+    if (!HasPermission(rbac::RBAC_PERM_OPCODE_WHOIS))
     {
         SendNotification(LANG_YOU_NOT_HAVE_PERMISSION);
         return;
@@ -1913,6 +1911,24 @@ void WorldSession::HandleTimeSyncResp(WorldPacket& recvData)
 
     // diff should be small
     TC_LOG_DEBUG("network", "Our ticks: %u, diff %u, latency %u", ourTicks, ourTicks - clientTicks, GetLatency());
+
+    uint32 serverTimeAtSent = _player->m_timeSyncServer;
+    uint32 roundTripDuration = getMSTimeDiff(serverTimeAtSent, getMSTime());
+    uint32 lagDelay = roundTripDuration / 2;
+
+    /*
+    clockDelta = serverTime - clientTime
+    where
+    serverTime: time that was displayed on the clock of the SERVER at the moment when the client processed the SMSG_TIME_SYNC_REQUEST packet.
+    clientTime:  time that was displayed on the clock of the CLIENT at the moment when the client processed the SMSG_TIME_SYNC_REQUEST packet.
+
+    Once clockDelta has been computed, we can compute the time of an event on server clock when we know the time of that same event on the client clock,
+    using the following relation:
+    serverTime = clockDelta + clientTime
+    */
+    int64 clockDelta = (int64)serverTimeAtSent + (int64)lagDelay - (int64)clientTicks;
+    _timeSyncClockDeltaQueue->push_back(std::pair<int64, uint32>(clockDelta, roundTripDuration));
+    ComputeNewClockDelta();
 
     _player->m_timeSyncClient = clientTicks;
     _player->m_timeSyncQueue.pop();
@@ -2333,7 +2349,7 @@ void WorldSession::HandleRequestHotfix(WorldPacket& recvPacket)
     uint32 type, count;
     recvPacket >> type;
 
-    DB2StorageBase const* store = GetDB2Storage(type);
+    DB2StorageBase const* store = sDB2Manager.GetStorage(type);
     if (!store)
     {
         TC_LOG_DEBUG("network", "CMSG_REQUEST_HOTFIX: Received unknown hotfix type: %u", type);
@@ -2499,7 +2515,10 @@ void WorldSession::HandleUpdateMissileTrajectory(WorldPacket& recvPacket)
         uint32 opcode;
         recvPacket >> opcode;
         recvPacket.SetOpcode(MSG_MOVE_STOP); // always set to MSG_MOVE_STOP in client SetOpcode
-        HandleMovementOpcodes(recvPacket);
+
+        WorldPackets::Movement::ClientPlayerMovement packet(std::move(recvPacket));
+        packet.Read();
+        HandleMovementOpcodes(packet);
     }
 }
 
@@ -2850,7 +2869,7 @@ void WorldSession::HandleShowTradeSkill(WorldPacket& recvData)
         return;
 
     SkillLineEntry const* skill = sSkillLineStore.LookupEntry(skillId);
-    if (!skill || !skill->canLink)
+    if (!skill || !skill->CanLink)
         return;
 
     uint32 val = player->GetSkillValue(skillId);
@@ -2860,7 +2879,7 @@ void WorldSession::HandleShowTradeSkill(WorldPacket& recvData)
     bool match = false;
     auto bounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
     for (auto it = bounds.first; it != bounds.second; ++it)
-        if (it->second->skillId == skillId)
+        if (it->second->SkillLine == skillId)
             match = true;
 
     if (!match)
