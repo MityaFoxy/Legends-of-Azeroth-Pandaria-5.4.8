@@ -30,6 +30,29 @@ Few thing to get it working beside importing databases:
 + the first start may take times, be patient let everything load and randomize
 
 
+## Compilation & Testing Instructions
+
+### Compilation (Linux)
+1. Install requirements (e.g., GCC, CMake, OpenSSL, Boost, libmysqlclient-dev).
+2. Create a build directory and run CMake:
+   ```bash
+   mkdir build && cd build
+   cmake ../ -DWITH_WARNINGS=1
+   ```
+3. Compile the code using `make`:
+   ```bash
+   make -j$(nproc)
+   ```
+4. The compiled executables (like `worldserver`) will be located in `build/src/server/worldserver/`.
+
+### Testing Playerbots
+1. Ensure the MySQL server is running.
+2. Import the necessary game databases and playerbot databases (`mop_playerbots`).
+3. Modify your `worldserver.conf` and copy `playerbots.conf` to the directory with your executables as described in the requirements above.
+4. Launch the `worldserver` executable.
+5. In the server console or in-game, you can check playerbots using standard bot commands (or simply observe starting zones to verify they are equipping items and starting at level 5, unless properly configured otherwise).
+
+
 ## Copyright
 License: GPL 2.0
 
