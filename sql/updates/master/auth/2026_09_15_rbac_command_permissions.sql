@@ -45,6 +45,15 @@ REPLACE INTO `updates` (`name`, `hash`, `state`, `speed`) VALUES
 -- --------------------------------------------------------
 -- Table structures (created if missing)
 -- --------------------------------------------------------
+
+
+
+
+CREATE TABLE IF NOT EXISTS `rbac_permissions` (
+  `id` int unsigned NOT NULL DEFAULT '0' COMMENT 'Permission id',
+  `name` varchar(100) NOT NULL COMMENT 'Permission name',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COMMENT='Permission List';
 CREATE TABLE IF NOT EXISTS `rbac_account_permissions` (
   `accountId` int unsigned NOT NULL COMMENT 'Account id',
   `permissionId` int unsigned NOT NULL COMMENT 'Permission id',
@@ -55,7 +64,6 @@ CREATE TABLE IF NOT EXISTS `rbac_account_permissions` (
   CONSTRAINT `fk__rbac_account_permissions__account` FOREIGN KEY (`accountId`) REFERENCES `account` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk__rbac_account_roles__rbac_permissions` FOREIGN KEY (`permissionId`) REFERENCES `rbac_permissions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COMMENT='Account-Permission relation';
-
 CREATE TABLE IF NOT EXISTS `rbac_default_permissions` (
   `secId` int unsigned NOT NULL COMMENT 'Security Level id',
   `permissionId` int unsigned NOT NULL COMMENT 'permission id',
@@ -64,7 +72,6 @@ CREATE TABLE IF NOT EXISTS `rbac_default_permissions` (
   KEY `fk__rbac_default_permissions__rbac_permissions` (`permissionId`),
   CONSTRAINT `fk__rbac_default_permissions__rbac_permissions` FOREIGN KEY (`permissionId`) REFERENCES `rbac_permissions` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COMMENT='Default permission to assign to different account security levels';
-
 CREATE TABLE IF NOT EXISTS `rbac_linked_permissions` (
   `id` int unsigned NOT NULL COMMENT 'Permission id',
   `linkedId` int unsigned NOT NULL COMMENT 'Linked Permission id',
@@ -74,12 +81,6 @@ CREATE TABLE IF NOT EXISTS `rbac_linked_permissions` (
   CONSTRAINT `fk__rbac_linked_permissions__rbac_permissions1` FOREIGN KEY (`id`) REFERENCES `rbac_permissions` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk__rbac_linked_permissions__rbac_permissions2` FOREIGN KEY (`linkedId`) REFERENCES `rbac_permissions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COMMENT='Permission - Linked Permission relation';
-
-CREATE TABLE IF NOT EXISTS `rbac_permissions` (
-  `id` int unsigned NOT NULL DEFAULT '0' COMMENT 'Permission id',
-  `name` varchar(100) NOT NULL COMMENT 'Permission name',
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COMMENT='Permission List';
 
 -- --------------------------------------------------------
 -- Data
