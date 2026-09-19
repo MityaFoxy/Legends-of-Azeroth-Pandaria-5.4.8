@@ -563,6 +563,9 @@ class Eluna
 
         ~Eluna()
         {
+            if (!L)
+                return;
+
             for (std::map<int, std::vector<int> >::iterator itr = ServerEventBindings.begin(); itr != ServerEventBindings.end(); ++itr)
             {
                 for (std::vector<int>::iterator it = itr->second.begin(); it != itr->second.end(); ++it)
