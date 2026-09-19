@@ -36,7 +36,7 @@ void AutoMaintenanceOnLevelupAction::AutoPickTalents()
     //if (!sPlayerbotAIConfig->autoPickTalents || !sRandomPlayerbotMgr->IsRandomBot(bot))
         //return;
 
-    if ((bot->CalculateTalentsPoints() - bot->GetUsedTalentCount()) <= 0)
+    if (bot->GetUsedTalentCount() >= bot->CalculateTalentsPoints())
         return;
 
     BotFactory factory(bot, bot->GetLevel());
@@ -66,4 +66,3 @@ void AutoMaintenanceOnLevelupAction::AutoUpgradeEquip()
     factory.InitAmmo();*/
     return;
 }
-

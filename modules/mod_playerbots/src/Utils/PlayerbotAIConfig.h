@@ -72,9 +72,6 @@ public:
     bool randomBotRandomPassword;
     std::vector<uint32> randomBotAccounts;
 
-    std::string premadeSpecName[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
-    std::vector<uint16> premadeSpecLink[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
-
     uint32 iterationsPerTick;
 
     std::string combatStrategies, nonCombatStrategies;

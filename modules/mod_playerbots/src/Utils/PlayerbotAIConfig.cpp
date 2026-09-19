@@ -181,43 +181,6 @@ bool PlayerbotAIConfig::Initialize()
     sRandomPlayerbotMgr->PrepareTeleportCache();
 
     TC_LOG_INFO("server.loading", "---------------------------------------");
-    TC_LOG_INFO("server.loading", "          Loading TalentSpecs          ");
-    TC_LOG_INFO("server.loading", "---------------------------------------");
-    for (uint32 cls = 1; cls < MAX_CLASSES; ++cls)
-    {
-        for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS; ++spec)
-        {
-            std::ostringstream os;
-            os << "AiPlayerbot.PremadeSpecName." << cls << "." << spec;
-            std::string loadSpec = sConfigMgr->GetStringDefault(os.str().c_str(), "", false);
-            if (!loadSpec.empty())
-            {
-                std::string premadeSpecLinkLoader[MAX_CLASSES][MAX_SPECIALIZATIONS];
-                premadeSpecName[cls][spec] = loadSpec;
-
-                os.str("");
-                os.clear();
-                os << "AiPlayerbot.PremadeSpecLink." << cls << "." << spec;
-
-                premadeSpecLinkLoader[cls][spec] = sConfigMgr->GetStringDefault(os.str().c_str(), "", true);
-                std::vector<std::string> splitSpec = split(premadeSpecLinkLoader[cls][spec], ',');
-                for (std::string& split : splitSpec)
-                {
-                    if (split.size() != 0)
-                    {
-                        premadeSpecLink[cls][spec].push_back(atoi(split.c_str()));
-                    }
-                }
-
-                TC_LOG_DEBUG("playerbots", "Premade spec loaded: %s - %s", loadSpec.c_str(), premadeSpecLinkLoader[cls][spec].c_str());
-            }
-            os.str("");
-            os.clear();
-        }
-    }
-
-
-    TC_LOG_INFO("server.loading", "---------------------------------------");
     TC_LOG_INFO("server.loading", "        AI Playerbots initialized       ");
     TC_LOG_INFO("server.loading", "---------------------------------------");
 
