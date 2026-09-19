@@ -98,4 +98,62 @@ public:
     CastProvokeAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "provoke") {}
 };
 
+class CastRenewingMistOnPartyAction : public BuffOnPartyAction
+{
+public:
+    CastRenewingMistOnPartyAction(PlayerbotAI* botAI) : BuffOnPartyAction(botAI, "renewing mist") {}
+};
+
+class CastSoothingMistOnPartyAction : public HealPartyMemberAction
+{
+public:
+    CastSoothingMistOnPartyAction(PlayerbotAI* botAI)
+        : HealPartyMemberAction(botAI, "soothing mist", 15.0f, HealingManaEfficiency::VERY_HIGH)
+    {
+    }
+};
+
+class CastSurgingMistOnPartyAction : public HealPartyMemberAction
+{
+public:
+    CastSurgingMistOnPartyAction(PlayerbotAI* botAI)
+        : HealPartyMemberAction(botAI, "surging mist", 35.0f, HealingManaEfficiency::LOW)
+    {
+    }
+};
+
+class CastEnvelopingMistOnPartyAction : public HealPartyMemberAction
+{
+public:
+    CastEnvelopingMistOnPartyAction(PlayerbotAI* botAI)
+        : HealPartyMemberAction(botAI, "enveloping mist", 30.0f, HealingManaEfficiency::MEDIUM)
+    {
+    }
+};
+
+class CastLifeCocoonOnPartyAction : public HealPartyMemberAction
+{
+public:
+    CastLifeCocoonOnPartyAction(PlayerbotAI* botAI)
+        : HealPartyMemberAction(botAI, "life cocoon", 40.0f, HealingManaEfficiency::MEDIUM)
+    {
+    }
+};
+
+class CastUpliftAction : public CastSpellAction
+{
+public:
+    CastUpliftAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "uplift") {}
+
+    std::string const GetTargetName() override { return "self target"; }
+};
+
+class CastManaTeaAction : public CastSpellAction
+{
+public:
+    CastManaTeaAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "mana tea") {}
+
+    std::string const GetTargetName() override { return "self target"; }
+};
+
 #endif

@@ -15,6 +15,17 @@
 #include "NamedObjectContext.h"
 #include "Playerbots.h"
 
+class ManaTeaTrigger : public HasAuraStackTrigger
+{
+public:
+    ManaTeaTrigger(PlayerbotAI* botAI) : HasAuraStackTrigger(botAI, "mana tea", 2) {}
+
+    bool IsActive() override
+    {
+        return HasAuraStackTrigger::IsActive() && AI_VALUE2(uint8, "mana", "self target") < 50;
+    }
+};
+
 class MonkStrategyFactoryInternal : public NamedObjectContext<Strategy>
 {
 public:
@@ -36,11 +47,13 @@ public:
     {
         creators["melee"] = &MonkCombatStrategyFactoryInternal::melee;
         creators["tank"] = &MonkCombatStrategyFactoryInternal::tank;
+        creators["heal"] = &MonkCombatStrategyFactoryInternal::heal;
     }
 
 private:
     static Strategy* melee(PlayerbotAI* botAI) { return new WindwalkerMonkStrategy(botAI); }
     static Strategy* tank(PlayerbotAI* botAI) { return new BrewmasterMonkStrategy(botAI); }
+    static Strategy* heal(PlayerbotAI* botAI) { return new MistweaverMonkStrategy(botAI); }
 };
 
 class MonkTriggerFactoryInternal : public NamedObjectContext<Trigger>
@@ -53,6 +66,7 @@ public:
         creators["guard"] = &MonkTriggerFactoryInternal::guard;
         creators["moderate stagger"] = &MonkTriggerFactoryInternal::moderate_stagger;
         creators["heavy stagger"] = &MonkTriggerFactoryInternal::heavy_stagger;
+        creators["mana tea available"] = &MonkTriggerFactoryInternal::mana_tea_available;
     }
 
 private:
@@ -64,6 +78,7 @@ private:
     static Trigger* guard(PlayerbotAI* botAI) { return new BuffTrigger(botAI, "guard"); }
     static Trigger* moderate_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "moderate stagger"); }
     static Trigger* heavy_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "heavy stagger"); }
+    static Trigger* mana_tea_available(PlayerbotAI* botAI) { return new ManaTeaTrigger(botAI); }
 };
 
 class MonkAiObjectContextInternal : public NamedObjectContext<Action>
@@ -86,6 +101,13 @@ public:
         creators["fortifying brew"] = &MonkAiObjectContextInternal::fortifying_brew;
         creators["provoke"] = &MonkAiObjectContextInternal::provoke;
         creators["taunt spell"] = &MonkAiObjectContextInternal::provoke;
+        creators["renewing mist on party"] = &MonkAiObjectContextInternal::renewing_mist_on_party;
+        creators["soothing mist on party"] = &MonkAiObjectContextInternal::soothing_mist_on_party;
+        creators["surging mist on party"] = &MonkAiObjectContextInternal::surging_mist_on_party;
+        creators["enveloping mist on party"] = &MonkAiObjectContextInternal::enveloping_mist_on_party;
+        creators["life cocoon on party"] = &MonkAiObjectContextInternal::life_cocoon_on_party;
+        creators["uplift"] = &MonkAiObjectContextInternal::uplift;
+        creators["mana tea"] = &MonkAiObjectContextInternal::mana_tea;
     }
 
 private:
@@ -103,6 +125,13 @@ private:
     static Action* purifying_brew(PlayerbotAI* botAI) { return new CastPurifyingBrewAction(botAI); }
     static Action* fortifying_brew(PlayerbotAI* botAI) { return new CastFortifyingBrewAction(botAI); }
     static Action* provoke(PlayerbotAI* botAI) { return new CastProvokeAction(botAI); }
+    static Action* renewing_mist_on_party(PlayerbotAI* botAI) { return new CastRenewingMistOnPartyAction(botAI); }
+    static Action* soothing_mist_on_party(PlayerbotAI* botAI) { return new CastSoothingMistOnPartyAction(botAI); }
+    static Action* surging_mist_on_party(PlayerbotAI* botAI) { return new CastSurgingMistOnPartyAction(botAI); }
+    static Action* enveloping_mist_on_party(PlayerbotAI* botAI) { return new CastEnvelopingMistOnPartyAction(botAI); }
+    static Action* life_cocoon_on_party(PlayerbotAI* botAI) { return new CastLifeCocoonOnPartyAction(botAI); }
+    static Action* uplift(PlayerbotAI* botAI) { return new CastUpliftAction(botAI); }
+    static Action* mana_tea(PlayerbotAI* botAI) { return new CastManaTeaAction(botAI); }
 };
 
 MonkAiObjectContext::MonkAiObjectContext(PlayerbotAI* botAI) : AiObjectContext(botAI)
