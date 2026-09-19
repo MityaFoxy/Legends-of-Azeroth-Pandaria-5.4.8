@@ -156,4 +156,12 @@ public:
     std::string const GetTargetName() override { return "self target"; }
 };
 
+class CastElusiveBrewAction : public CastSpellAction
+{
+public:
+    CastElusiveBrewAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "elusive brew") {}
+
+    std::string const GetTargetName() override { return "self target"; }
+};
+
 #endif

@@ -26,6 +26,18 @@ public:
     }
 };
 
+class ElusiveBrewAvailableTrigger : public Trigger
+{
+public:
+    ElusiveBrewAvailableTrigger(PlayerbotAI* botAI) : Trigger(botAI, "elusive brew available") {}
+
+    bool IsActive() override
+    {
+        Aura* stacks = bot->GetAura(128939);
+        return stacks && stacks->GetStackAmount() >= 5 && bot->GetHealthPct() < 80.0f;
+    }
+};
+
 class MonkStrategyFactoryInternal : public NamedObjectContext<Strategy>
 {
 public:
@@ -67,6 +79,7 @@ public:
         creators["moderate stagger"] = &MonkTriggerFactoryInternal::moderate_stagger;
         creators["heavy stagger"] = &MonkTriggerFactoryInternal::heavy_stagger;
         creators["mana tea available"] = &MonkTriggerFactoryInternal::mana_tea_available;
+        creators["elusive brew available"] = &MonkTriggerFactoryInternal::elusive_brew_available;
     }
 
 private:
@@ -79,6 +92,7 @@ private:
     static Trigger* moderate_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "moderate stagger"); }
     static Trigger* heavy_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "heavy stagger"); }
     static Trigger* mana_tea_available(PlayerbotAI* botAI) { return new ManaTeaTrigger(botAI); }
+    static Trigger* elusive_brew_available(PlayerbotAI* botAI) { return new ElusiveBrewAvailableTrigger(botAI); }
 };
 
 class MonkAiObjectContextInternal : public NamedObjectContext<Action>
@@ -108,6 +122,7 @@ public:
         creators["life cocoon on party"] = &MonkAiObjectContextInternal::life_cocoon_on_party;
         creators["uplift"] = &MonkAiObjectContextInternal::uplift;
         creators["mana tea"] = &MonkAiObjectContextInternal::mana_tea;
+        creators["elusive brew"] = &MonkAiObjectContextInternal::elusive_brew;
     }
 
 private:
@@ -132,6 +147,7 @@ private:
     static Action* life_cocoon_on_party(PlayerbotAI* botAI) { return new CastLifeCocoonOnPartyAction(botAI); }
     static Action* uplift(PlayerbotAI* botAI) { return new CastUpliftAction(botAI); }
     static Action* mana_tea(PlayerbotAI* botAI) { return new CastManaTeaAction(botAI); }
+    static Action* elusive_brew(PlayerbotAI* botAI) { return new CastElusiveBrewAction(botAI); }
 };
 
 MonkAiObjectContext::MonkAiObjectContext(PlayerbotAI* botAI) : AiObjectContext(botAI)

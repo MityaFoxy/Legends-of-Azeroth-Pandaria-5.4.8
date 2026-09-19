@@ -66,6 +66,8 @@ void BrewmasterMonkStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         NextAction::array(0, new NextAction("purifying brew", ACTION_HIGH + 2), nullptr)));
     triggers.push_back(new TriggerNode("guard",
         NextAction::array(0, new NextAction("guard", ACTION_HIGH + 1), nullptr)));
+    triggers.push_back(new TriggerNode("elusive brew available",
+        NextAction::array(0, new NextAction("elusive brew", ACTION_HIGH + 1), nullptr)));
     triggers.push_back(new TriggerNode("low health",
         NextAction::array(0, new NextAction("expel harm", ACTION_HIGH + 2), nullptr)));
     triggers.push_back(new TriggerNode("critical health",
