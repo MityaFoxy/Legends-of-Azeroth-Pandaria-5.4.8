@@ -62,4 +62,40 @@ public:
     CastSpearHandStrikeAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "spear hand strike") {}
 };
 
+class CastKegSmashAction : public CastMeleeSpellAction
+{
+public:
+    CastKegSmashAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "keg smash") {}
+};
+
+class CastBreathOfFireAction : public CastMeleeSpellAction
+{
+public:
+    CastBreathOfFireAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "breath of fire") {}
+};
+
+class CastGuardAction : public CastBuffSpellAction
+{
+public:
+    CastGuardAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "guard") {}
+};
+
+class CastPurifyingBrewAction : public CastBuffSpellAction
+{
+public:
+    CastPurifyingBrewAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "purifying brew") {}
+};
+
+class CastFortifyingBrewAction : public CastBuffSpellAction
+{
+public:
+    CastFortifyingBrewAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "fortifying brew") {}
+};
+
+class CastProvokeAction : public CastMeleeSpellAction
+{
+public:
+    CastProvokeAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "provoke") {}
+};
+
 #endif

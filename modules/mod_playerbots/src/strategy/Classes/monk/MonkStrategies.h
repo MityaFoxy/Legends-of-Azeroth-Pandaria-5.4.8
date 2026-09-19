@@ -34,4 +34,24 @@ public:
     std::string const getName() override { return "melee aoe"; }
 };
 
+class BrewmasterMonkStrategy : public MeleeCombatStrategy
+{
+public:
+    BrewmasterMonkStrategy(PlayerbotAI* botAI);
+
+    void InitTriggers(std::vector<TriggerNode*>& triggers) override;
+    NextAction** getDefaultActions() override;
+    std::string const getName() override { return "tank"; }
+    uint32 GetType() const override { return MeleeCombatStrategy::GetType() | STRATEGY_TYPE_TANK; }
+};
+
+class BrewmasterMonkAoeStrategy : public CombatStrategy
+{
+public:
+    BrewmasterMonkAoeStrategy(PlayerbotAI* botAI) : CombatStrategy(botAI) {}
+
+    void InitTriggers(std::vector<TriggerNode*>& triggers) override;
+    std::string const getName() override { return "aoe"; }
+};
+
 #endif

@@ -21,10 +21,12 @@ public:
     MonkStrategyFactoryInternal()
     {
         creators["melee aoe"] = &MonkStrategyFactoryInternal::melee_aoe;
+        creators["aoe"] = &MonkStrategyFactoryInternal::aoe;
     }
 
 private:
     static Strategy* melee_aoe(PlayerbotAI* botAI) { return new WindwalkerMonkAoeStrategy(botAI); }
+    static Strategy* aoe(PlayerbotAI* botAI) { return new BrewmasterMonkAoeStrategy(botAI); }
 };
 
 class MonkCombatStrategyFactoryInternal : public NamedObjectContext<Strategy>
@@ -33,10 +35,12 @@ public:
     MonkCombatStrategyFactoryInternal() : NamedObjectContext<Strategy>(false, true)
     {
         creators["melee"] = &MonkCombatStrategyFactoryInternal::melee;
+        creators["tank"] = &MonkCombatStrategyFactoryInternal::tank;
     }
 
 private:
     static Strategy* melee(PlayerbotAI* botAI) { return new WindwalkerMonkStrategy(botAI); }
+    static Strategy* tank(PlayerbotAI* botAI) { return new BrewmasterMonkStrategy(botAI); }
 };
 
 class MonkTriggerFactoryInternal : public NamedObjectContext<Trigger>
@@ -46,6 +50,9 @@ public:
     {
         creators["tiger power"] = &MonkTriggerFactoryInternal::tiger_power;
         creators["spear hand strike"] = &MonkTriggerFactoryInternal::spear_hand_strike;
+        creators["guard"] = &MonkTriggerFactoryInternal::guard;
+        creators["moderate stagger"] = &MonkTriggerFactoryInternal::moderate_stagger;
+        creators["heavy stagger"] = &MonkTriggerFactoryInternal::heavy_stagger;
     }
 
 private:
@@ -54,6 +61,9 @@ private:
     {
         return new InterruptSpellTrigger(botAI, "spear hand strike");
     }
+    static Trigger* guard(PlayerbotAI* botAI) { return new BuffTrigger(botAI, "guard"); }
+    static Trigger* moderate_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "moderate stagger"); }
+    static Trigger* heavy_stagger(PlayerbotAI* botAI) { return new HasAuraTrigger(botAI, "heavy stagger"); }
 };
 
 class MonkAiObjectContextInternal : public NamedObjectContext<Action>
@@ -69,6 +79,13 @@ public:
         creators["spinning crane kick"] = &MonkAiObjectContextInternal::spinning_crane_kick;
         creators["expel harm"] = &MonkAiObjectContextInternal::expel_harm;
         creators["spear hand strike"] = &MonkAiObjectContextInternal::spear_hand_strike;
+        creators["keg smash"] = &MonkAiObjectContextInternal::keg_smash;
+        creators["breath of fire"] = &MonkAiObjectContextInternal::breath_of_fire;
+        creators["guard"] = &MonkAiObjectContextInternal::guard;
+        creators["purifying brew"] = &MonkAiObjectContextInternal::purifying_brew;
+        creators["fortifying brew"] = &MonkAiObjectContextInternal::fortifying_brew;
+        creators["provoke"] = &MonkAiObjectContextInternal::provoke;
+        creators["taunt spell"] = &MonkAiObjectContextInternal::provoke;
     }
 
 private:
@@ -80,6 +97,12 @@ private:
     static Action* spinning_crane_kick(PlayerbotAI* botAI) { return new CastSpinningCraneKickAction(botAI); }
     static Action* expel_harm(PlayerbotAI* botAI) { return new CastExpelHarmAction(botAI); }
     static Action* spear_hand_strike(PlayerbotAI* botAI) { return new CastSpearHandStrikeAction(botAI); }
+    static Action* keg_smash(PlayerbotAI* botAI) { return new CastKegSmashAction(botAI); }
+    static Action* breath_of_fire(PlayerbotAI* botAI) { return new CastBreathOfFireAction(botAI); }
+    static Action* guard(PlayerbotAI* botAI) { return new CastGuardAction(botAI); }
+    static Action* purifying_brew(PlayerbotAI* botAI) { return new CastPurifyingBrewAction(botAI); }
+    static Action* fortifying_brew(PlayerbotAI* botAI) { return new CastFortifyingBrewAction(botAI); }
+    static Action* provoke(PlayerbotAI* botAI) { return new CastProvokeAction(botAI); }
 };
 
 MonkAiObjectContext::MonkAiObjectContext(PlayerbotAI* botAI) : AiObjectContext(botAI)
