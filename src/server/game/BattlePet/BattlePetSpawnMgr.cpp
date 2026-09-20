@@ -334,12 +334,24 @@ void BattlePetSpawnZoneMgr::SpawnCreature(Map* map, ObjectGuid guid, BattlePetSp
     if (!speciesEntry)
         return;
 
+    float replacementZ = creature->GetPositionZ();
+    if (replacementZ <= INVALID_HEIGHT)
+    {
+        replacementZ = map->GetHeight(creature->GetPhaseMask(), creature->GetPositionX(), creature->GetPositionY(), MAX_HEIGHT, true, MAX_FALL_DISTANCE);
+        if (replacementZ <= INVALID_HEIGHT)
+        {
+            TC_LOG_ERROR("battlepet", "Unable to find a valid height for wild battle pet replacement at X: %f, Y: %f on map %u",
+                creature->GetPositionX(), creature->GetPositionY(), map->GetId());
+            return;
+        }
+    }
+
     // initialise replacement creature
     Creature* replacementCreature = new Creature();
     replacementCreature->m_isTempWorldObject = true;
 
     if (!replacementCreature->Create(map->GenerateLowGuid<HighGuid::Unit>(), creature->GetMap(), creature->GetPhaseMask(),
-        speciesEntry->NpcId, 0, 0, creature->m_positionX, creature->m_positionY, creature->m_positionZ, creature->GetOrientation()))
+        speciesEntry->NpcId, 0, 0, creature->GetPositionX(), creature->GetPositionY(), replacementZ, creature->GetOrientation()))
     {
         // something went wrong, delete newly created creature
         delete replacementCreature;
