@@ -347,12 +347,19 @@ Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes c
         }
     }
 
+    bool excludeCheck = (race == RACE_TAUREN) || (race == RACE_DRAENEI) ||
+        (gender == GENDER_FEMALE && race != RACE_NIGHTELF && race != RACE_UNDEAD_PLAYER);
+
+    if (skinColors.empty() || faces.empty() || hairs.empty() || (!excludeCheck && facialHairTypes.empty()))
+    {
+        TC_LOG_ERROR("playerbots", "Missing character appearance data for race %u, gender %u (skin: %zu, face: %zu, hair: %zu, facial hair: %zu)",
+            race, gender, skinColors.size(), faces.size(), hairs.size(), facialHairTypes.size());
+        return nullptr;
+    }
+
     uint8 skinColor = skinColors[std::rand() % skinColors.size()];
     std::pair<uint8, uint8> face = faces[std::rand() % faces.size()];
     std::pair<uint8, uint8> hair = hairs[std::rand() % hairs.size()];
-
-    bool excludeCheck = (race == RACE_TAUREN) || (race == RACE_DRAENEI) ||
-        (gender == GENDER_FEMALE && race != RACE_NIGHTELF && race != RACE_UNDEAD_PLAYER);
     uint8 facialHair = excludeCheck ? 0 : facialHairTypes[std::rand() % facialHairTypes.size()];
 
     WorldPacket p;
@@ -651,4 +658,3 @@ void RandomPlayerbotFactory::CreateRandomBots()
 
     TC_LOG_INFO("server.loading", ">> %u random bot accounts with %u characters available", sPlayerbotAIConfig->randomBotAccounts.size(), totalRandomBotChars);
 }
-

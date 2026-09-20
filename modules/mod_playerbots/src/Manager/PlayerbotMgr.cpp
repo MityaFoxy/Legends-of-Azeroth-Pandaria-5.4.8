@@ -120,6 +120,7 @@ void PlayerbotHolder::HandlePlayerBotLoginCallback(PlayerbotLoginQueryHolder con
         botSession->LogoutPlayer(true);
         delete botSession;
         botLoading.erase(botGUID);
+        botInitializationLevels.erase(botGUID);
         return;
     }
 
@@ -180,6 +181,19 @@ void PlayerbotHolder::HandlePlayerBotLoginCallback(PlayerbotLoginQueryHolder con
         sRandomPlayerbotMgr->OnPlayerLogin(bot);
         OnBotLogin(bot);
 
+        auto initialization = botInitializationLevels.find(botGUID);
+        if (initialization != botInitializationLevels.end())
+        {
+            uint32 level = initialization->second;
+            botInitializationLevels.erase(initialization);
+
+            sRandomPlayerbotMgr->SetValue(bot, "level", level);
+            sRandomPlayerbotMgr->Randomize(bot);
+            BotFactory factory(bot, bot->GetLevel());
+            factory.InitTalentsTree(true);
+            factory.InitEquipment(true);
+        }
+
         TC_LOG_DEBUG("playerbots", "Player logged: %s", bot->GetName().c_str());
     }
     else
@@ -187,9 +201,16 @@ void PlayerbotHolder::HandlePlayerBotLoginCallback(PlayerbotLoginQueryHolder con
         TC_LOG_ERROR("playerbots", "Bot error on logging: %s", out.str().c_str());
         botSession->LogoutPlayer(true);
         delete botSession;
+        botInitializationLevels.erase(botGUID);
     }
 
     botLoading.erase(botGUID);
+}
+
+void PlayerbotHolder::InitializeBotOnLogin(ObjectGuid guid, uint32 level)
+{
+    if (botLoading.find(guid) != botLoading.end())
+        botInitializationLevels[guid] = level;
 }
 
 void PlayerbotHolder::UpdateSessions()
@@ -744,7 +765,7 @@ std::vector<std::string> PlayerbotHolder::HandlePlayerbotCommand(char const* arg
         if (!charname)
         {
             messages.push_back(
-                "addclass: invalid CLASSNAME(warrior/paladin/hunter/rogue/priest/shaman/mage/warlock/druid/dk)");
+                "addclass: invalid CLASSNAME(warrior/paladin/hunter/rogue/priest/shaman/mage/warlock/druid/dk/monk)");
             return messages;
         }
         uint8 claz;
@@ -811,25 +832,7 @@ std::vector<std::string> PlayerbotHolder::HandlePlayerbotCommand(char const* arg
                 continue;
 
             AddPlayerBot(guid, master->GetSession()->GetAccountId());
-            // ugly
-            std::thread([this, master, guid]
-            {
-                Player* bot = nullptr;
-                int max_try = 100;
-                do
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(120));
-                    bot = ObjectAccessor::FindConnectedPlayer(guid);
-                    if (bot) break;
-                    --max_try;
-                } while (bot == nullptr && max_try > 0);
-                if (!bot) return;
-                sRandomPlayerbotMgr->SetValue(bot, "level", master->GetLevel());
-                sRandomPlayerbotMgr->Randomize(bot);
-                BotFactory factory(bot, bot->GetLevel());
-                factory.InitTalentsTree(true);
-                factory.InitEquipment(true);
-            }).detach();
+            InitializeBotOnLogin(guid, master->GetLevel());
             
             messages.push_back("Add class " + std::string(charname));
             return messages;

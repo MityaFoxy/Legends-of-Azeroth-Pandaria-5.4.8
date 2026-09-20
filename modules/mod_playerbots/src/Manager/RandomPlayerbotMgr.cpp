@@ -991,8 +991,6 @@ void RandomPlayerbotMgr::PrepareAddclassCache()
     int32 collected = 0;
     for (uint8 claz = CLASS_WARRIOR; claz <= CLASS_DRUID; claz++)
     {
-        if (claz == 10)
-            continue;
         QueryResult results = CharacterDatabase.PQuery(
             "SELECT guid, race FROM characters "
             "WHERE account >= %u AND account <= %u AND class = '%u' AND online = 0 AND "
