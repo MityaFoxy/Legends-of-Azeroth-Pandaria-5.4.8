@@ -29,6 +29,7 @@
 #include "UnitAI.h"
 #include "GameObjectAI.h"
 #include "ScriptMgr.h"
+#include "TransportMgr.h"
 #include "Util.h"
 
 GameEventMgr* GameEventMgr::instance()
@@ -1300,9 +1301,23 @@ void GameEventMgr::GameEventSpawn(int16 event_id)
 
     for (GuidList::iterator itr = mGameEventGameobjectGuids[internal_event_id].begin(); itr != mGameEventGameobjectGuids[internal_event_id].end(); ++itr)
     {
-        // Add to correct cell
         if (GameObjectData const* data = sObjectMgr->GetGOData(*itr))
         {
+            if (GameObjectTemplate const* goInfo = sObjectMgr->GetGameObjectTemplate(data->id))
+            {
+                if (goInfo->type == GAMEOBJECT_TYPE_TRANSPORT)
+                {
+                    sTransportMgr->AddLocalTransportSpawn(data->mapid, data->spawnMask, *itr);
+
+                    Map* map = sMapMgr->CreateBaseMap(data->mapid);
+                    if (!map->Instanceable())
+                        sTransportMgr->CreateLocalTransport(*itr, map);
+
+                    continue;
+                }
+            }
+
+            // Add to correct cell
             sObjectMgr->AddGameobjectToGrid(*itr, data);
             // Spawn if necessary (loaded grids only)
             // this base map checked as non-instanced and then only existed
@@ -1393,6 +1408,23 @@ void GameEventMgr::GameEventUnspawn(int16 event_id)
         // Remove the gameobject from grid
         if (GameObjectData const* data = sObjectMgr->GetGOData(*itr))
         {
+            if (GameObjectTemplate const* goInfo = sObjectMgr->GetGameObjectTemplate(data->id))
+            {
+                if (goInfo->type == GAMEOBJECT_TYPE_TRANSPORT)
+                {
+                    sTransportMgr->RemoveLocalTransportSpawn(data->mapid, data->spawnMask, *itr);
+
+                    sMapMgr->DoForAllMapsWithMapId(data->mapid, [&itr](Map* map)
+                    {
+                        if (GameObject* gameObject = map->GetGameObjectBySpawnId(*itr))
+                            if (Transport* transport = gameObject->ToTransport())
+                                map->RemoveFromMap<Transport>(transport, true);
+                    });
+
+                    continue;
+                }
+            }
+
             sObjectMgr->RemoveGameobjectFromGrid(*itr, data);
 
             sMapMgr->DoForAllMapsWithMapId(data->mapid, [&itr](Map* map)

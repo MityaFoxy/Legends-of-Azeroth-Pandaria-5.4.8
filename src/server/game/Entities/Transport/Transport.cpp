@@ -52,6 +52,7 @@ Transport::~Transport()
 
 bool Transport::CreateLocal(uint32 guidlow, uint32 entry, Map* map, float x, float y, float z, float ang, uint32 animprogress)
 {
+    m_DBTableGuid = guidlow;
     SetMap(map);
 
     Relocate(x, y, z, ang);

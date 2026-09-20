@@ -2487,7 +2487,7 @@ void ObjectMgr::LoadGameobjects()
             WorldDatabase.Execute(stmt);
         }
 
-        if (gInfo->type == GAMEOBJECT_TYPE_TRANSPORT)
+        if (gInfo->type == GAMEOBJECT_TYPE_TRANSPORT && gameEvent == 0 && PoolId == 0)
             sTransportMgr->AddLocalTransportSpawn(data.mapid, data.spawnMask, guid);
         else if (gameEvent == 0 && PoolId == 0)                      // if not this is to be managed by GameEvent System or Pool system or Transport system
             AddGameobjectToGrid(guid, &data);
