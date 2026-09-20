@@ -1287,9 +1287,44 @@ bool SmartAIMgr::IsTextValid(SmartScriptHolder const& e, uint32 id)
         return true;
 
     uint32 entry = 0;
+
+    // TALK normally uses the target creature as the talker.  Validating the
+    // script owner in that case rejects valid dialogue (for example a vehicle
+    // asking its passenger to speak) when the text belongs to the target.
+    if (e.GetActionType() == SMART_ACTION_SIMPLE_TALK ||
+        (e.GetActionType() == SMART_ACTION_TALK && !e.action.talk.useTalkTarget))
+    {
+        switch (e.GetTargetType())
+        {
+            case SMART_TARGET_CREATURE_RANGE:
+                entry = e.target.unitRange.creature;
+                break;
+            case SMART_TARGET_CREATURE_GUID:
+                entry = e.target.unitGUID.entry;
+                if (!entry && e.target.unitGUID.dbGuid)
+                {
+                    if (CreatureData const* data = sObjectMgr->GetCreatureData(e.target.unitGUID.dbGuid))
+                        entry = data->id;
+                }
+                break;
+            case SMART_TARGET_CREATURE_DISTANCE:
+                entry = e.target.unitDistance.creature;
+                break;
+            case SMART_TARGET_CLOSEST_CREATURE:
+                entry = e.target.closest.entry;
+                break;
+            default:
+                break;
+        }
+    }
+
     if (e.entryOrGuid >= 0)
-        entry = uint32(e.entryOrGuid);
-    else {
+    {
+        if (!entry)
+            entry = uint32(e.entryOrGuid);
+    }
+    else if (!entry)
+    {
         entry = uint32(abs(e.entryOrGuid));
         CreatureData const* data = sObjectMgr->GetCreatureData(entry);
         if (!data)
