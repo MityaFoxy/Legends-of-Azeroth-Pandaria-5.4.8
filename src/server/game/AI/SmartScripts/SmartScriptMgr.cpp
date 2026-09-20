@@ -1281,7 +1281,7 @@ bool SmartAIMgr::IsEventValid(SmartScriptHolder& e)
 //     return true;
 // }
 
-bool SmartAIMgr::IsTextValid(SmartScriptHolder const& e, uint32 id) 
+bool SmartAIMgr::IsTextValid(SmartScriptHolder const& e, uint32 id)
 {
     if (e.GetScriptType() != SMART_SCRIPT_TYPE_CREATURE)
         return true;
@@ -1313,6 +1313,12 @@ bool SmartAIMgr::IsTextValid(SmartScriptHolder const& e, uint32 id)
             case SMART_TARGET_CLOSEST_CREATURE:
                 entry = e.target.closest.entry;
                 break;
+            case SMART_TARGET_STORED:
+                // The target is resolved only while the event is processed.
+                // It can be a creature whose entry differs from the script
+                // owner (for example after SMART_ACTION_UPDATE_TEMPLATE), so
+                // validating the owner here would reject a valid dialogue.
+                return true;
             default:
                 break;
         }
