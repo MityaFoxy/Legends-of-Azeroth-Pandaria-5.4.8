@@ -4680,7 +4680,8 @@ void ObjectMgr::LoadQuests()
                         TC_LOG_ERROR("sql.sql", "Quest %u objective %u has non existing battlepet species id %u", qinfo->GetQuestId(), obj.ID, obj.ObjectID);
                     break;
                 case QUEST_OBJECTIVE_AREATRIGGER:
-                    if (!sAreaTriggerStore.LookupEntry(uint32(obj.ObjectID)) && obj.ObjectID != -1)
+                    // ObjectID is 0 for objectives that are linked by their objective ID.
+                    if (!sAreaTriggerStore.LookupEntry(uint32(obj.ObjectID)) && obj.ObjectID != 0 && obj.ObjectID != -1)
                         TC_LOG_ERROR("sql.sql", "Quest %u objective %u has non existing AreaTrigger.db2 id %u", qinfo->GetQuestId(), obj.ID, obj.ObjectID);
                     break;
                 case QUEST_OBJECTIVE_MONEY:
