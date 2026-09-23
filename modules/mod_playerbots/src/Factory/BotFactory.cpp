@@ -144,6 +144,11 @@ void BotFactory::Randomize(bool incremental)
         // -- Unlearn talents and spec
         bot->ResetTalents(true, true, true);
 
+        // Random bots are initialized through this path, not through the
+        // addclass flow. Rebuild their MoP specialization and talent tiers
+        // immediately after clearing the previous choices.
+        InitTalentsTree(false);
+
         // -- release pet
         bot->RemovePet(PetRemoveMode::PET_REMOVE_ABANDON, PetRemoveFlag::PET_REMOVE_FLAG_NONE);
 
