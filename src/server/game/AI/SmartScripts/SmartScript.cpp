@@ -1503,6 +1503,19 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
             delete targets;
             break;
         }
+        case SMART_ACTION_LOAD_EQUIPMENT:
+        {
+            ObjectList* targets = GetTargets(e, unit);
+            if (!targets)
+                break;
+
+            for (ObjectList::const_iterator itr = targets->begin(); itr != targets->end(); ++itr)
+                if (Creature* npc = (*itr)->ToCreature())
+                    npc->LoadEquipment(static_cast<int8>(e.action.equip.entry), true);
+
+            delete targets;
+            break;
+        }
         case SMART_ACTION_CREATE_TIMED_EVENT:
         {
             SmartEvent ne = SmartEvent();
