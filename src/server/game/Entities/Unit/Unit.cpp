@@ -327,6 +327,12 @@ void GlobalCooldownMgr::CancelGlobalCooldown(SpellInfo const* spellInfo)
 // Methods of class Unit
 Unit::~Unit()
 {
+    // AbstractFollower removes itself from this set through SetTarget().
+    // Do this while this Unit is still alive so followers cannot retain a
+    // dangling target pointer after its destruction.
+    while (!_followers.empty())
+        (*_followers.begin())->SetTarget(nullptr);
+
     // set current spells as deletable
     for (uint8 i = 0; i < CURRENT_MAX_SPELL; ++i)
         if (m_currentSpells [i])
