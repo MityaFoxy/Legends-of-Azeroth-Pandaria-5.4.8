@@ -456,6 +456,8 @@ void PoolMgr::Initialize()
 
 void PoolMgr::LoadFromDB()
 {
+    mQuestPoolIds.clear();
+
     // Pool templates
     {
         uint32 oldMSTime = getMSTime();
@@ -484,6 +486,19 @@ void PoolMgr::LoadFromDB()
         while (result->NextRow());
 
         TC_LOG_INFO("server.loading", ">> Loaded %u objects pools in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+    }
+
+    // Quest pools are managed independently by QuestPoolMgr. Keep their IDs so
+    // the ordinary object-pool validation below does not report valid quest
+    // pools (or their parents) as empty.
+    {
+        QueryResult result = WorldDatabase.Query("SELECT DISTINCT pool_entry FROM pool_quest");
+        if (result)
+        {
+            do
+                mQuestPoolIds.insert(result->Fetch()[0].GetUInt32());
+            while (result->NextRow());
+        }
     }
 
     // Creatures
@@ -736,9 +751,21 @@ void PoolMgr::LoadFromDB()
         }
     }
 
+    // A parent whose only useful descendants are quest pools is also valid.
+    // Do not alter the object-pool spawn path: this set is diagnostic-only.
+    std::vector<uint32> questPoolIds(mQuestPoolIds.begin(), mQuestPoolIds.end());
+    for (uint32 questPoolId : questPoolIds)
+    {
+        std::set<uint32> checkedPools;
+        for (SearchMap::const_iterator poolItr = mPoolSearchMap.find(questPoolId);
+             poolItr != mPoolSearchMap.end() && checkedPools.insert(poolItr->first).second;
+             poolItr = mPoolSearchMap.find(poolItr->second))
+            mQuestPoolIds.insert(poolItr->second);
+    }
+
     for (auto const& [poolId, templateData] : mPoolTemplate)
     {
-        if (IsEmpty(poolId))
+        if (IsEmpty(poolId) && mQuestPoolIds.find(poolId) == mQuestPoolIds.end())
         {
             TC_LOG_ERROR("sql.sql", "Pool Id %u is empty (has no creatures and no gameobects and either no child pools or child pools are all empty. The pool will not be spawned", poolId);
             continue;

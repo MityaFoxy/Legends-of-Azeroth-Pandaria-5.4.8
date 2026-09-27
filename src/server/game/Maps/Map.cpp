@@ -4122,7 +4122,7 @@ void Map::LoadCorpseData()
         }
 
         Corpse* corpse = new Corpse(type);
-        if (!corpse->LoadCorpseFromDB(GenerateLowGuid<HighGuid::Corpse>(), fields))
+        if (!corpse->LoadCorpseFromDB(guid, fields))
         {
             delete corpse;
             continue;

@@ -158,6 +158,7 @@ class PoolMgr
         SearchMap mCreatureSearchMap;
         SearchMap mGameobjectSearchMap;
         SearchMap mPoolSearchMap;
+        std::unordered_set<uint32> mQuestPoolIds;
         std::unordered_map<uint32, std::vector<uint32>> mAutoSpawnPoolsPerMap;
 };
 

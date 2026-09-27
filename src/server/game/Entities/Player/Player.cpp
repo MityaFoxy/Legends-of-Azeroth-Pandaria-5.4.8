@@ -5245,7 +5245,7 @@ Corpse* Player::CreateCorpse()
     Corpse* corpse = new Corpse((m_ExtraFlags & PLAYER_EXTRA_PVP_DEATH) ? CORPSE_RESURRECTABLE_PVP : CORPSE_RESURRECTABLE_PVE);
     SetPvPDeath(false);
 
-    if (!corpse->Create(GetMap()->GenerateLowGuid<HighGuid::Corpse>(), this))
+    if (!corpse->Create(sObjectMgr->GetGenerator<HighGuid::Corpse>().Generate(), this))
     {
         delete corpse;
         return nullptr;

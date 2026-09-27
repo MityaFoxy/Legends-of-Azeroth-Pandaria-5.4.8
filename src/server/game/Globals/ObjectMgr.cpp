@@ -6880,9 +6880,11 @@ void ObjectMgr::SetHighestGuids()
     if (result)
         _muteId = (*result)[0].GetUInt32() + 1;
 
-//    result = CharacterDatabase.Query("SELECT MAX(corpseGuid) FROM corpse");
-//    if (result)
-//        _hiCorpseGuid = (*result)[0].GetUInt32()+1;
+    // corpseGuid is the primary key of the character database table, so it must
+    // be allocated globally rather than from a map-local sequence.
+    result = CharacterDatabase.Query("SELECT MAX(corpseGuid) FROM corpse");
+    if (result)
+        GetGuidSequenceGenerator<HighGuid::Corpse>().Set((*result)[0].GetUInt32() + 1);
 
     result = CharacterDatabase.Query("SELECT MAX(setguid) FROM character_equipmentsets");
     if (result)
