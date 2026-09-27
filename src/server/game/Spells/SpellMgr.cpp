@@ -3128,6 +3128,13 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case 42821: // Headless Horseman - Wisp Flight Missile
                     spellInfo->RangeEntry = sSpellRangeStore.LookupEntry(6); // 100 yards
                     break;
+                case 45437: // Stamp Out Bonfire
+                    // The DBC entry uses a nearby destination target, while all
+                    // event conditions identify the eligible Midsummer bonfire
+                    // gameobjects. Keep nearby-entry selection and restore the
+                    // object type so those conditions can select the bonfire.
+                    spellInfo->Effects[EFFECT_0].TargetA = SpellImplicitTargetInfo(TARGET_GAMEOBJECT_NEARBY_ENTRY);
+                    break;
                 case 36350: // They Must Burn Bomb Aura (self)
                     spellInfo->Effects[EFFECT_0].TriggerSpell = 36325; // They Must Burn Bomb Drop (DND)
                     break;
