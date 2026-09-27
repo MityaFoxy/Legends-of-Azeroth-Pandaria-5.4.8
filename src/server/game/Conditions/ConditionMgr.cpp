@@ -1870,27 +1870,31 @@ bool ConditionMgr::isSourceTypeValid(Condition* cond) const
                 if (spellInfo->Effects[i].Effect == SPELL_EFFECT_APPLY_AREA_AURA_ENTRY)
                     continue;
 
-                switch (spellInfo->Effects[i].TargetA.GetSelectionCategory())
+                // Conditions are also valid for an implicit direct object
+                // target. Spell::CallScriptObjectTargetSelectHandlers applies
+                // them before the target is added to the spell target map.
+                auto hasImplicitWorldObjectTarget = [](SpellImplicitTargetInfo const& target)
                 {
-                    case TARGET_SELECT_CATEGORY_NEARBY:
-                    case TARGET_SELECT_CATEGORY_CONE:
-                    case TARGET_SELECT_CATEGORY_AREA:
-                        continue;
-                    default:
-                        break;
-                }
+                    switch (target.GetObjectType())
+                    {
+                        case TARGET_OBJECT_TYPE_UNIT:
+                        case TARGET_OBJECT_TYPE_UNIT_AND_DEST:
+                        case TARGET_OBJECT_TYPE_GOBJ:
+                        case TARGET_OBJECT_TYPE_GOBJ_ITEM:
+                        case TARGET_OBJECT_TYPE_CORPSE:
+                        case TARGET_OBJECT_TYPE_CORPSE_ENEMY:
+                        case TARGET_OBJECT_TYPE_CORPSE_ALLY:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
 
-                switch (spellInfo->Effects[i].TargetB.GetSelectionCategory())
-                {
-                    case TARGET_SELECT_CATEGORY_NEARBY:
-                    case TARGET_SELECT_CATEGORY_CONE:
-                    case TARGET_SELECT_CATEGORY_AREA:
-                        continue;
-                    default:
-                        break;
-                }
+                if (hasImplicitWorldObjectTarget(spellInfo->Effects[i].TargetA) ||
+                    hasImplicitWorldObjectTarget(spellInfo->Effects[i].TargetB))
+                    continue;
 
-                TC_LOG_ERROR("sql.sql", "SourceEntry %u SourceGroup %u in `condition` table - spell %u does not have implicit targets of types: _AREA_, _CONE_, _NEARBY_ for effect %u, SourceGroup needs correction, ignoring.", cond->SourceEntry, origGroup, cond->SourceEntry, uint32(i));
+                TC_LOG_ERROR("sql.sql", "SourceEntry %u SourceGroup %u in `condition` table - spell %u does not have an implicit object target for effect %u, SourceGroup needs correction, ignoring.", cond->SourceEntry, origGroup, cond->SourceEntry, uint32(i));
                 cond->SourceGroup &= ~(1<<i);
             }
             // all effects were removed, no need to add the condition at all

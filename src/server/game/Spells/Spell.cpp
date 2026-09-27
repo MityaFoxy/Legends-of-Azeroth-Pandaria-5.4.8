@@ -8996,6 +8996,16 @@ void Spell::CallScriptObjectAreaTargetSelectHandlers(std::list<WorldObject*>& ta
 
 void Spell::CallScriptObjectTargetSelectHandlers(WorldObject*& target, SpellEffIndex effIndex)
 {
+    if (target)
+    {
+        if (ConditionContainer const* conditions = m_spellInfo->Effects[effIndex].ImplicitTargetConditions)
+        {
+            ConditionSourceInfo sourceInfo(target, m_caster);
+            if (!sConditionMgr->IsObjectMeetToConditions(sourceInfo, *conditions))
+                target = nullptr;
+        }
+    }
+
     for (std::list<SpellScript*>::iterator scritr = m_loadedScripts.begin(); scritr != m_loadedScripts.end(); ++scritr)
     {
         (*scritr)->_PrepareScriptCall(SPELL_SCRIPT_HOOK_OBJECT_TARGET_SELECT);
