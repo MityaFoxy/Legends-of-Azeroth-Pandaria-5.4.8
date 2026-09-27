@@ -2340,6 +2340,11 @@ void LoadLootTemplates_Creature()
     CreatureTemplateContainer const* ctc = sObjectMgr->GetCreatureTemplates();
     for (CreatureTemplateContainer::const_iterator itr = ctc->begin(); itr != ctc->end(); ++itr)
     {
+        // Open-world boss templates with personal loot deliberately have no
+        // conventional creature_loot_template. Their loot is awarded per-player instead.
+        if ((itr->second.type_flags & CREATURE_TYPEFLAGS_BOSS) && sLootMgr->GetPersonalLoot(itr->first))
+            continue;
+
         if (uint32 lootid = itr->second.lootid)
         {
             if (lootIdSet.find(lootid) == lootIdSet.end())
@@ -3084,9 +3089,9 @@ void LootMgr::RewardLegendaryQuestLoot(Player* player, uint32 entry)
 
 void LootMgr::LoadFromDB()
 {
+    LoadPersonalLoot();
     LoadLootTables();
     LoadCreatureLootCurrency();
-    LoadPersonalLoot();
     LoadBonusLoot();
     LoadWorldDrop();
 }
