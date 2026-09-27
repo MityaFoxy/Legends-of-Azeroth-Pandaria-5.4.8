@@ -20,6 +20,7 @@
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
 #include "CellImpl.h"
+#include "ChaseMovementGenerator.h"
 #include "ConditionMgr.h"
 #include "CreatureAI.h"
 #include "CreatureAIImpl.h"
@@ -34,6 +35,7 @@
 #include "InstanceSaveMgr.h"
 #include "InstanceScript.h"
 #include "Log.h"
+#include "Map.h"
 #include "MapManager.h"
 #include "MiscPackets.h"
 #include "MoveSpline.h"
@@ -645,6 +647,106 @@ void Unit::GetRandomContactPoint(const Unit* obj, float &x, float &y, float &z, 
         --attacker_number;
     GetNearPoint(obj, x, y, z, distance2dMin + (distance2dMax - distance2dMin) * (float) rand_norm(),
                  GetAngle(obj) + (attacker_number ? (static_cast<float>(M_PI / 2) - static_cast<float>(M_PI) * (float) rand_norm()) * float(attacker_number) / combat_reach * 0.3f : 0));
+}
+
+bool Unit::GetMeleeRepositionPoint(Unit const* attacker, Position& position) const
+{
+    // position is the proposed contact point, or the current position for an
+    // idle attacker. Considering approach endpoints lets us separate pursuers
+    // before their models actually overlap at the target.
+    if (!attacker || attacker == this)
+        return false;
+
+    float const meleeRange = attacker->GetMeleeRange(this);
+    if (GetExactDistSq(position) >= meleeRange * meleeRange)
+        return false;
+
+    struct OccupiedPoint
+    {
+        Position Point;
+        float Radius;
+    };
+    std::vector<OccupiedPoint> occupied;
+    float const attackerRadius = attacker->GetCollisionRadius();
+    bool overlaps = false;
+
+    for (Unit const* other : getAttackers())
+    {
+        if (!other || other == attacker || !other->IsAlive() || !other->ToCreature() || other->IsPet())
+            continue;
+
+        Position point = other->GetPosition();
+        if (other->HasUnitState(UNIT_STATE_CHASE_MOVE) && !other->movespline->Finalized())
+        {
+            auto const* chase = dynamic_cast<ChaseMovementGenerator const*>(other->GetMotionMaster()->GetCurrentMovementGenerator());
+            if (!chase || chase->GetTarget() != this)
+                continue;
+
+            if (Optional<float> angle = chase->GetMeleeApproachAngle())
+            {
+                // A reserved angle follows the moving target; an old spline
+                // endpoint alone would become stale on every player step.
+                float const radius = GetCombatReach() + other->GetCombatReach() + CONTACT_DISTANCE;
+                point.Relocate(GetPositionX() + radius * std::cos(*angle), GetPositionY() + radius * std::sin(*angle), GetPositionZ());
+            }
+            else
+            {
+                auto const destination = other->movespline->FinalDestination();
+                point.Relocate(destination.x, destination.y, destination.z);
+            }
+        }
+
+        float const otherMeleeRange = other->GetMeleeRange(this);
+        if (GetExactDistSq(point) >= otherMeleeRange * otherMeleeRange)
+            continue;
+
+        float const radius = attackerRadius + other->GetCollisionRadius();
+        overlaps |= position.GetExactDist2d(&point) < radius;
+        occupied.push_back({point, radius});
+    }
+
+    if (!overlaps)
+        return false;
+
+    float const combatReach = GetCombatReach() + attacker->GetCombatReach();
+    float const radialDistance = combatReach + CONTACT_DISTANCE;
+    float const currentAngle = GetAbsoluteAngle(&position);
+    float const direction = attacker->GetGUID().GetCounter() & 1 ? 1.0f : -1.0f;
+    float const distanceFromContact = std::max(0.0f, radialDistance - combatReach);
+
+    auto isFree = [&](Position const& point)
+    {
+        for (OccupiedPoint const& other : occupied)
+            if (point.GetExactDist2d(&other.Point) < other.Radius + 0.15f)
+                return false;
+        return true;
+    };
+
+    // Search both directions, closest first, checking every occupied/reserved
+    // point rather than repeatedly side-stepping into the next attacker.
+    for (uint32 step = 0; step <= 16; ++step)
+    {
+        for (float side : {direction, -direction})
+        {
+            float const angle = currentAngle + side * float(step) * float(M_PI / 16.0);
+            Position candidate(GetPositionX() + radialDistance * std::cos(angle), GetPositionY() + radialDistance * std::sin(angle), GetPositionZ());
+            if (!isFree(candidate))
+                continue;
+
+            float x, y, z;
+            GetNearPoint(attacker, x, y, z, distanceFromContact, Position::NormalizeOrientation(angle));
+            if (!GetMap()->CanReachPositionAndGetValidCoords(attacker, x, y, z, true, true))
+                continue;
+
+            candidate.Relocate(x, y, z, attacker->GetAbsoluteAngle(this));
+            if (GetExactDistSq(candidate) >= meleeRange * meleeRange || !isFree(candidate))
+                continue;
+
+            position = candidate;
+            return true;
+        }
+    }
+    return false;
 }
 
 AuraApplication * Unit::GetVisibleAura(uint8 slot) const

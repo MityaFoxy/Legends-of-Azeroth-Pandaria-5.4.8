@@ -171,6 +171,9 @@ void FollowerAI::JustAppeared()
 
 void FollowerAI::EnterEvadeMode(EvadeReason why)
 {
+    if (IsEngaged())
+        EngagementOver();
+
     me->RemoveAllAuras();
     me->GetThreatManager().RemoveMeFromThreatLists();
     me->GetThreatManager().ClearAllThreat();

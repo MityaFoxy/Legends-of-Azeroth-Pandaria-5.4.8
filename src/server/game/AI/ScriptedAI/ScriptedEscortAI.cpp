@@ -181,6 +181,9 @@ void npc_escortAI::ReturnToLastPoint()
 
 void npc_escortAI::EnterEvadeMode(EvadeReason why)
 {
+    if (IsEngaged())
+        EngagementOver();
+
     me->RemoveAllAuras();
     me->GetThreatManager().RemoveMeFromThreatLists();
     me->GetThreatManager().ClearAllThreat();

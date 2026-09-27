@@ -433,8 +433,14 @@ int32 CreatureAI::VisualizeBoundary(Seconds duration, Unit* owner /*= nullptr*/,
 
 bool CreatureAI::UpdateVictimWithGaze()
 {
-    if (!me->IsInCombat())
+    if (!IsEngaged())
         return false;
+
+    if (!me->IsAlive())
+    {
+        EngagementOver();
+        return false;
+    }
 
     if (me->HasReactState(REACT_PASSIVE))
     {
@@ -469,8 +475,17 @@ bool NeedEvadeIfChallengeNotStarted(uint32 entry, uint32 mapId)
 
 bool CreatureAI::UpdateVictim()
 {
-    if (!me->IsInCombat())
+    // CombatManager removes IN_COMBAT when the last opponent dies, before
+    // this AI gets its next update. Engagement lasts until evade/reset, so
+    // SelectVictim must still run once to start the return home.
+    if (!IsEngaged())
         return false;
+
+    if (!me->IsAlive())
+    {
+        EngagementOver();
+        return false;
+    }
 
     if (InstanceScript* instance = me->GetInstanceScript())
     {

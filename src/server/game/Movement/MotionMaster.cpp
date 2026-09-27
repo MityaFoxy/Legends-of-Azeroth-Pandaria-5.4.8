@@ -574,6 +574,7 @@ void MotionMaster::MoveTargetedHome()
     if (_owner->GetTypeId() == TYPEID_UNIT && !_owner->ToCreature()->GetCharmerOrOwnerGUID())
     {
         TC_LOG_DEBUG("misc", "Creature (Entry: %u GUID: %u) targeted home", _owner->GetEntry(), _owner->GetGUID().GetCounter());
+        TC_LOG_DEBUG("movement.melee", "Return home requested: creature %u (GUID: %u)", _owner->GetEntry(), _owner->GetGUID().GetCounter());
         Mutate(new HomeMovementGenerator<Creature>(), MOTION_SLOT_ACTIVE);
     }
     else if (_owner->GetTypeId() == TYPEID_UNIT && _owner->ToCreature()->GetCharmerOrOwnerGUID())
@@ -613,13 +614,23 @@ void MotionMaster::MoveChase(Unit* target, float dist, float angle)
     if (!target || target == _owner || _owner->HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_DISABLE_MOVE))
         return;
 
+    // The float API uses zero for an unrestricted melee chase. Passing an
+    // engaged ChaseAngle(0) instead pins every attacker to the target's front;
+    // ChaseRange(0) also prevents the generator from recognizing default melee.
+    Optional<ChaseRange> range;
+    Optional<ChaseAngle> chaseAngle;
+    if (dist != 0.0f)
+        range = ChaseRange(dist);
+    if (angle != 0.0f)
+        chaseAngle = ChaseAngle(angle);
+
     if (_owner->GetTypeId() == TYPEID_PLAYER)
     {
         TC_LOG_DEBUG("misc", "Player (GUID: %u) chase to %s (GUID: %u)",
             _owner->GetGUID().GetCounter(),
             target->GetTypeId() == TYPEID_PLAYER ? "player" : "creature",
             target->GetTypeId() == TYPEID_PLAYER ? target->GetGUID().GetCounter() : target->ToCreature()->GetDBTableGUIDLow());
-        Mutate(new ChaseMovementGenerator(target, ChaseRange(dist), ChaseAngle(angle)), MOTION_SLOT_ACTIVE);
+        Mutate(new ChaseMovementGenerator(target, range, chaseAngle), MOTION_SLOT_ACTIVE);
     }
     else
     {
@@ -627,7 +638,7 @@ void MotionMaster::MoveChase(Unit* target, float dist, float angle)
             _owner->GetEntry(), _owner->GetGUID().GetCounter(),
             target->GetTypeId() == TYPEID_PLAYER ? "player" : "creature",
             target->GetTypeId() == TYPEID_PLAYER ? target->GetGUID().GetCounter() : target->ToCreature()->GetDBTableGUIDLow());
-        Mutate(new ChaseMovementGenerator(target, ChaseRange(dist), ChaseAngle(angle)), MOTION_SLOT_ACTIVE);
+        Mutate(new ChaseMovementGenerator(target, range, chaseAngle), MOTION_SLOT_ACTIVE);
     }
 }
 

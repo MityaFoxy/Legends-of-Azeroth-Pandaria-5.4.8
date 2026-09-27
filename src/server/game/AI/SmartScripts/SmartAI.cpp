@@ -464,7 +464,7 @@ void SmartAI::RemoveAuras()
     }
 }
 
-void SmartAI::EnterEvadeMode(EvadeReason why)
+void SmartAI::EnterEvadeMode(EvadeReason /*why*/)
 {
     if (!me->IsAlive() || me->IsInEvadeMode())
         return;
@@ -474,6 +474,12 @@ void SmartAI::EnterEvadeMode(EvadeReason why)
         GetScript()->ProcessEventsFor(SMART_EVENT_EVADE);
         return;
     }
+
+    // This override performs its own reset rather than _EnterEvadeMode.
+    // Finish engagement too, otherwise UpdateVictim starts evade again as
+    // soon as the creature reaches home. Keep disabled-evade scripts intact.
+    if (IsEngaged())
+        EngagementOver();
 
     RemoveAuras();
 
