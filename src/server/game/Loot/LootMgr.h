@@ -476,9 +476,10 @@ struct LootView
 struct PersonalLootTemplate
 {
     std::vector<uint32> Items;
-    uint32 MoneyBag;
-    uint32 MoneyBagFlex;
-    uint32 QuestTracker;
+    uint32 Entry = 0;
+    uint32 MoneyBag = 0;
+    uint32 MoneyBagFlex = 0;
+    uint32 QuestTracker = 0;
 };
 
 struct BonusLootTemplate

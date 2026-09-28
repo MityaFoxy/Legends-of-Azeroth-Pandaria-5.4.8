@@ -2343,7 +2343,11 @@ void LoadLootTemplates_Creature()
         // Open-world boss templates with personal loot deliberately have no
         // conventional creature_loot_template. Their loot is awarded per-player instead.
         if ((itr->second.type_flags & CREATURE_TYPEFLAGS_BOSS) && sLootMgr->GetPersonalLoot(itr->first))
+        {
+            if (uint32 lootid = itr->second.lootid)
+                lootIdSet.erase(lootid);
             continue;
+        }
 
         if (uint32 lootid = itr->second.lootid)
         {
@@ -2781,13 +2785,45 @@ void PersonalLoot::Reward(Player* player)
         Item* item = Item::CreateItem(itemId, 1, player);
         player->SendDisplayToast(item, 0, 0, TOAST_TYPE_ITEM, TOAST_DISPLAY_TYPE_ITEM);
         player->StoreNewItem(item);
-
-        uint32 questId = m_loot->QuestTracker ? m_loot->QuestTracker : 0;
-        if (questId)
-            if (player->GetQuestStatus(questId) != QUEST_STATUS_REWARDED)
-                if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
-                    player->RewardQuest(quest, 0, player, false);
     }
+
+    // Open-world bosses use personal loot and never expose their conventional
+    // corpse loot. Keep quest-start and quest-required items from that loot
+    // template on the same per-player reward path, including their conditions.
+    if (LootTemplate const* questLootTemplate = LootTemplates_Creature.GetLootFor(m_loot->Entry))
+    {
+        Loot questLoot;
+        uint32 lootMode = 1 << player->GetMap()->GetDifficulty();
+        questLootTemplate->Process(questLoot, LootTemplates_Creature.IsRatesAllowed(), lootMode, 0, player);
+
+        auto rewardQuestItems = [player](std::vector<LootItem> const& items)
+        {
+            for (LootItem const& lootItem : items)
+            {
+                ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(lootItem.itemid);
+                if (!itemTemplate || (!lootItem.needs_quest && !itemTemplate->StartQuest))
+                    continue;
+
+                if (!lootItem.AllowedForPlayer(player, nullptr))
+                    continue;
+
+                if (Item* item = Item::CreateItem(lootItem.itemid, lootItem.count, player))
+                {
+                    player->SendDisplayToast(item, lootItem.itemid, lootItem.count, TOAST_TYPE_ITEM, TOAST_DISPLAY_TYPE_ITEM);
+                    player->StoreNewItem(item);
+                }
+            }
+        };
+
+        rewardQuestItems(questLoot.items);
+        rewardQuestItems(questLoot.quest_items);
+    }
+
+    uint32 questId = m_loot->QuestTracker ? m_loot->QuestTracker : 0;
+    if (questId)
+        if (player->GetQuestStatus(questId) != QUEST_STATUS_REWARDED)
+            if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
+                player->RewardQuest(quest, 0, player, false);
 }
 
 BonusLoot::BonusLoot(uint32 lootId, Difficulty difficulty)
@@ -3151,6 +3187,7 @@ void LootMgr::LoadPersonalLoot()
             Field* fields = result->Fetch();
             PersonalLootTemplate loot;
             uint32 entry = fields[0].GetUInt32();
+            loot.Entry = entry;
             loot.MoneyBag  = fields[1].GetUInt32();
             loot.MoneyBagFlex = fields[2].GetUInt32();
             loot.QuestTracker = fields[3].GetUInt32();
@@ -3196,6 +3233,7 @@ void LootMgr::LoadPersonalLoot()
                 continue;
             }
             auto& loot = m_personalLoot[entry];
+            loot.Entry = entry;
             loot.Items.push_back(item);
         } while (result->NextRow());
     }
