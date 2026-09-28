@@ -4671,7 +4671,6 @@ void SpellMgr::LoadSpellInfoCorrections()
                     spellInfo->AttributesEx5 |= SPELL_ATTR5_USABLE_WHILE_STUNNED;
                     break;
                 case 79504: // Flamethrower
-                    spellInfo->Effects[EFFECT_0].TargetA = TARGET_UNIT_CONE_ENEMY_24;
                     spellInfo->AttributesEx5 |= SPELL_ATTR5_USABLE_WHILE_STUNNED;
                     break;
                 case 79617: // Backdraft
@@ -6213,9 +6212,6 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case 106827: // Smoke blades
                     spellInfo->Effects[1].ApplyAuraName = SPELL_AURA_DUMMY;
                     break;
-                case 112060: // Apparitions
-                    spellInfo->Effects[0].TargetB = 0;
-                    break;
                 case 106992: // Fire Arrow
                     spellInfo->Effects[EFFECT_0].ApplyAuraTickCount = 1500;
                     break;
@@ -6455,6 +6451,9 @@ void SpellMgr::LoadSpellInfoCorrections()
                     break;
                 case 124860: // Rain Dance
                     spellInfo->Effects[EFFECT_1].Effect = 0;
+                    spellInfo->Effects[EFFECT_0].TargetA = TARGET_DEST_CASTER_RANDOM;
+                    spellInfo->Effects[EFFECT_2].TargetA = TARGET_DEST_CASTER_RANDOM;
+                    spellInfo->Effects[EFFECT_3].TargetA = TARGET_DEST_CASTER_RANDOM;
                     break;
                 case 134789: // Fallen kin
                     spellInfo->DurationEntry = sSpellDurationStore.LookupEntry(28); // 5s
@@ -7540,8 +7539,11 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case 144191: // Explosive Ring Visual
                 case 144192:
                 case 144193:
-                case 144195:
+                case 144194:
                     spellInfo->Effects[EFFECT_0].TargetA = TARGET_DEST_CASTER;
+                    break;
+                case 144658: // Shockwave Missile - inner circle
+                    spellInfo->Effects[EFFECT_3].TargetB = TARGET_UNIT_DEST_AREA_ENEMY;
                     break;
                 // ENDOF SIEGE OF ORGRIMMAR
                 case 44544: // Fingers of Frost

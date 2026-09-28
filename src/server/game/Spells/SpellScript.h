@@ -75,6 +75,7 @@ class TC_GAME_API _SpellScript
                 virtual ~EffectHook() { }
 
                 uint32 GetAffectedEffectsMask(SpellInfo const* spellInfo);
+                uint32 GetAffectedEffectsMaskForAllDifficulties(SpellInfo const* spellInfo);
                 bool IsEffectAffected(SpellInfo const* spellInfo, uint8 effIndex);
                 virtual bool CheckEffect(SpellInfo const* spellInfo, uint8 effIndex) = 0;
                 std::string EffIndexToString();

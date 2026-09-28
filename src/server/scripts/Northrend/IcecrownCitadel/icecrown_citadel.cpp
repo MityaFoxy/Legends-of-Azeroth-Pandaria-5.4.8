@@ -2138,7 +2138,8 @@ class spell_icc_geist_alarm : public SpellScriptLoader
 
             void Register() override
             {
-                OnEffectHit += SpellEffectFn(spell_icc_geist_alarm_SpellScript::HandleEvent, EFFECT_1, SPELL_EFFECT_APPLY_AURA);
+                SpellEffIndex effectIndex = m_scriptSpellId == 70739 ? EFFECT_1 : EFFECT_2;
+                OnEffectHit += SpellEffectFn(spell_icc_geist_alarm_SpellScript::HandleEvent, effectIndex, SPELL_EFFECT_SEND_EVENT);
             }
         };
 

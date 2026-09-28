@@ -1064,7 +1064,12 @@ class spell_dart : public SpellScriptLoader
 
             void Register() override
             {
-                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_dart_SpellScript::SelectTarget, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
+                Targets targetType = TARGET_UNIT_SRC_AREA_ENTRY;
+                if (m_scriptSpellId == 119311)
+                    targetType = TARGET_UNIT_CONE_ENEMY_104;
+                else if (m_scriptSpellId == 120142)
+                    targetType = TARGET_UNIT_SRC_AREA_ENEMY;
+                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_dart_SpellScript::SelectTarget, EFFECT_0, targetType);
             }
         };
 

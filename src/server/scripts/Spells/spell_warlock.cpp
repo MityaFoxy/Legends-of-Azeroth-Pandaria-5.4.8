@@ -3371,7 +3371,6 @@ class spell_warl_havoc_target_selector : public SpellScript
     void Register() override
     {
         OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_0, TARGET_UNIT_TARGET_ENEMY);
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_warl_havoc_target_selector::SelectTargets, EFFECT_1, TARGET_UNIT_TARGET_ENEMY);
         AfterCast += SpellCastFn(spell_warl_havoc_target_selector::HandleCast);
     }
 };
@@ -3563,7 +3562,8 @@ class spell_warl_command_demon : public SpellScript
     void Register() override
     {
         OnCheckCast += SpellCheckCastFn(spell_warl_command_demon::CheckCast);
-        OnEffectHitTarget += SpellEffectFn(spell_warl_command_demon::SuppressDefault, EFFECT_0, SPELL_EFFECT_DUMMY);
+        uint16 effectType = sSpellMgr->GetSpellInfo(m_scriptSpellId)->Effects[EFFECT_0].Effect;
+        OnEffectHitTarget += SpellEffectFn(spell_warl_command_demon::SuppressDefault, EFFECT_0, effectType);
     }
 };
 
@@ -3726,8 +3726,10 @@ class spell_warl_demonic_gateway_summon : public SpellScript
 
     void Register() override
     {
-        OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_warl_demonic_gateway_summon::SelectDestPurple, EFFECT_0, TARGET_UNK_125);
-        OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_warl_demonic_gateway_summon::SelectDestGreen,  EFFECT_0, TARGET_UNK_138);
+        if (m_scriptSpellId == 113890)
+            OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_warl_demonic_gateway_summon::SelectDestPurple, EFFECT_0, TARGET_UNK_125);
+        else
+            OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_warl_demonic_gateway_summon::SelectDestGreen, EFFECT_0, TARGET_UNK_138);
     }
 };
 
