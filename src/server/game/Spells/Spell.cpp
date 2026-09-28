@@ -1105,6 +1105,10 @@ void Spell::SelectImplicitNearbyTargets(SpellEffIndex effIndex, SpellImplicitTar
 
     CallScriptObjectTargetSelectHandlers(target, effIndex);
 
+    // Conditions or a script may reject the object found by the nearby search.
+    if (!target)
+        return;
+
     switch (targetType.GetObjectType())
     {
         case TARGET_OBJECT_TYPE_UNIT:

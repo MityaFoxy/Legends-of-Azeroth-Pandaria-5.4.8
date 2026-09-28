@@ -1875,6 +1875,20 @@ bool ConditionMgr::isSourceTypeValid(Condition* cond) const
                 // them before the target is added to the spell target map.
                 auto hasImplicitWorldObjectTarget = [](SpellImplicitTargetInfo const& target)
                 {
+                    // Nearby destinations (e.g. Simon Game's crystal visuals)
+                    // first select a WorldObject with these conditions, then
+                    // use its position. The result type DEST does not mean
+                    // that the search has no object to filter.
+                    switch (target.GetSelectionCategory())
+                    {
+                        case TARGET_SELECT_CATEGORY_NEARBY:
+                        case TARGET_SELECT_CATEGORY_CONE:
+                        case TARGET_SELECT_CATEGORY_AREA:
+                            return true;
+                        default:
+                            break;
+                    }
+
                     switch (target.GetObjectType())
                     {
                         case TARGET_OBJECT_TYPE_UNIT:
