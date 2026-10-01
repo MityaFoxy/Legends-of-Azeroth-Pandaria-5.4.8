@@ -414,17 +414,17 @@ void DBUpdater<T>::ApplyFile(DatabaseWorkerPool<T>& pool, std::string const& hos
 
 #endif
 
-    // Execute sql file
-    args.emplace_back("-e");
-    args.emplace_back(Trinity::StringFormat("BEGIN; SOURCE %s; COMMIT;", path.generic_string().c_str()));
-
     // Database
     if (!database.empty())
         args.emplace_back(database);
 
-    // Invokes a mysql process which doesn't leak credentials to logs
+    // Feed the update through stdin instead of the mysql SOURCE command.
+    // MariaDB's client continues after errors inside SOURCE by default and can
+    // return success, which would make the updater record a partially applied
+    // file as complete. In batch mode an SQL error produces a non-zero exit
+    // status, so UpdateFetcher leaves the file pending and stops startup.
     int const ret = Trinity::StartProcess(DBUpdaterUtil::GetCorrectedMySQLExecutable(), args,
-                                 "sql.updates", "", true);
+                                 "sql.updates", path.generic_string(), true);
 
     if (ret != EXIT_SUCCESS)
     {

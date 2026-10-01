@@ -3316,6 +3316,10 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case 128407: // Poisoned Barb
                     spellInfo->Attributes |= SPELL_ATTR0_CANT_CANCEL;
                     break;
+                case 66836: // Gilneas - Summon Ravenous Worgen Alpha
+                case 66925: // Gilneas - Summon Ravenous Worgen Runt
+                    spellInfo->Effects[EFFECT_0].TargetA = SpellImplicitTargetInfo(TARGET_DEST_DB);
+                    break;
                 // ULDUAR SPELLS
                 //
                 case 64014: // Expedition Base Camp Teleport
@@ -3327,6 +3331,7 @@ void SpellMgr::LoadSpellInfoCorrections()
                 case 64024: // Conservatory Teleport
                 case 64025: // Halls of Invention Teleport
                 case 64027: // Descent into Madness Teleport
+                case 65042: // Prison of Yogg-Saron Teleport
                     spellInfo->Effects[EFFECT_0].TargetA = SpellImplicitTargetInfo(TARGET_DEST_DB);
                     break;
                 case 62374: // Pursued (Flame Leviathan)
