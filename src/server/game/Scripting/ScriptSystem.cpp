@@ -21,6 +21,7 @@
 #include "ScriptMgr.h"
 #include "SplineChain.h"
 #include "Creature.h"
+#include <unordered_set>
 
 ScriptPointVector const SystemMgr::_empty;
 
@@ -54,6 +55,8 @@ void SystemMgr::LoadScriptWaypoints()
         return;
     }
     uint32 count = 0;
+    std::unordered_set<uint32> missingCreatureEntries;
+    std::unordered_set<uint32> missingScriptEntries;
 
     do
     {
@@ -70,10 +73,11 @@ void SystemMgr::LoadScriptWaypoints()
         CreatureTemplate const* pCInfo = sObjectMgr->GetCreatureTemplate(temp.uiCreatureEntry);
         if (!pCInfo)
         {
-            TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for non-existant creature entry %u", temp.uiCreatureEntry);
+            if (missingCreatureEntries.insert(temp.uiCreatureEntry).second)
+                TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for non-existant creature entry %u", temp.uiCreatureEntry);
             continue;
         }
-        if (!pCInfo->ScriptID)
+        if (!pCInfo->ScriptID && missingScriptEntries.insert(temp.uiCreatureEntry).second)
             TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for creature entry %u, but creature does not have ScriptName defined and then useless.", temp.uiCreatureEntry);
 
         m_mPointMoveMap[temp.uiCreatureEntry].push_back(temp);
