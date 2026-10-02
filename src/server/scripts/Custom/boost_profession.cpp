@@ -43,7 +43,7 @@ enum spellId_600
 class Boost_Profession : public ItemScript
 {
 public:
-    Boost_Profession() : ItemScript("Boost_Profession") {}
+    Boost_Profession() : ItemScript("battle_pay_boost_profession") {}
 
     bool OnUse(Player* player, Item* item, SpellCastTargets const& targets) override
     {
@@ -89,13 +89,23 @@ public:
     void OnGossipSelect(Player* player, Item* item, uint32 sender, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
+        if (action == 1)
+        {
+            player->CLOSE_GOSSIP_MENU();
+            return;
+        }
+
+        if (!item || !player->HasItemCount(item->GetEntry(), 1, true) || !player->HasSkill(action))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage("The profession or token is no longer available.");
+            player->CLOSE_GOSSIP_MENU();
+            return;
+        }
+
         uint32 confirm = 0;
         
         switch (action)
         {
-        case 1:
-            player->CLOSE_GOSSIP_MENU();
-            break;
         case FIRST_AID:
             if (!player->HasSpell(SPELL_600_FIRST_AID))
             {
@@ -240,7 +250,7 @@ public:
 class Boost_Profession_Small : public ItemScript
 {
 public:
-	Boost_Profession_Small() : ItemScript("Boost_Profession_Small") {}
+    Boost_Profession_Small() : ItemScript("battle_pay_boost_profession_small") {}
 
     bool OnUse(Player* player, Item* item, SpellCastTargets const& targets) override
     {
@@ -286,13 +296,32 @@ public:
     void OnGossipSelect(Player* player, Item* item, uint32 sender, uint32 action) override
     {
         player->PlayerTalkClass->ClearMenus();
+
+        if (action == 1)
+        {
+            player->CLOSE_GOSSIP_MENU();
+            return;
+        }
+
+        if (!item || !player->HasItemCount(item->GetEntry(), 1, true))
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage("The token is no longer available.");
+            player->CLOSE_GOSSIP_MENU();
+            return;
+        }
         
         if(player->HasSkill(action))
         {
             int32 maxvalueprof = player->GetMaxSkillValue(action);
 
-            if(player->HasSkill(action) && player->GetSkillValue(action) < maxvalueprof)
-                player->SetSkill(action, player->GetSkillStep(action), maxvalueprof, maxvalueprof);
+            if (player->GetSkillValue(action) >= maxvalueprof)
+            {
+                ChatHandler(player->GetSession()).PSendSysMessage("That profession is already at its maximum skill.");
+                player->CLOSE_GOSSIP_MENU();
+                return;
+            }
+
+            player->SetSkill(action, player->GetSkillStep(action), maxvalueprof, maxvalueprof);
             
             ChatHandler(player->GetSession()).PSendSysMessage("Thanks for supporting the project!");
             player->DestroyItemCount(item->GetEntry(), 1, true); //Item is destroyed on useage.
