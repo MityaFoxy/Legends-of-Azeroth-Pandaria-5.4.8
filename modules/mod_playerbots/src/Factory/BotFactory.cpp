@@ -135,7 +135,7 @@ void BotFactory::Prepare()
  
 void BotFactory::Randomize(bool incremental)
 {
-    TC_LOG_INFO("playerbots", "%s randomizing %s (level %u class = %s)...", (incremental ? "Incremental" : "Full"),
+    TC_LOG_INFO("playerbots", "{} randomizing {} (level {} class = {})...", (incremental ? "Incremental" : "Full"),
             bot->GetName().c_str(), level, ClassToString((Classes)bot->GetClass()).c_str());
 
     Prepare();
@@ -233,7 +233,7 @@ void BotFactory::InitPet()
  
         if (ids.empty())
         {
-            TC_LOG_ERROR("playerbots", "No pets available for bot %s (%u level)", bot->GetName().c_str(), bot->GetLevel());
+            TC_LOG_ERROR("playerbots", "No pets available for bot {} ({} level)", bot->GetName().c_str(), bot->GetLevel());
             return;
         }
 
@@ -283,7 +283,7 @@ void BotFactory::InitPet()
     }
     else
     {
-        TC_LOG_ERROR("playerbots", "Cannot create pet for bot %s", bot->GetName().c_str());
+        TC_LOG_ERROR("playerbots", "Cannot create pet for bot {}", bot->GetName().c_str());
         return;
     }
  
@@ -355,7 +355,7 @@ void BotFactory::InitTalentsTree(bool reset)
 
         if (candidates.empty())
         {
-            TC_LOG_ERROR("playerbots", "No tier %u talents found for bot %s (class %u)", tier,
+            TC_LOG_ERROR("playerbots", "No tier {} talents found for bot {} (class {})", tier,
                 bot->GetName().c_str(), uint32(bot->GetClass()));
             continue;
         }

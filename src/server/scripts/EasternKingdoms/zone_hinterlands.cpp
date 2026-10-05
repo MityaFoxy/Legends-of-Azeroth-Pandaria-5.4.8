@@ -91,7 +91,7 @@ public:
             creature->AI()->Talk(SAY_OOX_START, player);
 
             if (npc_00x09hlAI* pEscortAI = CAST_AI(npc_00x09hl::npc_00x09hlAI, creature->AI()))
-                pEscortAI->Start(false, false, player->GetGUID(), quest);
+                pEscortAI->Start(false, player->GetGUID(), quest);
         }
         return true;
     }
@@ -101,13 +101,13 @@ public:
         return new npc_00x09hlAI(creature);
     }
 
-    struct npc_00x09hlAI : public npc_escortAI
+    struct npc_00x09hlAI : public EscortAI
     {
-        npc_00x09hlAI(Creature* creature) : npc_escortAI(creature) { }
+        npc_00x09hlAI(Creature* creature) : EscortAI(creature) { }
 
         void Reset() override { }
 
-        void WaypointReached(uint32 waypointId) override
+        void WaypointReached(uint32 waypointId, uint32 pathId) override
         {
             switch (waypointId)
             {
@@ -176,15 +176,18 @@ public:
         if (GameObject* cage = creature->FindNearestGameObject(GO_RINJIS_CAGE, INTERACTION_DISTANCE))
             cage->UseDoorOrButton();
 
-        if (npc_escortAI* escortAI = dynamic_cast<npc_escortAI*>(creature->AI()))
-            escortAI->Start(false, false, player->GetGUID(), quest);
+        if (EscortAI* escortAI = dynamic_cast<EscortAI*>(creature->AI()))
+        {
+            escortAI->SetRun(false);
+            escortAI->Start(false, player->GetGUID(), quest);
+        }
 
         return true;
     }
 
-    struct npc_rinjiAI : public npc_escortAI
+    struct npc_rinjiAI : public EscortAI
     {
-        explicit npc_rinjiAI(Creature* creature) : npc_escortAI(creature), _postEventCount(0), _postEventTimer(3000), _spawnIndex(0), _spokeToOutrunner(false) { }
+        explicit npc_rinjiAI(Creature* creature) : EscortAI(creature), _postEventCount(0), _postEventTimer(3000), _spawnIndex(0), _spokeToOutrunner(false) { }
 
         void Reset() override
         {
@@ -210,7 +213,7 @@ public:
                 Talk(1);
         }
 
-        void WaypointReached(uint32 pointId) override
+        void WaypointReached(uint32 pointId, uint32 pathId) override
         {
             switch (pointId)
             {

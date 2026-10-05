@@ -281,7 +281,7 @@ bool ChaseMovementGenerator::Update(Unit* owner, uint32 diff)
                 point.GetPosition(x, y, z);
                 float const selectedAngle = target->GetAbsoluteAngle(&point);
                 if (!_meleeApproachAngle || std::abs(Position::NormalizePitch(selectedAngle - *_meleeApproachAngle)) > 0.05f)
-                    TC_LOG_DEBUG("movement.melee", "Melee approach point: creature %u (GUID: %u), target %u, angle %.3f, point (%.3f, %.3f, %.3f)",
+                    TC_LOG_DEBUG("movement.melee", "Melee approach point: creature {} (GUID: {}), target {}, angle {:.3f}, point ({:.3f}, {:.3f}, {:.3f})",
                         cOwner->GetEntry(), cOwner->GetGUID().GetCounter(), target->GetGUID().GetCounter(), selectedAngle, x, y, z);
                 _meleeApproachAngle = selectedAngle;
                 if (GetMeleeChaseLanePoint(owner, target, point))
@@ -385,7 +385,7 @@ bool ChaseMovementGenerator::Update(Unit* owner, uint32 diff)
                 init.SetFacing(target);
                 init.Launch();
 
-                TC_LOG_DEBUG("movement.melee", "Melee reposition: creature %u (GUID: %u), target %u, from (%.3f, %.3f, %.3f) to (%.3f, %.3f, %.3f)",
+                TC_LOG_DEBUG("movement.melee", "Melee reposition: creature {} (GUID: {}), target {}, from ({:.3f}, {:.3f}, {:.3f}) to ({:.3f}, {:.3f}, {:.3f})",
                     creature->GetEntry(), creature->GetGUID().GetCounter(), target->GetGUID().GetCounter(),
                     owner->GetPositionX(), owner->GetPositionY(), owner->GetPositionZ(),
                     point.GetPositionX(), point.GetPositionY(), point.GetPositionZ());

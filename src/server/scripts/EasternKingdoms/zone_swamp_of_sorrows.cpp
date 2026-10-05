@@ -38,9 +38,10 @@ public:
         if (quest->GetQuestId() != QUEST_GALENS_ESCAPE)
             return true;
 
-        if (npc_escortAI* escortAI = dynamic_cast<npc_escortAI*>(creature->AI()))
+        if (EscortAI* escortAI = dynamic_cast<EscortAI*>(creature->AI()))
         {
-            escortAI->Start(false, false, player->GetGUID(), quest);
+            escortAI->SetRun(false);
+            escortAI->Start(false, player->GetGUID(), quest);
             creature->SetFaction(FACTION_ESCORT_N_NEUTRAL_ACTIVE);
             creature->AI()->Talk(1);
         }
@@ -48,9 +49,9 @@ public:
         return true;
     }
 
-    struct npc_galen_goodwardAI : public npc_escortAI
+    struct npc_galen_goodwardAI : public EscortAI
     {
-        explicit npc_galen_goodwardAI(Creature* creature) : npc_escortAI(creature), _periodicSayTimer(6000) { }
+        explicit npc_galen_goodwardAI(Creature* creature) : EscortAI(creature), _periodicSayTimer(6000) { }
 
         void Reset() override
         {
@@ -74,7 +75,7 @@ public:
                 Talk(5);
         }
 
-        void WaypointReached(uint32 pointId) override
+        void WaypointReached(uint32 pointId, uint32 pathId) override
         {
             if (pointId == 0)
             {

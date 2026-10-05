@@ -45,7 +45,7 @@ void SystemMgr::LoadScriptWaypoints()
     if (result)
         uiCreatureCount = result->GetRowCount();
 
-    TC_LOG_INFO("server.loading", "Loading Script Waypoints for " UI64FMTD " creature(s)...", uiCreatureCount);
+    TC_LOG_INFO("server.loading", "Loading Script Waypoints for " "{}" " creature(s)...", uiCreatureCount);
 
     //                                     0       1         2           3           4           5
     result = WorldDatabase.Query("SELECT entry, pointid, location_x, location_y, location_z, waittime FROM script_waypoint ORDER BY pointid");
@@ -74,11 +74,11 @@ void SystemMgr::LoadScriptWaypoints()
         if (!pCInfo)
         {
             if (missingCreatureEntries.insert(temp.uiCreatureEntry).second)
-                TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for non-existant creature entry %u", temp.uiCreatureEntry);
+                TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for non-existant creature entry {}", temp.uiCreatureEntry);
             continue;
         }
         if (!pCInfo->ScriptID && missingScriptEntries.insert(temp.uiCreatureEntry).second)
-            TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for creature entry %u, but creature does not have ScriptName defined and then useless.", temp.uiCreatureEntry);
+            TC_LOG_ERROR("sql.sql", "TSCR: DB table script_waypoint has waypoint for creature entry {}, but creature does not have ScriptName defined and then useless.", temp.uiCreatureEntry);
 
         m_mPointMoveMap[temp.uiCreatureEntry].push_back(temp);
 
@@ -86,7 +86,7 @@ void SystemMgr::LoadScriptWaypoints()
     }
     while (result->NextRow());
 
-    TC_LOG_INFO("server.loading", ">> Loaded %u Script Waypoint nodes in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("server.loading", ">> Loaded {} Script Waypoint nodes in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
 void SystemMgr::LoadScriptSplineChains()

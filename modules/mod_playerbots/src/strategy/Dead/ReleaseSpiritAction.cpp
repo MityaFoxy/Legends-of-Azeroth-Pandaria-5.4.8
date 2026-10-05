@@ -44,7 +44,7 @@ bool ReleaseSpiritAction::Execute(Event event)
         context->GetValue<uint32>("death count")->Set(dCount + 1);
     }
 
-    TC_LOG_INFO("playerbots", "Bot %s %s:%u <%s> released", bot->GetGUID().ToString().c_str(),
+    TC_LOG_INFO("playerbots", "Bot {} {}:{} <{}> released", bot->GetGUID().ToString().c_str(),
              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     WorldPacket packet(CMSG_REPOP_REQUEST);
@@ -92,14 +92,14 @@ bool AutoReleaseSpiritAction::Execute(Event event)
         context->GetValue<uint32>("death count")->Set(dCount + 1);
     }
 
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> auto released", bot->GetGUID().ToString().c_str(),
+    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> auto released", bot->GetGUID().ToString().c_str(),
               bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     WorldPacket packet(CMSG_REPOP_REQUEST);
     packet << uint8(0);
     bot->GetSession()->HandleRepopRequestOpcode(packet);
 
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> releases spirit", bot->GetGUID().ToString().c_str(),
+    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> releases spirit", bot->GetGUID().ToString().c_str(),
               bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     if (bot->InBattleground() && (time(NULL) - bg_gossip_time >= 15 || !bot->HasAura(SPELL_WAITING_FOR_RESURRECT)))
@@ -131,9 +131,11 @@ bool AutoReleaseSpiritAction::Execute(Event event)
         else if (!botAI->IsRealPlayer()) // below doesnt work properly on realplayer, but its also not needed
         {
             bg_gossip_time = time(NULL);
-            WorldPacket packet(CMSG_GOSSIP_HELLO);
-            packet << guid;
-            bot->GetSession()->HandleGossipHelloOpcode(packet);
+            WorldPacket data(CMSG_GOSSIP_HELLO);
+            data << guid;
+            WorldPackets::NPC::GossipHello gossipHello(std::move(data));
+            gossipHello.Read();
+            bot->GetSession()->HandleGossipHelloOpcode(gossipHello);
         }
     }
     botAI->SetNextCheckDelay(1000);
@@ -182,7 +184,7 @@ bool AutoReleaseSpiritAction::isUseful()
 
 bool RepopAction::Execute(Event event)
 {
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> repops at graveyard", bot->GetGUID().ToString().c_str(),
+    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> repops at graveyard", bot->GetGUID().ToString().c_str(),
               bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     int64 deadTime;
