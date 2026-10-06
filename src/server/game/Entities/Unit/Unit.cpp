@@ -9032,11 +9032,14 @@ void Unit::RemoveAllAttackers()
 
 void Unit::ModifyAuraState(AuraStateType flag, bool apply)
 {
+    uint32 mask = MakeOneBasedMask32(flag);
+    if (!mask)
+        return;
     if (apply)
     {
-        if (!HasFlag(UNIT_FIELD_AURA_STATE, 1 << (flag - 1)))
+        if (!HasFlag(UNIT_FIELD_AURA_STATE, mask))
         {
-            SetFlag(UNIT_FIELD_AURA_STATE, 1 << (flag - 1));
+            SetFlag(UNIT_FIELD_AURA_STATE, mask);
             if (GetTypeId() == TYPEID_PLAYER)
             {
                 PlayerSpellMap const& sp_list = ToPlayer()->GetSpellMap();
@@ -9068,9 +9071,9 @@ void Unit::ModifyAuraState(AuraStateType flag, bool apply)
     }
     else
     {
-        if (HasFlag(UNIT_FIELD_AURA_STATE, 1 << (flag - 1)))
+        if (HasFlag(UNIT_FIELD_AURA_STATE, mask))
         {
-            RemoveFlag(UNIT_FIELD_AURA_STATE, 1 << (flag - 1));
+            RemoveFlag(UNIT_FIELD_AURA_STATE, mask);
 
             Unit::AuraApplicationMap& tAuras = GetAppliedAuras();
             for (Unit::AuraApplicationMap::iterator itr = tAuras.begin(); itr != tAuras.end();)

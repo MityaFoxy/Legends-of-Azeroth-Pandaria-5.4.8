@@ -22,7 +22,7 @@ public:
     RandomPlayerbotFactory(uint32 accountId);
     virtual ~RandomPlayerbotFactory() {}
 
-    Player* CreateRandomBot(WorldSession* session, Classes cls, std::unordered_map<Gender, std::vector<std::string>>& names);
+    Player* CreateRandomBot(WorldSession* session, Classes cls, std::unordered_map<uint8, std::vector<std::string>>& names);
     static void CreateRandomBots();
 
 private:

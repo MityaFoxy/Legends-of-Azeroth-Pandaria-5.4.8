@@ -275,7 +275,7 @@ RandomPlayerbotFactory::RandomPlayerbotFactory(uint32 accountId) : accountId(acc
     }
 }
 
-Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes cls, std::unordered_map<Gender, std::vector<std::string>>& nameCache)
+Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes cls, std::unordered_map<uint8, std::vector<std::string>>& nameCache)
 {
     TC_LOG_DEBUG("playerbots", "Creating new random bot for class {}", ClassToString(cls).c_str());
 
@@ -304,15 +304,15 @@ Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes c
     }
     else
     {
-        if (nameCache[(Gender)gender].empty())
+        if (nameCache[gender].empty())
         {
             TC_LOG_ERROR("playerbots", "No name found for race and gender: {} {} {}", gender, RaceToString((Races)race).c_str(), gender);
             return nullptr;
         }
-        uint32 i = std::rand() % nameCache[(Gender)gender].size();
-        name = nameCache[(Gender)gender][i];
-        swap(nameCache[(Gender)gender][i], nameCache[(Gender)gender].back());
-        nameCache[(Gender)gender].pop_back();
+        uint32 i = std::rand() % nameCache[gender].size();
+        name = nameCache[gender][i];
+        swap(nameCache[gender][i], nameCache[gender].back());
+        nameCache[gender].pop_back();
     }
     if (name.empty())
     {
@@ -502,7 +502,9 @@ void RandomPlayerbotFactory::CreateRandomBots()
 {
     TC_LOG_INFO("playerbots", "Creating random bot accounts...");
 
-    std::unordered_map<Gender, std::vector<std::string>> nameCache;
+    // The name table contains category IDs beyond the actual Gender enum (0..3).
+    // Keep those IDs intact; character creation selects the male/female buckets.
+    std::unordered_map<uint8, std::vector<std::string>> nameCache;
     uint32 totalAccCount = sPlayerbotAIConfig->randomBotAccountCount;
     std::vector<std::future<void>> account_creations;
     int account_creation = 0;
@@ -518,7 +520,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
     {
         Field* fields = result->Fetch();
         std::string name = fields[0].GetString();
-        Gender gender = static_cast<Gender>(fields[1].GetUInt8());
+        uint8 gender = fields[1].GetUInt8();
         const auto name_result = sObjectMgr->CheckPlayerName(name);
         if (name_result == ResponseCodes::CHAR_NAME_SUCCESS)
             nameCache[gender].push_back(name);

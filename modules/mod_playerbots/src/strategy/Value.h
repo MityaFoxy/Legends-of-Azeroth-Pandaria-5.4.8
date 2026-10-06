@@ -134,7 +134,7 @@ protected:
 
     uint32 checkInterval;
     uint32 lastCheckTime;
-    T value;
+    T value{};
 };
 
 template <class T>
@@ -182,9 +182,9 @@ public:
         return true;
     }
 
-    void Set([[maybe_unused]] T value) override
+    void Set(T value) override
     {
-        CalculatedValue<T>::Set(this->value);
+        CalculatedValue<T>::Set(value);
         UpdateChange();
     }
 
@@ -213,7 +213,7 @@ public:
     }
 
 protected:
-    T lastValue;
+    T lastValue{};
     uint32 minChangeInterval = 0;
     time_t lastChangeTime;
 };
