@@ -108,10 +108,12 @@ target_link_libraries(common
     g3dlib
     Detour
     utf8cpp
-    jemalloc    
 )
 
 add_dependencies(common revision.h)
+
+# Preserve the existing core buffer-pool policy independently of the allocator.
+target_compile_definitions(common PUBLIC NO_BUFFERPOOL)
 
 # Generate precompiled header
 if (USE_COREPCH)

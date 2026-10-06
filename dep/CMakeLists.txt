@@ -15,8 +15,8 @@ elseif( MSVC )
   add_definitions(/W0)
 endif()
 
-if(SERVERS AND NOT NOJEM)
-    add_subdirectory(jemalloc)  
+if(SERVERS)
+  include(${CMAKE_SOURCE_DIR}/cmake/allocator.cmake)
 endif()
 
 add_subdirectory(zlib)

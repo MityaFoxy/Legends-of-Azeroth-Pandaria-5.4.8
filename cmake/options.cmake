@@ -19,6 +19,8 @@ option(USE_COREPCH      "Use precompiled headers when compiling servers"        
 option(WITH_WARNINGS    "Show all warnings during compile"                            0)
 option(WITH_COREDEBUG   "Include additional debug-code in core"                       0)
 option(WITH_SANITIZER   "Build with AddressSanitizer"                                 0)
+set(ALLOCATOR "AUTO" CACHE STRING "Server allocator: AUTO, SYSTEM or MIMALLOC")
+set_property(CACHE ALLOCATOR PROPERTY STRINGS AUTO SYSTEM MIMALLOC)
 option(AUTH_SERVER      "Build authserver"                                            1)
 option(UPDATER          "Build updater"                                               0)
 option(USE_MODULES		"Use modules system"										  1)
