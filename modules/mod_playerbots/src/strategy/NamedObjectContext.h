@@ -40,6 +40,9 @@ protected:
 template <class T>
 class NamedObjectFactory
 {
+public:
+    virtual ~NamedObjectFactory() = default;
+
 protected:
     typedef T* (*ActionCreator)(PlayerbotAI* botAI);
     std::unordered_map<std::string, ActionCreator> creators;

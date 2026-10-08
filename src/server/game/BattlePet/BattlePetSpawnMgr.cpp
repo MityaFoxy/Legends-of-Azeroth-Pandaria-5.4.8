@@ -103,7 +103,7 @@ void BattlePetSpawnMgr::Initialise()
         spawnTemplate.MinLevel = minLevel;
         spawnTemplate.MaxLevel = maxLevel;
 
-        m_battlePetMapPools[mapId][zoneId].AddTemplate(spawnTemplate);
+        m_battlePetMapPools[mapId][zoneId].AddTemplate(std::move(spawnTemplate));
 
         count++;
 
@@ -174,18 +174,19 @@ void BattlePetSpawnMgr::PopulateWorld()
         }
 }
 
-void BattlePetSpawnMgr::DepopulateMap(uint32 mapId)
+void BattlePetSpawnMgr::DepopulateMap(Map* map)
 {
+    if (!map || map->Instanceable())
+        return;
+
+    uint32 mapId = map->GetId();
     // check if there are any wild battle pets for the map
     if (m_battlePetMapPools.find(mapId) == m_battlePetMapPools.end())
         return;
 
     // depopulate all wild battle pets in a map
     for (auto &mapPool : m_battlePetMapPools[mapId])
-    {
-        auto map = sMapMgr->FindBaseMap(mapId);
         mapPool.second.DepopulateZone(map);
-    }
 }
 
 void BattlePetSpawnMgr::Update(uint32 diff)
@@ -211,7 +212,7 @@ BattlePet* BattlePetSpawnMgr::GetWildBattlePet(Creature* creature)
     // find wild battle pet in map and zone
     for (auto &spawnTemplate : m_battlePetMapPools[mapId][zoneId].m_spawnTemplates)
         if (spawnTemplate.WildBattlePetInfo.find(creature->GetGUID()) != spawnTemplate.WildBattlePetInfo.end())
-            return spawnTemplate.WildBattlePetInfo[creature->GetGUID()];
+            return spawnTemplate.WildBattlePetInfo[creature->GetGUID()].get();
 
     return nullptr;
 }
@@ -247,7 +248,10 @@ void BattlePetSpawnMgr::LeftBattle(Creature* creature, bool killed)
         for (auto &spawnTemplate : m_battlePetMapPools[mapId][zoneId].m_spawnTemplates)
             for (auto &creatureRelation : spawnTemplate.CreaturesRelation)
                 if (creatureRelation.second == creature->GetGUID())
+                {
                     m_battlePetMapPools[mapId][zoneId].RemoveCreature(creature->GetMap(), creatureRelation.first, &spawnTemplate);
+                    return;
+                }
     }
 }
 
@@ -277,8 +281,8 @@ void BattlePetSpawnZoneMgr::DepopulateZone(Map* map)
 {
     // remove all wild battle pets from the zone
     for (auto &spawnTemplate : m_spawnTemplates)
-        for (auto &relationTemplate : spawnTemplate.CreaturesRelation)
-            RemoveCreature(map, relationTemplate.first, &spawnTemplate);
+        while (!spawnTemplate.CreaturesRelation.empty())
+            RemoveCreature(map, spawnTemplate.CreaturesRelation.begin()->first, &spawnTemplate);
 }
 
 // called when a creature is added to the zone
@@ -368,10 +372,10 @@ void BattlePetSpawnZoneMgr::SpawnCreature(Map* map, ObjectGuid guid, BattlePetSp
     uint8 quality = sObjectMgr->BattlePetGetRandomQuality(spawnTemplate->Species);
     uint8 level   = urand(spawnTemplate->MinLevel, spawnTemplate->MaxLevel);
 
-    auto battlePet = new BattlePet(0, spawnTemplate->Species, speciesEntry->FamilyId, level, quality, breed);
+    auto battlePet = std::make_unique<BattlePet>(0, spawnTemplate->Species, speciesEntry->FamilyId, level, quality, breed);
     battlePet->InitialiseAbilities(true);
 
-    spawnTemplate->WildBattlePetInfo[replacementCreature->GetGUID()] = battlePet;
+    spawnTemplate->WildBattlePetInfo[replacementCreature->GetGUID()] = std::move(battlePet);
 
     // update replacement creature
     replacementCreature->SetFlag(UNIT_FIELD_NPC_FLAGS, UNIT_NPC_FLAG_WILDPET_CAPTURABLE);
@@ -379,7 +383,13 @@ void BattlePetSpawnZoneMgr::SpawnCreature(Map* map, ObjectGuid guid, BattlePetSp
     replacementCreature->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PC);
     replacementCreature->SetUInt32Value(UNIT_FIELD_WILD_BATTLE_PET_LEVEL, level);
 
-    creature->GetMap()->AddToMap(replacementCreature);
+    if (!map->AddToMap(replacementCreature))
+    {
+        spawnTemplate->WildBattlePetInfo.erase(replacementCreature->GetGUID());
+        replacementCreature->CleanupsBeforeDelete();
+        delete replacementCreature;
+        return;
+    }
 
     // despawn replaced creature
     creature->ForcedDespawn();
@@ -391,39 +401,27 @@ void BattlePetSpawnZoneMgr::SpawnCreature(Map* map, ObjectGuid guid, BattlePetSp
 
 void BattlePetSpawnZoneMgr::RemoveCreature(Map* map, ObjectGuid guid, BattlePetSpawnTemplate* spawnTemplate)
 {
-    if (!spawnTemplate)
+    if (!map || !spawnTemplate)
         return;
 
     // check if the creature was replaced by a wild battle pet
-    if (spawnTemplate->CreaturesRelation.find(guid) == spawnTemplate->CreaturesRelation.end())
+    auto relation = spawnTemplate->CreaturesRelation.find(guid);
+    if (relation == spawnTemplate->CreaturesRelation.end())
         return;
 
-    // make sure the creature that was replaced still exists in the world
-    auto creature = map->GetCreature(guid);
-    if (!creature)
-        return;
+    ObjectGuid replacementGuid = relation->second;
+    spawnTemplate->CreaturesRelation.erase(relation);
+    spawnTemplate->WildBattlePetInfo.erase(replacementGuid);
 
-    // make sure the creature that was the replacement still exists in the world
-    auto replacementCreature = map->GetCreature(spawnTemplate->CreaturesRelation[guid]);
-    if (!replacementCreature)
-        return;
-
+    // The original may already have been unloaded. That must not prevent
+    // deleting its replacement or releasing the pool's battle pet state.
+    if (auto replacementCreature = map->GetCreature(replacementGuid))
     {
-        // remove battle pet information
-        auto itr = spawnTemplate->WildBattlePetInfo.find(replacementCreature->GetGUID());
-        if (itr != spawnTemplate->WildBattlePetInfo.end())
-        {
-            delete itr->second;
-            spawnTemplate->WildBattlePetInfo.erase(itr);
-        }
+        replacementCreature->AddObjectToRemoveList();
     }
 
-    // remove replacement creature
-    replacementCreature->RemoveFromWorld();
-    replacementCreature->AddObjectToRemoveList();
-
-    spawnTemplate->CreaturesRelation.erase(spawnTemplate->CreaturesRelation[guid]);
-
     // allow original creature to spawn again
-    creature->SetRespawnTime(creature->GetCreatureData()->spawntimesecs);
+    if (auto creature = map->GetCreature(guid))
+        if (auto data = creature->GetCreatureData())
+            creature->SetRespawnTime(data->spawntimesecs);
 }

@@ -5,6 +5,13 @@
 
 #include "Engine.h"
 
+#include "Config.h"
+#include "Log.h"
+#include "Timer.h"
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
 #include "Action.h"
 #include "Event.h"
 #include "Helper.h"
@@ -18,6 +25,8 @@ Engine::Engine(PlayerbotAI* botAI, AiObjectContext* factory) : PlayerbotAIAware(
 {
     lastRelevance = 0.0f;
     testMode = false;
+    behaviorLogEnabled = sConfigMgr->GetBoolDefault("AiPlayerbot.LogBehavior", false, true);
+    behaviorLogInterval = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.LogBehaviorInterval", 60, true), 5, 3600) * IN_MILLISECONDS;
 }
 
 bool ActionExecutionListeners::Before(Action* action, Event event)
@@ -596,6 +605,46 @@ bool Engine::ListenAndExecute(Action* action, Event event)
 
 void Engine::LogAction(char const* format, ...)
 {
+    if (!testMode)
+    {
+        if (!behaviorLogEnabled)
+            return;
+
+        if (strncmp(format, "A:", 2) == 0)
+        {
+            char message[512];
+            va_list args;
+            va_start(args, format);
+            vsnprintf(message, sizeof(message), format, args);
+            va_end(args);
+            lastBehaviorAction = message;
+            if (lastBehaviorAction.ends_with(" - OK"))
+                ++behaviorActionsOk;
+            else if (lastBehaviorAction.ends_with(" - FAILED"))
+                ++behaviorActionsFailed;
+            return;
+        }
+
+        if (strcmp(format, "--- AI Tick ---") != 0)
+            return;
+        uint32 now = getMSTime();
+        if (hasBehaviorLog && getMSTimeDiff(lastBehaviorLog, now) < behaviorLogInterval)
+            return;
+
+        Player* bot = botAI->GetBot();
+        TC_LOG_DEBUG("playerbots.behavior",
+            "Bot={} GUID={} level={} race={} class={} ai_state={} alive={} combat={} moving={} hp_pct={} map={} zone={} x={} y={} z={} last_attempt={} ok={} failed={}",
+            bot->GetName(), bot->GetGUID().GetCounter(), bot->GetLevel(), bot->GetRace(), bot->GetClass(),
+            uint32(botAI->GetState()), bot->IsAlive(), bot->IsInCombat(), bot->isMoving(), bot->GetHealthPct(),
+            bot->GetMapId(), bot->GetZoneId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            lastBehaviorAction, behaviorActionsOk, behaviorActionsFailed);
+        lastBehaviorLog = now;
+        hasBehaviorLog = true;
+        behaviorActionsOk = 0;
+        behaviorActionsFailed = 0;
+        return;
+    }
+
     if (testMode)
     {
         Player* bot = botAI->GetBot();

@@ -192,6 +192,7 @@ void BlackMarketMgr::Update()
 
             // erase returns iterator to next element
             it = _auctions.erase(it);
+            delete auction;
             continue;
         }
 

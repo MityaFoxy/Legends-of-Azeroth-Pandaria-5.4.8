@@ -50,6 +50,15 @@ def overlay(text, changes):
     return text
 
 
+def optional_overlay(text, changes):
+    for key, value in changes.items():
+        if re.search(r"^\s*" + re.escape(key) + r"\s*=", text, re.M):
+            text = overlay(text, {key: value})
+        else:
+            text += "\n" + key + " = " + value + "\n"
+    return text
+
+
 def rss(pid):
     try:
         for line in Path("/proc/%d/status" % pid).read_text().splitlines():
@@ -83,6 +92,65 @@ def stop(process):
             )
 
 
+def query_bot_count(mysql_args, env, sql, event, check_resources):
+    """Retry only transient connection errors, without hiding resource failures."""
+    for attempt in range(1, 4):
+        check_resources()
+        try:
+            result = subprocess.run(
+                ["mysql", "--connect-timeout=5", *mysql_args, "-N", "-e", sql],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                value = result.stdout.strip()
+                if not value.isascii() or not value.isdecimal():
+                    raise RuntimeError("Invalid bot-count response from MySQL")
+                return int(value)
+            detail = result.stderr[:8192]
+            password = env.get("MYSQL_PWD")
+            if password:
+                detail = detail.replace(password, "<redacted>")
+            transient = bool(
+                re.search(r"ERROR\s+(2002|2003|2005|2006|2013|2055)\b", detail)
+            )
+            event(
+                "sql_query_error",
+                attempt=attempt,
+                exit_code=result.returncode,
+                transient=transient,
+                stderr=detail,
+            )
+            if not transient:
+                raise RuntimeError("Non-transient MySQL diagnostic query failure")
+        except subprocess.TimeoutExpired:
+            event("sql_query_timeout", attempt=attempt, timeout_seconds=10)
+        check_resources()
+        if attempt < 3:
+            time.sleep(3)
+    raise RuntimeError("MySQL diagnostic query failed after three bounded attempts")
+
+
+def stop_after_failure(process, event):
+    if process is None:
+        return None
+    event("shutdown_requested", pid=process.pid)
+    try:
+        stop(process)
+    except (RuntimeError, OSError) as error:
+        event("shutdown_failed", error=str(error), pid=process.pid)
+    result = dict(
+        pid=process.pid, exit_code=process.poll(), still_alive=process.poll() is None
+    )
+    event(
+        "shutdown_finished" if not result["still_alive"] else "shutdown_incomplete",
+        **result,
+    )
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, default=Path("/work/loa-runtime"))
@@ -94,6 +162,13 @@ def main():
     startup.add_argument("--already-stopped", action="store_true")
     parser.add_argument("--hours", type=float, default=12)
     parser.add_argument("--jobs", type=int, default=2)
+    parser.add_argument("--bot-behavior-log", action="store_true")
+    parser.add_argument(
+        "--min-available-ram-mib",
+        type=int,
+        default=768,
+        help="Stop below this available host RAM (MiB); default: 768",
+    )
     parser.add_argument(
         "--only-bots",
         type=int,
@@ -105,6 +180,8 @@ def main():
     args = parser.parse_args()
     if args.hours <= 0 or args.jobs < 1:
         parser.error("hours and jobs must be positive")
+    if args.min_available_ram_mib < 256:
+        parser.error("available RAM guard must be at least 256 MiB")
     if args.normal_build and not args.auth_pid:
         parser.error("--normal-build requires --auth-pid")
     os.umask(0o077)
@@ -156,8 +233,10 @@ def main():
         if bots is not None:
             record["bots_online"] = bots
         event(kind, **record)
-        if mem["MemAvailable"] < 768 * 1024**2:
-            raise RuntimeError("Less than 768 MiB of host RAM available")
+        if mem["MemAvailable"] < args.min_available_ram_mib * 1024**2:
+            raise RuntimeError(
+                "Less than %d MiB of host RAM available" % args.min_available_ram_mib
+            )
         if record["disk_free_bytes"] < 10 * 1024**3:
             raise RuntimeError("Less than 10 GiB of disk space available")
         if record["log_bytes"] > 12 * 1024**3:
@@ -393,18 +472,31 @@ def main():
                     "Appender.MeleeMovement": "2,2,7,MeleeMovement.log,a,67108864",
                     "Appender.DBErrors": "2,2,7,DBErrors.log,a,67108864",
                 }
-                (stage / "worldserver.conf").write_text(
-                    overlay(world_text, world_changes)
+                stage_world = overlay(world_text, world_changes)
+                stage_bot = overlay(
+                    bot_text,
+                    {
+                        "AiPlayerbot.MinRandomBots": str(target),
+                        "AiPlayerbot.MaxRandomBots": str(target),
+                    },
                 )
-                (stage / "playerbots.conf").write_text(
-                    overlay(
-                        bot_text,
+                if args.bot_behavior_log:
+                    stage_world = optional_overlay(
+                        stage_world,
                         {
-                            "AiPlayerbot.MinRandomBots": str(target),
-                            "AiPlayerbot.MaxRandomBots": str(target),
+                            "Appender.PlayerbotBehavior": "2,2,7,PlayerbotBehavior.log,a,67108864",
+                            "Logger.playerbots.behavior": "2,PlayerbotBehavior",
                         },
                     )
-                )
+                    stage_bot = optional_overlay(
+                        stage_bot,
+                        {
+                            "AiPlayerbot.LogBehavior": "1",
+                            "AiPlayerbot.LogBehaviorInterval": "60",
+                        },
+                    )
+                (stage / "worldserver.conf").write_text(stage_world)
+                (stage / "playerbots.conf").write_text(stage_bot)
                 server_env = os.environ.copy()
                 # Inherited preloads can defeat ASan or accidentally reintroduce an allocator.
                 server_env.pop("LD_PRELOAD", None)
@@ -437,6 +529,7 @@ def main():
                     )
                     started = time.monotonic()
                     reached = None
+                    behavior_verified = False
                     while reached is None or time.monotonic() - reached < duration:
                         if process.poll() is not None:
                             raise RuntimeError(
@@ -448,14 +541,36 @@ def main():
                             "WHERE c.online=1 AND a.username LIKE 'RNDBOT%%'"
                             % (character_db, auth_db)
                         )
-                        count = int(
-                            subprocess.check_output(
-                                ["mysql", *mysql_args, "-N", "-e", sql],
-                                env=env,
-                                text=True,
-                            )
+
+                        def check_query_resources():
+                            if process.poll() is not None:
+                                raise RuntimeError(
+                                    "Worldserver exited during SQL check"
+                                )
+                            sample("resource_sample", process.pid, args.run)
+
+                        count = query_bot_count(
+                            mysql_args, env, sql, event, check_query_resources
                         )
                         sample("stage_sample", process.pid, args.run, count)
+                        if (
+                            args.bot_behavior_log
+                            and reached is not None
+                            and not behavior_verified
+                            and time.monotonic() - reached >= 120
+                        ):
+                            behavior_log = stage / "Logs/PlayerbotBehavior.log"
+                            if not behavior_log.exists():
+                                raise RuntimeError(
+                                    "Requested bot behavior log was not created"
+                                )
+                            with behavior_log.open(errors="replace") as behavior_file:
+                                if "Bot=" not in behavior_file.read(65536):
+                                    raise RuntimeError(
+                                        "Requested bot behavior log has no bot snapshots"
+                                    )
+                            behavior_verified = True
+                            event("behavior_logging_verified", file=str(behavior_log))
                         if count >= target and reached is None:
                             reached = time.monotonic()
                             event(
@@ -491,9 +606,10 @@ def main():
                         findings
                         or "runtime error:" in console
                         or "ERROR: AddressSanitizer" in console
+                        or "that just lost any reference to the owner" in console
                     ):
                         raise RuntimeError(
-                            "Sanitizer findings in stage logs even though exit code was zero"
+                            "Sanitizer or lost-owner findings in stage logs even though exit code was zero"
                         )
         event(
             "complete",
@@ -504,18 +620,14 @@ def main():
             ),
         )
     except BaseException as error:
-        event("failed", error=str(error))
+        event("failure_detected", error=str(error))
         if build_process is not None and build_process.poll() is None:
             os.killpg(build_process.pid, signal.SIGTERM)
             try:
                 build_process.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 event("build_stop_timeout")
-        if process is not None:
-            try:
-                stop(process)
-            except RuntimeError as stop_error:
-                event("shutdown_failed", error=str(stop_error))
+        shutdown = stop_after_failure(process, event)
         # Restore service only when the diagnostic server was never started.
         if stopped_original and not sanitizer_started:
             with (args.run / "fallback-worldserver.log").open("ab") as output:
@@ -535,6 +647,7 @@ def main():
                 pid=fallback.pid,
                 reason="Diagnostic preparation failed",
             )
+        event("failed", error=str(error), shutdown=shutdown)
         raise
 
 

@@ -751,17 +751,19 @@ struct GuildVaultAchievementFix : public RetroactiveFix
     }
 };
 
-std::vector<RetroactiveFix*> ServiceMgr::_retroactiveFixes
+std::vector<std::unique_ptr<RetroactiveFix>> ServiceMgr::_retroactiveFixes = []
 {
-    new MountAchievementFix{ 2536 }, // Mountain o' Mounts Alliance
-    new MountAchievementFix{ 2537 }, // Mountain o' Mounts Horde
-    new MountAchievementFix{ 7860 }, // We're Going to Need More Saddles Alliance
-    new MountAchievementFix{ 7862 }, // We're Going to Need More Saddles Horde
-    new MountAchievementFix{ 8302 }, // Mount Parade Horde
-    new MountAchievementFix{ 8304 }, // Mount Parade Alliance
-    new ChildWeekSchoolOfHardKnocksFix{},
-    new GuildVaultAchievementFix{},
-};
+    std::vector<std::unique_ptr<RetroactiveFix>> fixes;
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(2536)); // Mountain o' Mounts Alliance
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(2537)); // Mountain o' Mounts Horde
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(7860)); // We're Going to Need More Saddles Alliance
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(7862)); // We're Going to Need More Saddles Horde
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(8302)); // Mount Parade Horde
+    fixes.emplace_back(std::make_unique<MountAchievementFix>(8304)); // Mount Parade Alliance
+    fixes.emplace_back(std::make_unique<ChildWeekSchoolOfHardKnocksFix>());
+    fixes.emplace_back(std::make_unique<GuildVaultAchievementFix>());
+    return fixes;
+}();
 
 void ServiceMgr::DeletedItemNotify(uint32 guidLow, Item* item, uint8 type)
 {

@@ -1496,7 +1496,8 @@ class SmartWaypointMgr
 
     private:
         SmartWaypointMgr() { }
-        ~SmartWaypointMgr() { }
+        ~SmartWaypointMgr();
+        void Clear();
 
         std::unordered_map<uint32, WPPath*> waypoint_map;
 };

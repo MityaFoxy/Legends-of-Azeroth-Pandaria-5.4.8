@@ -921,6 +921,10 @@ AiPlayerbot.CommandServerPort = 8888
 AiPlayerbot.SpellDump = 0
 AiPlayerbot.LogInGroupOnly = 1
 AiPlayerbot.LogValuesPerTick = 0
+# Opt-in sampled AI state/action diagnostics; requires Logger.playerbots.behavior.
+# Interval is seconds (clamped to 5..3600); each Engine reports its own window.
+AiPlayerbot.LogBehavior = 0
+AiPlayerbot.LogBehaviorInterval = 60
 AiPlayerbot.RandomChangeMultiplier = 1
 
 # Tell which spell is avoiding (experimental)

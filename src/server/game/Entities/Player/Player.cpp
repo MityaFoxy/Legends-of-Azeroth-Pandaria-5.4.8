@@ -3710,6 +3710,11 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
                 LearnSpell(prev_spell, true);
         }
 
+        // Learning a lower rank can grant skills which recursively learn this
+        // rank. Apply the normal existing-spell rules instead of overwriting it.
+        if (m_spells.find(spellId) != m_spells.end())
+            return AddSpell(spellId, active, learning, dependent, disabled, loading);
+
         PlayerSpell* newspell = new PlayerSpell;
         newspell->state     = state;
         newspell->active    = active;

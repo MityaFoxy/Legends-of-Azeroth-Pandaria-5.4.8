@@ -175,6 +175,15 @@ class PlayerbotsPlayerScript : public PlayerScript
 public:
     PlayerbotsPlayerScript() : PlayerScript("PlayerbotsPlayerScript") {}
 
+    void OnLogout(Player* player) override
+    {
+        // LogoutPlayerBot may erase the holder entry before LogoutPlayer invokes
+        // DisablePlayerBot. Always release registry-owned state before Player
+        // is deleted, even when it is no longer present in a holder.
+        sPlayerbotsMgr->RemovePlayerBotData(player->GetGUID(), true);
+        sPlayerbotsMgr->RemovePlayerBotData(player->GetGUID(), false);
+    }
+
     void OnLogin(Player* player) override
     {
         if (!player->GetSession()->IsBot())

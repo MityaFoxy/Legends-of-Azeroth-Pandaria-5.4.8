@@ -65,10 +65,11 @@ Intensity(0.0f) { }
 
 Map::~Map()
 {
-    sBattlePetSpawnMgr->DepopulateMap(i_mapEntry->MapID);
+    // Instance hooks run in the derived destructor, before its state is destroyed.
+    if (!Instanceable())
+        sScriptMgr->OnDestroyMap(this);
 
-    sScriptMgr->OnDestroyMap(this);
-
+    UnloadCorpseData();
     UnloadAll();
 
     while (!i_worldObjects.empty())
@@ -271,7 +272,9 @@ i_scriptLock(false), _defaultLight(sDBCManager.GetDefaultMapLight(id))
 
     _poolData = sPoolMgr->InitPoolsForMap(this);
 
-    sScriptMgr->OnCreateMap(this);
+    // Derived maps are not yet constructed here; their constructors own the hook.
+    if (!Instanceable())
+        sScriptMgr->OnCreateMap(this);
 }
 
 void Map::InitVisibilityDistance()
@@ -1688,6 +1691,11 @@ void Map::RemoveAllPlayers()
 
 void Map::UnloadAll()
 {
+    // Wild replacements are world objects, not grid-owned creatures. Queue
+    // their deletion while the original creatures and grids are still present.
+    sBattlePetSpawnMgr->DepopulateMap(this);
+    RemoveAllObjectsInRemoveList();
+
     // clear all delayed moves, useless anyway do this moves before map unload.
     _creaturesToMove.clear();
     _gameObjectsToMove.clear();
@@ -3375,10 +3383,12 @@ InstanceMap::InstanceMap(uint32 id, time_t expiry, uint32 InstanceId, uint16 Spa
     // the timer is started by default, and stopped when the first player joins
     // this make sure it gets unloaded if for some reason no player joins
     m_unloadTimer = std::max(sWorld->getIntConfig(CONFIG_INSTANCE_UNLOAD_DELAY), (uint32)MIN_UNLOAD_DELAY);
+    sScriptMgr->OnCreateMap(this);
 }
 
 InstanceMap::~InstanceMap()
 {
+    sScriptMgr->OnDestroyMap(this);
     delete i_data;
     i_data = NULL;
 }
@@ -3821,10 +3831,12 @@ BattlegroundMap::BattlegroundMap(uint32 id, time_t expiry, uint32 InstanceId, Ma
 {
     //lets initialize visibility distance for BG/Arenas
     BattlegroundMap::InitVisibilityDistance();
+    sScriptMgr->OnCreateMap(this);
 }
 
 BattlegroundMap::~BattlegroundMap()
 {
+    sScriptMgr->OnDestroyMap(this);
     if (m_bg)
     {
         //unlink to prevent crash, always unlink all pointer reference before destruction
@@ -4143,6 +4155,27 @@ void Map::DeleteCorpseData()
     stmt->setUInt32(0, GetId());
     stmt->setUInt32(1, GetInstanceId());
     CharacterDatabase.Execute(stmt);
+}
+
+void Map::UnloadCorpseData()
+{
+    // The map owns corpses, including those whose grid was never loaded.
+    // Release only runtime objects; their persisted DB rows must survive.
+    while (!_corpsesByPlayer.empty())
+    {
+        Corpse* corpse = _corpsesByPlayer.begin()->second;
+        RemoveCorpse(corpse);
+        delete corpse;
+    }
+
+    while (!_corpseBones.empty())
+    {
+        Corpse* bones = *_corpseBones.begin();
+        RemoveCorpse(bones);
+        delete bones;
+    }
+
+    _corpsesByCell.clear();
 }
 
 void Map::AddCorpse(Corpse *corpse)

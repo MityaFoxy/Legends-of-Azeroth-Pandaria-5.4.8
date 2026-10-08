@@ -1321,8 +1321,8 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
             bool run = e.action.wpStart.run;
             uint32 entry = e.action.wpStart.pathID;
             bool repeat = e.action.wpStart.repeat;
-            ObjectList* targets = GetTargets(e, unit);
-            StoreTargetList(targets, SMART_ESCORT_TARGETS);
+            std::unique_ptr<ObjectList> targets(GetTargets(e, unit));
+            StoreTargetList(targets.get(), SMART_ESCORT_TARGETS);
             me->SetReactState((ReactStates)e.action.wpStart.reactState);
             CAST_AI(SmartAI, me->AI())->StartPath(run, entry, repeat, unit);
 
@@ -1979,7 +1979,7 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
             if (!targets)
                 break;
 
-            ObjectList* storedTargets = GetTargetList(e.action.sendTargetToTarget.id, unit);
+            auto storedTargets = GetTargetList(e.action.sendTargetToTarget.id, unit);
             if (!storedTargets)
             {
                 delete targets;
@@ -1991,14 +1991,14 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
                 if (IsCreature(*itr))
                 {
                     if (SmartAI* ai = CAST_AI(SmartAI, (*itr)->ToCreature()->AI()))
-                        ai->GetScript()->StoreTargetList(new ObjectList(*storedTargets), e.action.sendTargetToTarget.id);   // store a copy of target list
+                        ai->GetScript()->StoreTargetList(storedTargets.get(), e.action.sendTargetToTarget.id);
                     else
                         TC_LOG_ERROR("sql.sql", "SmartScript: Action target for SMART_ACTION_SEND_TARGET_TO_TARGET is not using SmartAI, skipping");
                 }
                 else if (IsGameObject(*itr))
                 {
                     if (SmartGameObjectAI* ai = CAST_AI(SmartGameObjectAI, (*itr)->ToGameObject()->AI()))
-                        ai->GetScript()->StoreTargetList(new ObjectList(*storedTargets), e.action.sendTargetToTarget.id);   // store a copy of target list
+                        ai->GetScript()->StoreTargetList(storedTargets.get(), e.action.sendTargetToTarget.id);
                     else
                         TC_LOG_ERROR("sql.sql", "SmartScript: Action target for SMART_ACTION_SEND_TARGET_TO_TARGET is not using SmartGameObjectAI, skipping");
                 }
@@ -3957,7 +3957,7 @@ Unit* SmartScript::DoFindClosestFriendlyInRange(float range, bool playerOnly)
     return unit;
 }
 
-ObjectList* SmartScript::GetTargetList(uint32 id, WorldObject const* scriptTrigger)
+std::unique_ptr<ObjectList> SmartScript::GetTargetList(uint32 id, WorldObject const* scriptTrigger)
 {
     WorldObject const* mapObject = GetBaseObject();
     if (!mapObject && mScriptType == SMART_SCRIPT_TYPE_AREATRIGGER)
@@ -3968,7 +3968,7 @@ ObjectList* SmartScript::GetTargetList(uint32 id, WorldObject const* scriptTrigg
     auto itr = mTargetStorage->find(id);
     if (itr != mTargetStorage->end())
     {
-        ObjectList* list = new ObjectList();
+        auto list = std::make_unique<ObjectList>();
         for (GuidList::const_iterator itr2 = itr->second.begin(); itr2 != itr->second.end(); ++itr2)
             if (WorldObject* obj = ObjectAccessor::GetWorldObject(*mapObject, *itr2))
                 list->push_back(obj);

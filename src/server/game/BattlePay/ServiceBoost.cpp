@@ -22,6 +22,8 @@
 #include "ServiceMgr.h"
 #include "Realm.h"
 
+static BoostItemsVector mBoostItemsMap;
+
 void LoadBoostItems()
 {
     uint32 oldMSTime = getMSTime();
@@ -41,15 +43,15 @@ void LoadBoostItems()
     {
         Field* fields = result->Fetch();
 
-        BoostItems* items = new BoostItems();
+        BoostItems items;
 
-        items->spec = fields[0].GetUInt32();
-        items->slot = fields[1].GetUInt32();
-        items->itemId = fields[2].GetUInt32();
+        items.spec = fields[0].GetUInt32();
+        items.slot = fields[1].GetUInt32();
+        items.itemId = fields[2].GetUInt32();
 
-        if (!sObjectMgr->GetItemTemplate(items->itemId))
+        if (!sObjectMgr->GetItemTemplate(items.itemId))
         {
-            TC_LOG_ERROR("sql.sql", "Item {} specified in `battle_pay_boost_items` does not exist, skipped.", items->itemId);
+            TC_LOG_ERROR("sql.sql", "Item {} specified in `battle_pay_boost_items` does not exist, skipped.", items.itemId);
             continue;
         }
 
@@ -135,9 +137,9 @@ void CharacterBooster::_GetCharBoostItems(PreparedItemsMap& itemsToMail, Prepare
     else
         itemsToMail.emplace(1, 25474);
 
-    for (auto&& item : mBoostItemsMap)
-        if (item->spec == m_charBoostInfo.specialization)
-            itemsToEquip.emplace(item->slot, item->itemId);
+    for (BoostItems const& item : mBoostItemsMap)
+        if (item.spec == m_charBoostInfo.specialization)
+            itemsToEquip.emplace(item.slot, item.itemId);
 }
 
 void CharacterBooster::SendCharBoostPacket(PreparedItemsMap items) const

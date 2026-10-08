@@ -5931,7 +5931,6 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
         case GAMEOBJECT_TYPE_FISHINGNODE:
         {
             m_caster->SetUInt64Value(UNIT_FIELD_CHANNEL_OBJECT, pGameObj->GetGUID());
-            m_caster->AddGameObject(pGameObj);              // will removed at spell cancel
 
             // end time of range when possible catch fish (FISHING_BOBBER_READY_TIME..GetDuration(m_spellInfo))
             // start time == fish-FISHING_BOBBER_READY_TIME (0..GetDuration(m_spellInfo)-FISHING_BOBBER_READY_TIME)
@@ -5952,12 +5951,10 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
             if (m_caster->GetTypeId() == TYPEID_PLAYER)
             {
                 pGameObj->AddUniqueUse(m_caster->ToPlayer());
-                m_caster->AddGameObject(pGameObj);      // will be removed at spell cancel
             }
             break;
         }
         case GAMEOBJECT_TYPE_DUEL_ARBITER: // 52991
-            m_caster->AddGameObject(pGameObj);
             break;
         case GAMEOBJECT_TYPE_FISHINGHOLE:
         case GAMEOBJECT_TYPE_CHEST:
@@ -5967,7 +5964,9 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
 
     pGameObj->SetRespawnTime(duration > 0 ? duration/IN_MILLISECONDS : 0);
 
-    pGameObj->SetOwnerGUID(m_caster->GetGUID());
+    // Register every owned object for caster cleanup, not only fishing/ritual/duel objects.
+    // Keep registration before SetSpellId, as in the existing special-type paths.
+    m_caster->AddGameObject(pGameObj);
 
     //pGameObj->SetUInt32Value(GAMEOBJECT_FIELD_LEVEL, m_caster->GetLevel());
     pGameObj->SetSpellId(m_spellInfo->Id);
@@ -5975,7 +5974,6 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
     ExecuteLogEffectSummonObject(effIndex, pGameObj);
 
     TC_LOG_DEBUG("spells", "AddObject at SpellEfects.cpp EffectTransmitted");
-    //m_caster->AddGameObject(pGameObj);
     //m_ObjToDel.push_back(pGameObj);
 
     cMap->AddToMap(pGameObj);
@@ -5993,8 +5991,8 @@ void Spell::EffectTransmitted(SpellEffIndex effIndex)
 
             linkedGO->SetRespawnTime(duration > 0 ? duration/IN_MILLISECONDS : 0);
             //linkedGO->SetUInt32Value(GAMEOBJECT_FIELD_LEVEL, m_caster->GetLevel());
+            m_caster->AddGameObject(linkedGO);
             linkedGO->SetSpellId(m_spellInfo->Id);
-            linkedGO->SetOwnerGUID(m_caster->GetGUID());
 
             ExecuteLogEffectSummonObject(effIndex, linkedGO);
 

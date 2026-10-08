@@ -224,7 +224,7 @@ void SmartAI::EndPath(bool fail)
     else
         GetScript()->SetPathId(0);
 
-    ObjectList* targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
+    auto targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
     if (targets && mEscortQuestID)
     {
         if (targets->size() == 1 && GetScript()->IsPlayer((*targets->begin())))
@@ -400,7 +400,7 @@ void SmartAI::UpdateAI(uint32 diff)
 
 bool SmartAI::IsEscortInvokerInRange()
 {
-    ObjectList* targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
+    auto targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
     if (targets)
     {
         if (targets->size() == 1 && GetScript()->IsPlayer((*targets->begin())))

@@ -14,6 +14,7 @@
 
 #include <unordered_set>
 #include <unordered_map>
+#include <memory>
 
 class ChatHandler;
 class PlayerbotAI;
@@ -115,8 +116,8 @@ public:
     PlayerbotMgr* GetPlayerbotMgr(Player* player);
 
 private:
-    std::unordered_map<ObjectGuid, PlayerbotAIBase*> _playerbotsAIMap;
-    std::unordered_map<ObjectGuid, PlayerbotAIBase*> _playerbotsMgrMap;
+    std::unordered_map<ObjectGuid, std::unique_ptr<PlayerbotAIBase>> _playerbotsAIMap;
+    std::unordered_map<ObjectGuid, std::unique_ptr<PlayerbotAIBase>> _playerbotsMgrMap;
 };
 
 #define sPlayerbotsMgr PlayerbotsMgr::instance()

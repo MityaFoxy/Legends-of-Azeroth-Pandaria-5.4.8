@@ -26,6 +26,7 @@
 #include "GridNotifiers.h"
 
 #include "SmartScriptMgr.h"
+#include <memory>
 //#include "SmartAI.h"
 
 class SmartScript
@@ -91,7 +92,8 @@ class SmartScript
         void DoFindFriendlyMissingBuff(std::list<Creature*>& list, float range, uint32 spellid);
         Unit* DoFindClosestFriendlyInRange(float range, bool playerOnly);
 
-        void StoreTargetList(ObjectList* targets, uint32 id)
+        // Copies GUIDs; does not take ownership of the input list or objects.
+        void StoreTargetList(ObjectList const* targets, uint32 id)
         {
             if (!targets)
                 return;
@@ -132,7 +134,8 @@ class SmartScript
             return smart;
         }
 
-        ObjectList* GetTargetList(uint32 id, WorldObject const* scriptTrigger = nullptr);
+        // Caller owns the temporary list, not the WorldObjects it references.
+        std::unique_ptr<ObjectList> GetTargetList(uint32 id, WorldObject const* scriptTrigger = nullptr);
 
         void StoreCounter(uint32 id, uint32 value, uint32 reset)
         {
