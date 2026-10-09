@@ -12,7 +12,10 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--bots", type=int, default=100)
     args = parser.parse_args()
+    if args.bots < 1:
+        parser.error("bot population must be positive")
     deadline = time.monotonic() + 18 * 3600
     while time.monotonic() < deadline:
         if (args.run / "result.json").exists():
@@ -41,7 +44,7 @@ def main():
                     for row in rows
                     if row.get("event") == "stage_started"
                     and row.get("phase") == "sanitizer"
-                    and row.get("bots") == 100
+                    and row.get("bots") == args.bots
                 ),
                 None,
             )
@@ -51,7 +54,7 @@ def main():
                     for row in rows
                     if row.get("event") == "target_reached"
                     and row.get("phase") == "sanitizer"
-                    and row.get("bots") == 100
+                    and row.get("bots") == args.bots
                 ),
                 None,
             )

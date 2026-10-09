@@ -151,6 +151,12 @@ def stop_after_failure(process, event):
     return result
 
 
+def population_stages(only_bots, soak_duration):
+    if only_bots is not None:
+        return ((only_bots, soak_duration),)
+    return ((25, 300), (50, 300), (100, soak_duration))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, default=Path("/work/loa-runtime"))
@@ -172,14 +178,15 @@ def main():
     parser.add_argument(
         "--only-bots",
         type=int,
-        choices=(25, 50, 100),
-        help="Run only the selected population gate (default: all gates)",
+        help="Run only this positive bot population (default: 25/50/100 gates)",
     )
     parser.add_argument("--revision", required=True)
     parser.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
     if args.hours <= 0 or args.jobs < 1:
         parser.error("hours and jobs must be positive")
+    if args.only_bots is not None and args.only_bots < 1:
+        parser.error("bot population must be positive")
     if args.min_available_ram_mib < 256:
         parser.error("available RAM guard must be at least 256 MiB")
     if args.normal_build and not args.auth_pid:
@@ -450,9 +457,7 @@ def main():
                 binary=str(binary),
                 sha256=hashlib.file_digest(binary.open("rb"), "sha256").hexdigest(),
             )
-            for target, duration in ((25, 300), (50, 300), (100, soak_duration)):
-                if args.only_bots is not None and target != args.only_bots:
-                    continue
+            for target, duration in population_stages(args.only_bots, soak_duration):
                 stage = args.run / ("%s-bots-%d" % (phase, target))
                 stage.mkdir()
                 (stage / "Logs/gm").mkdir(parents=True)

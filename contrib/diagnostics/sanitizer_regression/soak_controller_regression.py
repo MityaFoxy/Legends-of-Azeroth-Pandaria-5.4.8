@@ -35,20 +35,22 @@ class ControllerTests(unittest.TestCase):
                 + datetime.timedelta(seconds=60)
             )
             rows = [
-                dict(event="stage_started", phase="sanitizer", bots=100, hours=10),
+                dict(event="stage_started", phase="sanitizer", bots=200, hours=10),
                 dict(
                     event="target_reached",
                     phase="sanitizer",
-                    bots=100,
+                    bots=200,
                     time=reached.isoformat(),
                 ),
             ]
             (run / "events.jsonl").write_text(
                 "\n".join(json.dumps(row) for row in rows)
             )
-            (run / "status.json").write_text('{"bots_online":100}')
+            (run / "status.json").write_text('{"bots_online":200}')
             with (
-                patch.object(sys, "argv", ["capture", "--run", directory]),
+                patch.object(
+                    sys, "argv", ["capture", "--run", directory, "--bots", "200"]
+                ),
                 patch.object(
                     capture.subprocess,
                     "run",
@@ -63,13 +65,18 @@ class ControllerTests(unittest.TestCase):
             (run / "temperature-before-finish.log").unlink()
             (run / "result.json").write_text('{"event":"failed"}')
             with (
-                patch.object(sys, "argv", ["capture", "--run", directory]),
+                patch.object(
+                    sys, "argv", ["capture", "--run", directory, "--bots", "200"]
+                ),
                 patch.object(capture.subprocess, "run") as sensors,
                 patch("builtins.print"),
             ):
                 capture.main()
             sensors.assert_not_called()
             self.assertFalse((run / "temperature-before-finish.log").exists())
+
+    def test_single_population_accepts_200_bots(self):
+        self.assertEqual(soak.population_stages(200, 15 * 3600), ((200, 54000),))
 
     def test_optional_overlay_replaces_or_adds_once(self):
         text = "Existing = 0\n"

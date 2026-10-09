@@ -35,3 +35,6 @@ set_tests_properties(bot_behavior_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIO
 add_test(NAME map_script_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/map_script_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(map_script_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME spell_loot_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/spell_loot_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(spell_loot_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
