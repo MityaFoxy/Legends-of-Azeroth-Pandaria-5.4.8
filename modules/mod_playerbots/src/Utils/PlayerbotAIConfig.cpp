@@ -18,6 +18,7 @@
 #include "PlayerbotAIConfig.h"
 
 #include <iostream>
+#include <algorithm>
 
 #include "Config.h"
 #include "Helper.h"
@@ -80,6 +81,10 @@ bool PlayerbotAIConfig::Initialize()
     maxWaitForMove = sConfigMgr->GetIntDefault("AiPlayerbot.MaxWaitForMove", 5000);
     disableMoveSplinePath = sConfigMgr->GetIntDefault("AiPlayerbot.DisableMoveSplinePath", 0);
     maxMovementSearchTime = sConfigMgr->GetIntDefault("AiPlayerbot.MaxMovementSearchTime", 3);
+    navigationMaxAttempts = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.NavigationMaxAttempts", 5), 1, 10);
+    navigationLogInterval = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.NavigationLogInterval", 30000), 1000, 600000);
+    stuckTimeout = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckTimeout", 4000), 2000, 30000);
+    stuckMaxAttempts = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckMaxAttempts", 3), 1, 5);
     expireActionTime = sConfigMgr->GetIntDefault("AiPlayerbot.ExpireActionTime", 5000);
     dispelAuraDuration = sConfigMgr->GetIntDefault("AiPlayerbot.DispelAuraDuration", 7000);
     reactDelay = sConfigMgr->GetIntDefault("AiPlayerbot.ReactDelay", 100);

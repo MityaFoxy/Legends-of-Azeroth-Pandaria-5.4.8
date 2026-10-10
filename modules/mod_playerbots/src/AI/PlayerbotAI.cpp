@@ -241,6 +241,9 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 
     AllowActivity();
 
+    if (_aiObjectContext && _aiObjectContext->GetValue<LastMovement&>("last movement")->Get().groundMovement.active)
+        MovementAction(this, "stuck recovery").CheckStuck(elapsed);
+
     if (!CanUpdateAI())
         return;
 

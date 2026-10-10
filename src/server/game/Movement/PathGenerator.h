@@ -60,7 +60,9 @@ class TC_GAME_API PathGenerator
 
         // Calculate the path from owner to given destination
         // return: true if new path was calculated, false otherwise (no change needed)
-        bool CalculatePath(float destX, float destY, float destZ, bool forceDest = false, bool straightLine = false, bool assumeSourceOnGround = false);
+        // startPosition is for planning a continuation without relocating the source.
+        bool CalculatePath(float destX, float destY, float destZ, bool forceDest = false, bool straightLine = false,
+            bool assumeSourceOnGround = false, G3D::Vector3 const* startPosition = nullptr);
         bool IsInvalidDestinationZ(Unit const* target) const;
         static bool IsWalkableClimb(float x, float y, float z, float destX, float destY, float destZ, float sourceHeight);
         static float GetRequiredHeightToClimb(float x, float y, float z, float destX, float destY, float destZ, float sourceHeight);
@@ -81,6 +83,9 @@ class TC_GAME_API PathGenerator
 
         void SetPathType(PathType type) { _type = type; } // For hacks todo
         PathType GetPathType() const { return _type; }
+        char const* GetPathFailureReason() const { return _failureReason ? _failureReason : "none"; }
+        bool HasNavigationData() const { return _navMesh && _navMeshQuery; }
+        uint32 GetPathQueryStatus() const { return _queryStatus; }
 
         // shortens the path until the destination is the specified distance from the target point
         void ShortenPathUntilDist(G3D::Vector3 const& point, float dist);
@@ -137,6 +142,8 @@ class TC_GAME_API PathGenerator
         WorldObject const* const _source;       // the object that is moving
         dtNavMesh const* _navMesh;              // the nav mesh
         dtNavMeshQuery const* _navMeshQuery;    // the nav mesh query used to find the path
+        char const* _failureReason = nullptr;
+        uint32 _queryStatus = 0;
 
         dtQueryFilter _filter;  // use single filter for all movements, update it when needed
 

@@ -28,6 +28,8 @@ public:
 
     bool IsMovingAllowed();
     bool IsMovingAllowed(WorldObject* target);
+    // Called before the AI action-delay gate; observes only our own point movement.
+    void CheckStuck(uint32 elapsed);
 
     // -- combat movement
     bool ChaseTo(WorldObject* obj, float distance = 0.0f, float angle = 0.0f);
@@ -70,7 +72,13 @@ protected:
     };
 
 private:
-    const Movement::PointsArray SearchForBestPath(float x, float y, float z, float& modified_z, int maxSearchCount = 5, bool normal_only = false, float step = 8.0f);
+    Movement::PointsArray SearchForBestPath(float x, float y, float z, bool& usingNavigation,
+        bool normalOnly = false, uint32 recoveryAttempt = 0);
+    bool CanStartGroundMovement(float x, float y, float z);
+    void TrackGroundMovement(float x, float y, float z, bool normalOnly, bool backwards);
+    void LogStuckResult(char const* outcome, uint32 attempts, bool warning = true);
+    void LogNavigationResult(char const* outcome, char const* reason, uint32 type, uint32 attempts,
+        float x, float y, float z, bool warning);
 };
 
 class MoveRandomAction : public MovementAction

@@ -19,6 +19,8 @@
 #define TRINITY_POINTMOVEMENTGENERATOR_H
 
 #include "MovementGenerator.h"
+#include "ObjectGuid.h"
+#include "MoveSplineInitArgs.h"
 
 template<class T>
 class PointMovementGenerator : public MovementGeneratorMedium< T, PointMovementGenerator<T> >
@@ -36,6 +38,7 @@ class PointMovementGenerator : public MovementGeneratorMedium< T, PointMovementG
         void MovementInform(T*);
 
         void unitSpeedChanged() { i_recalculateSpeed = true; }
+        void SetPrecomputedPath(Movement::PointsArray const& path) { _precomputedPath = path; }
 
         MovementGeneratorType GetMovementGeneratorType() const { return POINT_MOTION_TYPE; }
 
@@ -46,6 +49,7 @@ class PointMovementGenerator : public MovementGeneratorMedium< T, PointMovementG
         float speed;
         bool m_generatePath;
         bool i_recalculateSpeed;
+        Movement::PointsArray _precomputedPath;
 };
 
 class AssistanceMovementGenerator : public PointMovementGenerator<Creature>

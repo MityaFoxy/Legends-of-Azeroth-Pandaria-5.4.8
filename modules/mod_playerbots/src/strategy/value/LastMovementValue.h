@@ -7,6 +7,7 @@
 #define _PLAYERBOT_LASTMOVEMENTVALUE_H
 
 #include "ObjectGuid.h"
+#include "GroundMovementState.h"
 #include "WorldPosition.h"
 #include "MovementActions.h"
 #include "Value.h"
@@ -29,6 +30,11 @@ public:
         lastMoveShort = other.lastMoveShort;
         nextTeleport = other.nextTeleport;
         priority = other.priority;
+        navigationLogTime = other.navigationLogTime;
+        navigationLogSuppressed = other.navigationLogSuppressed;
+        navigationLogStarted = other.navigationLogStarted;
+        navigationLogWarning = other.navigationLogWarning;
+        groundMovement = other.groundMovement;
         return *this;
     };
 
@@ -54,6 +60,13 @@ public:
     uint32 msTime;
     MovementPriority priority;
     time_t nextTeleport;
+
+    // Shared by movement actions for this bot; movement resets must not reset the log throttle.
+    uint32 navigationLogTime = 0;
+    uint32 navigationLogSuppressed = 0;
+    bool navigationLogStarted = false;
+    bool navigationLogWarning = false;
+    GroundMovementState groundMovement;
 };
 
 class LastMovementValue : public ManualSetValue<LastMovement&>

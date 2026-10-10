@@ -689,6 +689,28 @@ void MotionMaster::MovePoint(uint32 id, float x, float y, float z, bool generate
     }
 }
 
+bool MotionMaster::MovePointPath(uint32 id, Movement::PointsArray const& path, MovementSlot slot)
+{
+    if (path.size() < 2 || std::any_of(path.begin(), path.end(), [](G3D::Vector3 const& point)
+        { return !Trinity::IsValidMapCoord(point.x, point.y, point.z); }))
+        return false;
+
+    G3D::Vector3 const& end = path.back();
+    if (_owner->GetTypeId() == TYPEID_PLAYER)
+    {
+        auto* movement = new PointMovementGenerator<Player>(id, end.x, end.y, end.z, false);
+        movement->SetPrecomputedPath(path);
+        Mutate(movement, slot);
+    }
+    else
+    {
+        auto* movement = new PointMovementGenerator<Creature>(id, end.x, end.y, end.z, false);
+        movement->SetPrecomputedPath(path);
+        Mutate(movement, slot);
+    }
+    return true;
+}
+
 void MotionMaster::MoveLand(uint32 id, Position const& pos, float speed)
 {
     float x, y, z;

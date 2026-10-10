@@ -166,6 +166,7 @@ class TC_GAME_API MotionMaster
         void MovePoint(uint32 id, Position const& pos, bool generatePath = true)
             { MovePoint(id, pos.m_positionX, pos.m_positionY, pos.m_positionZ, generatePath); }
         void MovePoint(uint32 id, float x, float y, float z, bool generatePath = true, MovementSlot slot = MOTION_SLOT_ACTIVE);
+        bool MovePointPath(uint32 id, Movement::PointsArray const& path, MovementSlot slot = MOTION_SLOT_ACTIVE);
 
         void MoveLand(uint32 id, Position const& pos, float speed = 0);
         void MoveTakeoff(uint32 id, Position const& pos, float speed = 0);

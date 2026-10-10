@@ -270,16 +270,40 @@ AiPlayerbot.GlobalCooldown = 500
 # Max wait time when moving
 AiPlayerbot.MaxWaitForMove = 5000
 
-# Disables use of MoveSplinePath for bot movement, will result in more erratic bot movement but means stun/snare/root/etc
-# will work on bots (they wont reliably work when MoveSplinePath is enabled, though slowing effects still work ok)
-# Default: 0 - MoveSplinePath enabled
-#          1 - MoveSplinePath disabled in BG/Arena only
-#          2 - MoveSplinePath disabled everywhere
+# Legacy option retained for config compatibility. Ground MoveTo now always uses
+# PointMovementGenerator, including selected navigation routes, so root/stun and
+# speed updates keep point-movement handling. This no longer bypasses route recovery.
 AiPlayerbot.DisableMoveSplinePath = 0
 
-# Max search time for movement (higher for better movement on slopes)
-# default: 3
+# Legacy height-search option retained for config compatibility. MoveTo now uses
+# NavigationMaxAttempts for complete alternative routes to the same destination.
 AiPlayerbot.MaxMovementSearchTime = 3
+
+# Navigation-first MoveTo: total path queries, not the number of extra routes.
+# A complete alternative through a waypoint needs two queries. Default 5:
+# one primary query and up to two complete alternatives. Clamped to [1, 10].
+# Stop at the first complete route; try a useful partial route before direct fallback.
+# Does not change chase, vehicles, swimming or flying. MoveTo always uses the
+# PointMovementGenerator (including precomputed paths), not raw MoveSplinePath.
+AiPlayerbot.NavigationMaxAttempts = 5
+
+# Rate limit navigation outcome messages per bot, shared by its movement actions.
+# Milliseconds, clamped to [1000, 600000]. Debug-level individual queries are not throttled.
+# Enable Logger.playerbots.navigation=3,Console Server in worldserver.conf;
+# level 2 also records individual path-query coordinates, flags and reasons.
+AiPlayerbot.NavigationLogInterval = 30000
+
+# Runtime watchdog for generic ground MoveTo only (not chase/follow/vehicles).
+# Milliseconds without significant displacement; root/stun/casts pause detection.
+# Slow movement uses a speed-scaled threshold. Server stalls do not count in full.
+AiPlayerbot.StuckTimeout = 4000
+
+# Bounded recovery searches per goal. Clamped to [1, 5]. Each search has the
+# NavigationMaxAttempts query budget and uses different waypoint candidates.
+# Recovery requires navigation: do not repeat a direct route that already stuck.
+# After exhaustion stop; retry only for a new goal or after external displacement.
+# No teleportation. Events use Logger.playerbots.navigation (not outcome throttling).
+AiPlayerbot.StuckMaxAttempts = 3
 
 # Action expiration time
 AiPlayerbot.ExpireActionTime = 5000

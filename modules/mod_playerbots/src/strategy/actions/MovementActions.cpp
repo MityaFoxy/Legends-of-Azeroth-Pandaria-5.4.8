@@ -16,8 +16,10 @@
 #include "G3D/Vector3.h"
 #include "GameObject.h"
 #include "LastMovementValue.h"
+#include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "MoveSpline.h"
 #include "MoveSplineInitArgs.h"
 #include "MovementGenerator.h"
 #include "ObjectDefines.h"
@@ -261,10 +263,19 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     bool exact_waypoint, MovementPriority priority, bool lessDelay, bool backwards)
 {
     UpdateMovementState();
+    // Never turn an invalid destination into an unchecked fallback movement.
+    if (mapId != bot->GetMapId() || !Trinity::IsValidMapCoord(x, y, z))
+    {
+        LogNavigationResult("rejected", "invalid-map-or-coordinates", 0, 0, x, y, z, true);
+        return false;
+    }
     if (!IsMovingAllowed(mapId, x, y, z))
     {
         return false;
     }
+    if (!bot->GetVehicle() && !bot->GetTransport() && !bot->IsFlying() && !bot->IsInWater() &&
+        !bot->IsUnderWater() && !CanStartGroundMovement(x, y, z))
+        return false;
     if (IsDuplicateMove(mapId, x, y, z))
     {
         return false;
@@ -274,8 +285,6 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         return false;
     }
     bool generatePath = !bot->IsFlying() && !bot->IsUnderWater() && !bot->IsInWater();
-    bool disableMoveSplinePath = sPlayerbotAIConfig->disableMoveSplinePath >= 2 ||
-        (sPlayerbotAIConfig->disableMoveSplinePath == 1 && bot->InBattleground());
     if (Vehicle* vehicle = bot->GetVehicle())
     {
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
@@ -309,7 +318,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
             return true;
         }
     }
-    else if (exact_waypoint || disableMoveSplinePath || !generatePath)
+    else if (!generatePath || bot->GetTransport())
     {
         float distance = bot->GetExactDist(x, y, z);
         if (distance > 0.01f)
@@ -340,37 +349,50 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     }
     else
     {
-        float modifiedZ;
-        Movement::PointsArray path = SearchForBestPath(x, y, z, modifiedZ, sPlayerbotAIConfig->maxMovementSearchTime, normal_only);
-        if (modifiedZ == INVALID_HEIGHT)
+        Movement::PointsArray path = SearchForBestPath(x, y, z, generatePath, normal_only);
+        if (path.size() < 2)
         {
             return false;
         }
-        float distance = bot->GetExactDist(x, y, modifiedZ);
+        // Partial paths may stop before the requested destination. Move to
+        // the reachable endpoint and keep the movement bookkeeping in sync.
+        G3D::Vector3 const& endP = path.back();
+        float distance = bot->GetExactDist(endP.x, endP.y, endP.z);
         if (distance > 0.01f)
         {
             if (bot->IsSitState())
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
 
             MotionMaster& mm = *bot->GetMotionMaster();
-            G3D::Vector3 endP = path.back();
             mm.Clear();
-            if (!backwards)
+            if (generatePath)
             {
-                mm.MovePoint(0, x, y, z, generatePath);
+                if (!mm.MovePointPath(0, path))
+                    return false;
+            }
+            else if (!backwards)
+            {
+                mm.MovePoint(0, endP.x, endP.y, endP.z, generatePath);
             }
             else
             {
-                mm.MovePointBackwards(0, x, y, z, generatePath);
+                mm.MovePointBackwards(0, endP.x, endP.y, endP.z, generatePath);
             }
-             float delay = 1000.0f * MoveDelay(distance, backwards);
+            float routeDistance = 0.0f;
+            for (size_t i = 1; i < path.size(); ++i)
+            {
+                G3D::Vector3 const delta = path[i] - path[i - 1];
+                routeDistance += delta.length();
+            }
+            float delay = 1000.0f * MoveDelay(routeDistance, backwards);
             if (lessDelay)
             {
                 delay -= botAI->GetReactDelay();
             }
             delay = std::max(.0f, delay);
             delay = std::min((float)sPlayerbotAIConfig->maxWaitForMove, delay);
-            AI_VALUE(LastMovement&, "last movement").Set(mapId, x, y, z, bot->GetOrientation(), delay, priority);
+            AI_VALUE(LastMovement&, "last movement").Set(mapId, endP.x, endP.y, endP.z, bot->GetOrientation(), delay, priority);
+            TrackGroundMovement(x, y, z, normal_only, backwards);
             return true;
         }
     }
@@ -638,73 +660,306 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
     return true;
 }
 
-const Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float z, float& modified_z,
-    int maxSearchCount, bool normal_only, float step)
+void MovementAction::LogNavigationResult(char const* outcome, char const* reason, uint32 type, uint32 attempts,
+    float x, float y, float z, bool warning)
 {
-    bool found = false;
-    modified_z = INVALID_HEIGHT;
-    float tempZ = bot->GetMapHeight(x, y, z);
-    PathGenerator gen(bot);
-    gen.CalculatePath(x, y, tempZ);
-    Movement::PointsArray result = gen.GetPath();
-    float min_length = gen.getPathLength();
-    int typeOk = PATHFIND_NORMAL | PATHFIND_INCOMPLETE;
-    if ((gen.GetPathType() & typeOk) && abs(tempZ - z) < 0.5f)
+    LastMovement& last = AI_VALUE(LastMovement&, "last movement");
+    uint32 const now = getMSTime();
+    if (last.navigationLogStarted && (!warning || last.navigationLogWarning) &&
+        getMSTimeDiff(last.navigationLogTime, now) < sPlayerbotAIConfig->navigationLogInterval)
     {
-        modified_z = tempZ;
-        return result;
+        ++last.navigationLogSuppressed;
+        return;
     }
-    // Start searching
-    if (gen.GetPathType() & typeOk)
+    uint32 const suppressed = last.navigationLogSuppressed;
+    last.navigationLogStarted = true;
+    last.navigationLogWarning = warning;
+    last.navigationLogTime = now;
+    last.navigationLogSuppressed = 0;
+    if (warning)
+        TC_LOG_WARN("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} suppressed={}",
+            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            x, y, z, outcome, reason, type, attempts, suppressed);
+    else
+        TC_LOG_INFO("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} suppressed={}",
+            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            x, y, z, outcome, reason, type, attempts, suppressed);
+}
+
+bool MovementAction::CanStartGroundMovement(float x, float y, float z)
+{
+    GroundMovementState& state = AI_VALUE(LastMovement&, "last movement").groundMovement;
+    if (!state.exhausted || !state.Matches(bot->GetMapId(), bot->GetInstanceId(), {x, y, z}))
+        return true;
+    G3D::Vector3 const position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    if ((position - state.anchor).length() > 2.0f)
     {
-        modified_z = tempZ;
-        found = true;
+        state = {};
+        return true;
     }
-    int count = 1;
-    for (float delta = step; count < maxSearchCount / 2 + 1; count++, delta += step)
+    return false;
+}
+
+void MovementAction::TrackGroundMovement(float x, float y, float z, bool normalOnly, bool backwards)
+{
+    GroundMovementState& state = AI_VALUE(LastMovement&, "last movement").groundMovement;
+    bool const continuing = state.Matches(bot->GetMapId(), bot->GetInstanceId(), {x, y, z});
+    if (!continuing)
+        state = {};
+    if (!state.active)
     {
-        tempZ = bot->GetMapHeight(x, y, z + delta);
-        if (tempZ == INVALID_HEIGHT)
+        state.anchor = {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()};
+        state.idleMs = 0;
+    }
+    state.tracked = state.active = true;
+    state.mapId = bot->GetMapId();
+    state.instanceId = bot->GetInstanceId();
+    state.goal = {x, y, z};
+    state.normalOnly = normalOnly;
+    state.backwards = backwards;
+    state.generator = bot->GetMotionMaster()->top();
+    state.splineId = bot->movespline->GetId();
+    state.endpoint = bot->movespline->FinalDestination();
+}
+
+void MovementAction::LogStuckResult(char const* outcome, uint32 attempts, bool warning)
+{
+    GroundMovementState const& state = AI_VALUE(LastMovement&, "last movement").groundMovement;
+    // Events are bounded by timeout/attempt budget, independent of path-log throttling.
+    if (warning)
+        TC_LOG_WARN("playerbots.navigation", "bot={} map={} instance={} outcome={} recoveryAttempt={}/{} idleMs={} from=({},{},{}) goal=({},{},{}) endpoint=({},{},{}) spline={}",
+            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), outcome, attempts, sPlayerbotAIConfig->stuckMaxAttempts, state.idleMs,
+            bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), state.goal.x, state.goal.y, state.goal.z,
+            state.endpoint.x, state.endpoint.y, state.endpoint.z, state.splineId);
+    else
+        TC_LOG_INFO("playerbots.navigation", "bot={} map={} instance={} outcome={} recoveryAttempt={} from=({},{},{}) goal=({},{},{})",
+            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), outcome, attempts,
+            bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), state.goal.x, state.goal.y, state.goal.z);
+}
+
+void MovementAction::CheckStuck(uint32 elapsed)
+{
+    LastMovement& last = AI_VALUE(LastMovement&, "last movement");
+    GroundMovementState& state = last.groundMovement;
+    if (!state.active)
+        return;
+    MotionMaster& mm = *bot->GetMotionMaster();
+    if (state.mapId != bot->GetMapId() || state.instanceId != bot->GetInstanceId() ||
+        bot->GetVehicle() || bot->GetTransport() || bot->IsFlying() || bot->IsInWater() || bot->IsUnderWater() ||
+        bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||
+        mm.GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
+    {
+        state = {};
+        return;
+    }
+    G3D::Vector3 const position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    float const speed = bot->GetSpeed(state.backwards ? MOVE_RUN_BACK : MOVE_RUN);
+    if (!IsMovingAllowed() || bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED) ||
+        bot->IsNonMeleeSpellCasted(false) || bot->IsSitState() || speed <= 0.01f)
+    {
+        state.anchor = position;
+        state.idleMs = 0;
+        return;
+    }
+    if ((position - state.goal).length() <= 1.0f)
+    {
+        if (state.attempts)
+            LogStuckResult("stuck-goal-reached", state.attempts, false);
+        state = {};
+        return;
+    }
+    if (state.recovering && (position - state.recoveryStart).length() >= 2.0f)
+    {
+        LogStuckResult("stuck-progress-restored", state.attempts, false);
+        state.recovering = false;
+    }
+    // Intentional StopMoving and a completed partial route are not a stuck bot.
+    if (bot->movespline->Finalized() || bot->IsStopped())
+    {
+        state.active = false;
+        state.idleMs = 0;
+        return;
+    }
+    // Same generator can relaunch its spline after a speed change.
+    if (state.splineId != bot->movespline->GetId())
+    {
+        if ((state.endpoint - bot->movespline->FinalDestination()).length() > 0.1f)
         {
-            continue;
+            state = {};
+            return;
         }
+        state.splineId = bot->movespline->GetId();
+    }
+    float const threshold = std::clamp(speed * 0.5f, 0.05f, 0.5f);
+    if ((position - state.anchor).length() >= threshold)
+    {
+        state.anchor = position;
+        state.idleMs = 0;
+        return;
+    }
+    // Do not interpret a long server stall as seconds of observed immobility.
+    state.idleMs += std::min<uint32>(elapsed, 1000);
+    if (state.idleMs < sPlayerbotAIConfig->stuckTimeout)
+        return;
+    LogStuckResult("stuck-detected", state.attempts);
+    auto exhaust = [&]()
+    {
+        LogStuckResult("stuck-recovery-exhausted", state.attempts);
+        bot->StopMoving();
+        mm.Clear();
+        state.active = state.recovering = false;
+        state.exhausted = true;
+        state.anchor = position;
+        last.lastdelayTime = 0;
+    };
+    if (state.attempts >= sPlayerbotAIConfig->stuckMaxAttempts)
+    {
+        exhaust();
+        return;
+    }
+    ++state.attempts;
+    state.idleMs = 0;
+    bool navigation = true;
+    // The primary/direct route has already failed at runtime. Require a new
+    // navigated waypoint route, never force that same straight line again.
+    Movement::PointsArray path = SearchForBestPath(state.goal.x, state.goal.y, state.goal.z, navigation, true, state.attempts);
+    if (path.size() < 2 || !navigation)
+    {
+        LogStuckResult("stuck-recovery-no-route", state.attempts);
+        if (state.attempts >= sPlayerbotAIConfig->stuckMaxAttempts)
+            exhaust();
+        return;
+    }
+    mm.Clear();
+    if (!mm.MovePointPath(0, path))
+    {
+        exhaust();
+        return;
+    }
+    state.generator = mm.top();
+    state.splineId = bot->movespline->GetId();
+    state.endpoint = path.back();
+    state.anchor = state.recoveryStart = position;
+    state.recovering = true;
+    last.Set(state.mapId, path.back().x, path.back().y, path.back().z, bot->GetOrientation(), 0, last.priority);
+    LogStuckResult("stuck-recovery-started", state.attempts, false);
+}
+
+Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float z, bool& usingNavigation, bool normalOnly, uint32 recoveryAttempt)
+{
+    usingNavigation = true;
+    G3D::Vector3 const start(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    G3D::Vector3 const destination(x, y, z);
+    if (!Trinity::IsValidMapCoord(start.x, start.y, start.z) || !Trinity::IsValidMapCoord(x, y, z))
+    {
+        LogNavigationResult("rejected", "invalid-coordinates", 0, 0, x, y, z, true);
+        return {};
+    }
+    float const distance = (destination - start).length();
+    if (distance <= 0.01f)
+        return {};
+
+    uint32 const limit = std::clamp<uint32>(sPlayerbotAIConfig->navigationMaxAttempts, 1, 10);
+    uint32 attempts = 0;
+    uint32 lastType = PATHFIND_BLANK;
+    char const* reason = "no-path";
+    bool unavailable = false;
+    auto query = [&](G3D::Vector3 const& from, G3D::Vector3 const& to, bool completeOnly) -> Movement::PointsArray
+    {
+        if (attempts >= limit)
+            return {};
+        ++attempts;
         PathGenerator gen(bot);
-        gen.CalculatePath(x, y, tempZ);
-        if ((gen.GetPathType() & typeOk) && gen.getPathLength() < min_length)
+        uint32 const queryStart = getMSTime();
+        bool const calculated = gen.CalculatePath(to.x, to.y, to.z, false, false, false, &from);
+        PathType const type = gen.GetPathType();
+        lastType = type;
+        reason = gen.GetPathFailureReason();
+        // No amount of waypoint searching can repair a missing map or query.
+        unavailable = !gen.HasNavigationData() || (type & PATHFIND_NOT_USING_PATH);
+        Movement::PointsArray const& points = gen.GetPath();
+        TC_LOG_DEBUG("playerbots.navigation", "bot={} map={} instance={} attempt={}/{} from=({},{},{}) to=({},{},{}) calculated={} pathType={} queryStatus={} reason={} points={} queryMs={}",
+            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), attempts, limit,
+            from.x, from.y, from.z, to.x, to.y, to.z, calculated, uint32(type), gen.GetPathQueryStatus(), reason, points.size(), getMSTimeDiff(queryStart, getMSTime()));
+        if (!calculated || !(type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_SHORT)) ||
+            (type & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH | PATHFIND_FARFROMPOLY_START)))
+            return {};
+        if (points.size() < 2 || std::any_of(points.begin(), points.end(), [](G3D::Vector3 const& point)
+            { return !Trinity::IsValidMapCoord(point.x, point.y, point.z); }))
         {
-            found = true;
-            min_length = gen.getPathLength();
-            result = gen.GetPath();
-            modified_z = tempZ;
+            reason = "invalid-or-empty-path";
+            return {};
+        }
+        if ((points.front() - from).length() > 1.0f || (points.back() - from).length() <= 0.01f)
+        {
+            reason = "path-start-mismatch-or-no-progress";
+            return {};
+        }
+        if (completeOnly && ((type & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) ||
+            (points.back() - to).length() > 1.0f))
+            return {};
+        return points;
+    };
+
+    Movement::PointsArray partial = query(start, destination, false);
+    uint32 const primaryType = lastType;
+    char const* const primaryReason = reason;
+    if (!recoveryAttempt && !partial.empty() && !(primaryType & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) &&
+        (partial.back() - destination).length() <= 1.0f)
+        return partial;
+
+    // Detour already searches connected polygons. These are distinct two-leg
+    // searches, useful for local mesh/smoothing failures or query-node limits,
+    // not repeated calls with identical start/end coordinates.
+    float const dx = x - start.x;
+    float const dy = y - start.y;
+    float const horizontal = std::sqrt(dx * dx + dy * dy);
+    if (!unavailable && horizontal > 0.1f && !bot->GetTransport())
+    {
+        float const forward = std::min(horizontal * 0.5f, 16.0f);
+        for (uint32 candidate = 0; candidate < limit && attempts + 2 <= limit; ++candidate)
+        {
+            // Each invocation owns a disjoint candidate block, including the
+            // initial search. Failed first legs/invalid heights must not cause
+            // the next recovery attempt to repeat previously tested waypoints.
+            uint32 const variant = candidate + recoveryAttempt * limit;
+            float const side = (variant % 2 ? -1.0f : 1.0f) * (8.0f + 8.0f * (variant / 2));
+            float const wx = start.x + (dx * forward - dy * side) / horizontal;
+            float const wy = start.y + (dy * forward + dx * side) / horizontal;
+            float const wz = bot->GetMapHeight(wx, wy, start.z + 8.0f);
+            if (wz == INVALID_HEIGHT || !Trinity::IsValidMapCoord(wx, wy, wz) || std::fabs(wz - start.z) > 8.0f)
+                continue;
+            Movement::PointsArray first = query(start, {wx, wy, wz}, true);
+            if (first.empty())
+                continue;
+            // Use the first route's actual endpoint, not a theoretical waypoint.
+            Movement::PointsArray second = query(first.back(), destination, true);
+            if (second.empty())
+                continue;
+            if ((first.back() - second.front()).length() > 0.1f || first.size() + second.size() - 1 > MAX_POINT_PATH_LENGTH)
+            {
+                reason = "discontinuous-or-oversized-alternative";
+                continue;
+            }
+            first.insert(first.end(), second.begin() + 1, second.end());
+            LogNavigationResult("alternative-route", primaryReason, primaryType, attempts, x, y, z, false);
+            return first;
         }
     }
-    for (float delta = -step; count < maxSearchCount; count++, delta -= step)
+    if (!recoveryAttempt && !partial.empty() && (partial.back() - destination).length() + 0.1f < distance)
     {
-        tempZ = bot->GetMapHeight(x, y, z + delta);
-        if (tempZ == INVALID_HEIGHT)
-        {
-            continue;
-        }
-        PathGenerator gen(bot);
-        gen.CalculatePath(x, y, tempZ);
-        if ((gen.GetPathType() & typeOk) && gen.getPathLength() < min_length)
-        {
-            found = true;
-            min_length = gen.getPathLength();
-            result = gen.GetPath();
-            modified_z = tempZ;
-        }
+        LogNavigationResult("partial-route", primaryReason, primaryType, attempts, x, y, z, true);
+        return partial;
     }
-    if (!found && normal_only)
+    // Preserve callers' existing navigation-only safety contract (e.g. flee).
+    if (normalOnly || bot->GetTransport())
     {
-        modified_z = INVALID_HEIGHT;
-        return Movement::PointsArray{};
+        LogNavigationResult("rejected", reason, lastType, attempts, x, y, z, true);
+        return {};
     }
-    if (!found && !normal_only)
-    {
-        return result;
-    }
-    return result;
+    usingNavigation = false;
+    LogNavigationResult("fallback-direct", primaryReason, primaryType, attempts, x, y, z, true);
+    return {start, destination};
 }
 
 bool MovementAction::MoveAway(Unit* target, float distance, bool backwards)

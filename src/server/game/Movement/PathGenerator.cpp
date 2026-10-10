@@ -59,16 +59,28 @@ PathGenerator::~PathGenerator()
     delete visualizeNavmeshWaypointGUIDs;
 }
 
-bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool forceDest, bool straightLine, bool assumeSourceOnGround)
+bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool forceDest, bool straightLine, bool assumeSourceOnGround,
+    G3D::Vector3 const* startPosition)
 {
+    _failureReason = nullptr;
+    _queryStatus = 0;
     float x, y, z;
     _source->GetPosition(x, y, z);
+    if (startPosition)
+    {
+        x = startPosition->x;
+        y = startPosition->y;
+        z = startPosition->z;
+    }
 
     if (assumeSourceOnGround)
         _source->UpdateAllowedPositionZ(x, y, z);
 
     if (!Trinity::IsValidMapCoord(destX, destY, destZ) || !Trinity::IsValidMapCoord(x, y, z))
+    {
+        _failureReason = "invalid-coordinates";
         return false;
+    }
 
     G3D::Vector3 dest(destX, destY, destZ);
     SetEndPosition(dest);
@@ -94,8 +106,20 @@ bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool fo
     // make sure navMesh works - we can run on map w/o mmap
     // check if the start and end point have a .mmtile loaded (can we pass via not loaded tile on the way?)
     Unit const* _sourceUnit = _source->ToUnit();
-    if (!_navMesh || !_navMeshQuery || (_sourceUnit && _sourceUnit->HasUnitState(UNIT_STATE_IGNORE_PATHFINDING)) ||
-        !HaveTile(start) || !HaveTile(dest) || skip)
+    if (!_navMesh)
+        _failureReason = DisableMgr::IsPathfindingEnabled(_source->GetMapId()) ? "missing-navmesh" : "pathfinding-disabled";
+    else if (!_navMeshQuery)
+        _failureReason = "missing-navmesh-query";
+    else if (_sourceUnit && _sourceUnit->HasUnitState(UNIT_STATE_IGNORE_PATHFINDING))
+        _failureReason = "ignore-pathfinding-state";
+    else if (!HaveTile(start))
+        _failureReason = "missing-start-tile";
+    else if (!HaveTile(dest))
+        _failureReason = "missing-destination-tile";
+    else if (skip)
+        _failureReason = "map-specific-pathfinding-bypass";
+
+    if (_failureReason)
     {
         BuildShortcut();
         _type = PathType(PATHFIND_NORMAL | PATHFIND_NOT_USING_PATH);
@@ -105,8 +129,25 @@ bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool fo
     UpdateFilter();
 
     BuildPolyPath(start, dest);
+    if (_queryStatus & DT_OUT_OF_NODES)
+        _failureReason = "navigation-query-node-limit";
+    else if (_queryStatus & DT_BUFFER_TOO_SMALL)
+        _failureReason = "navigation-query-buffer-limit";
+    else if (_type & PATHFIND_NOPATH)
+        _failureReason = "no-path-or-mesh-hole";
+    else if (_type & PATHFIND_SHORTCUT)
+        _failureReason = "shortcut";
+    else if (_type & PATHFIND_NOT_USING_PATH)
+        _failureReason = "not-using-navigation";
+    else if (_type & PATHFIND_FARFROMPOLY)
+        _failureReason = "far-from-navigation-polygon";
+    else if (_type & PATHFIND_SHORT)
+        _failureReason = "path-point-limit";
+    else if (_type & PATHFIND_INCOMPLETE)
+        _failureReason = "incomplete-path";
 
-    if (_sourceUnit->VisualizePathfinding)
+    // GameObjects can also be path sources; visualization requires a Unit.
+    if (_sourceUnit && _sourceUnit->VisualizePathfinding)
     {
         VisualizePath(2500);
         VisualizeNavmesh(2500);
@@ -422,6 +463,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
                 MAX_PATH_LENGTH - prefixPolyLength);   // max number of polygons in output path
         }
 
+        _queryStatus |= dtResult;
         if (!suffixPolyLength || dtStatusFailed(dtResult))
         {
             // this is probably an error state, but we'll leave it
@@ -529,6 +571,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
                 MAX_PATH_LENGTH);   // max number of polygons in output path
         }
 
+        _queryStatus |= dtResult;
         if (!_polyLength || dtStatusFailed(dtResult))
         {
             // only happens if we passed bad data to findPath(), or navmesh is messed up
@@ -589,6 +632,7 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
                 _pointPathLimit);    // maximum number of points
     }
 
+    _queryStatus |= dtResult;
     // Special case with start and end positions very close to each other
     if (_polyLength == 1 && pointCount == 1)
     {
