@@ -23,7 +23,6 @@
 #include "Vehicle.h"
 #include "GameObjectAI.h"
 #include "TaskScheduler.h"
-#include "ObjectAccessor.h"
 
 enum Gilneas
 {
@@ -180,20 +179,27 @@ enum Gilneas
     NPC_HARNESS_SUMMONED                    = 43336,
     NPC_STAGECOACH_CARRIAGE                 = 44928,
     NPC_STAGECOACH_HORSE                    = 43338,
+    NPC_DUSKHAVEN_WATCHMAN_STAGECOACH       = 43907,
     NPC_LORNA_CROWLEY_STAGECOACH            = 51409,
     NPC_OGRE_AMBUSHER                       = 38762,
 
     OGRE_AMBUSHER_COUNT                     = 3,
     OGRE_AMBUSHER_IMMUNITY_ID               = 1,
-    SPELL_OGRE_COSMETIC_BOULDER             = 85407,
 
-    EVENT_BOARD_HARNESS_OWNER               = 1,
+    EVENT_CARRIAGE_START_TIMEOUT            = 1,
     EVENT_BOARD_HORSES                      = 2,
     EVENT_CARRIAGE_RESUMMON_PASSENGERS     = 3,
+    EVENT_REBOARD_CARRIAGE_PLAYER           = 4,
 
     ACTION_START_WP                         = 1,
+    ACTION_STAGECOACH_STARTED               = 2,
+    ACTION_STAGECOACH_ABORT                 = 3,
+    ACTION_STAGECOACH_FINISHED              = 4,
 
-    GO_FIRST_GATE                           = 196401,
+    GO_FIRST_GATE                           = 196864,
+    GO_FIRST_GATE_LEGACY                    = 196401,
+    GO_FIRST_GATE_SPAWN                     = 166784,
+    GO_FIRST_GATE_LEGACY_SPAWN              = 166771,
     GO_KINGS_GATE                           = 196412,
 
     NPC_KOROTH_THE_HILLBREAKER              = 36294,
@@ -205,6 +211,17 @@ enum Gilneas
     SAY_KOROTH_THE_HILLBREAKER_2            = 1
 };
 
+void PrepareStagecoachPassenger(Unit* passenger)
+{
+    Creature* npc = passenger ? passenger->ToCreature() : nullptr;
+    if (!npc || (npc->GetEntry() != NPC_DUSKHAVEN_WATCHMAN_STAGECOACH && npc->GetEntry() != NPC_LORNA_CROWLEY_STAGECOACH))
+        return;
+
+    npc->LoadEquipment(1, true);
+    npc->SetSheath(SHEATH_STATE_RANGED);
+    npc->SetEmoteState(EMOTE_STATE_HOLD_RIFLE);
+}
+
 Position const runt2SummonJumpPos = { -1671.915f, 1446.734f, 52.28712f };
 Position const alphaSummonJumpPos = { -1656.723f, 1405.647f, 52.74205f };
 Position const alpha2SummonJumpPos = { -1675.44f, 1447.495f, 52.28762f };
@@ -212,6 +229,8 @@ Position const alpha2SummonJumpPos = { -1675.44f, 1447.495f, 52.28762f };
 Position const josiahJumpPos = { -1796.63f, 1427.73f, 12.4624f };
 
 float const ogreAmbusherAttackRange = 30.0f;
+
+Position const stagecoachSafeExitPosition = { -2217.77f, 1809.60f, 11.78f, 0.0f };
 
 uint32 const runtHousePathSize1 = 13;
 
@@ -2173,29 +2192,228 @@ public:
 
         EventMap events;
         ObjectGuid harnessGuid;
+        ObjectGuid playerGuid;
+        std::vector<ObjectGuid> starterRigGuids;
+        bool assemblingHarness = false;
+        bool journeyStarted = false;
+
+        void SetStarterRigVisible(bool visible)
+        {
+            if (!visible)
+            {
+                starterRigGuids.clear();
+
+                std::list<Creature*> starterRig;
+                me->GetCreatureListWithEntryInGrid(starterRig, NPC_STAGECOACH_HARNESS, 20.0f);
+                me->GetCreatureListWithEntryInGrid(starterRig, NPC_STAGECOACH_HORSE, 20.0f);
+                for (Creature* part : starterRig)
+                {
+                    if (!part || part == me || !part->IsVisible())
+                        continue;
+
+                    starterRigGuids.push_back(part->GetGUID());
+                    part->SetVisible(false);
+                }
+                return;
+            }
+
+            for (ObjectGuid const& guid : starterRigGuids)
+                if (Creature* part = ObjectAccessor::GetCreature(*me, guid))
+                    part->SetVisible(true);
+            starterRigGuids.clear();
+        }
+
+        void RemoveNpcPassengers()
+        {
+            Vehicle* vehicle = me->GetVehicleKit();
+            if (!vehicle)
+                return;
+
+            std::vector<ObjectGuid> passengerGuids;
+            for (auto const& seatPair : vehicle->Seats)
+            {
+                VehicleSeat const& seat = seatPair.second;
+                if (!seat.IsEmpty())
+                    passengerGuids.push_back(seat.Passenger.Guid);
+            }
+
+            for (ObjectGuid const& guid : passengerGuids)
+            {
+                Creature* passenger = ObjectAccessor::GetCreature(*me, guid);
+                if (!passenger)
+                    continue;
+
+                // Hide the accessory before detaching it. Otherwise the client
+                // briefly renders it falling from its transport attachment
+                // height while the deferred summon removal is processed.
+                passenger->SetVisible(false);
+                passenger->ExitVehicle();
+                passenger->DespawnOrUnsummon();
+            }
+        }
+
+        void SummonNpcPassengers()
+        {
+            struct PassengerDef { int8 seat; uint32 entry; };
+            PassengerDef const passengers[] = {
+                { 0, 38853 }, { 2, 44460 }, { 3, 36138 },
+                { 4, NPC_DUSKHAVEN_WATCHMAN_STAGECOACH },
+                { 5, NPC_DUSKHAVEN_WATCHMAN_STAGECOACH },
+                { 6, NPC_LORNA_CROWLEY_STAGECOACH },
+            };
+
+            for (auto const& passengerDef : passengers)
+            {
+                if (Vehicle* vehicle = me->GetVehicleKit())
+                    if (vehicle->GetPassenger(passengerDef.seat))
+                        continue;
+
+                Creature* passenger = me->SummonCreature(passengerDef.entry,
+                    me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
+                if (!passenger)
+                    continue;
+
+                passenger->EnterVehicle(me, passengerDef.seat);
+                PrepareStagecoachPassenger(passenger);
+            }
+        }
+
+        void Reset() override
+        {
+            SetStarterRigVisible(true);
+            events.Reset();
+            harnessGuid.Clear();
+            playerGuid.Clear();
+            assemblingHarness = false;
+            journeyStarted = false;
+        }
+
+        void RecoverStagecoach(bool despawnHarness, bool finished = false)
+        {
+            ObjectGuid const failedHarnessGuid = harnessGuid;
+            ObjectGuid const failedPlayerGuid = playerGuid;
+
+            events.Reset();
+            harnessGuid.Clear();
+            playerGuid.Clear();
+            assemblingHarness = false;
+            journeyStarted = false;
+
+            if (Unit* player = ObjectAccessor::GetUnit(*me, failedPlayerGuid))
+            {
+                if (player->GetVehicleBase() == me)
+                    player->ExitVehicle();
+
+                // A passenger on a nested vehicle can retain the carriage's old
+                // height as its fall origin. Teleporting to the verified ground
+                // point resets fall data and prevents lethal dismount damage.
+                if (finished && player->IsAlive() && player->IsInWorld())
+                    player->NearTeleportTo(stagecoachSafeExitPosition.GetPositionX(),
+                        stagecoachSafeExitPosition.GetPositionY(), stagecoachSafeExitPosition.GetPositionZ(),
+                        stagecoachSafeExitPosition.GetOrientation());
+            }
+
+            // Never dismantle or teleport a nested vehicle while its creature
+            // passengers are still installed: the vehicle teardown otherwise
+            // drops all of them at the final waypoint.
+            RemoveNpcPassengers();
+
+            if (me->GetVehicleBase())
+                me->ExitVehicle();
+
+            Position const& home = me->GetHomePosition();
+            me->NearTeleportTo(home.GetPositionX(), home.GetPositionY(), home.GetPositionZ(), home.GetOrientation());
+            SummonNpcPassengers();
+            SetStarterRigVisible(true);
+
+            if (despawnHarness)
+                if (Creature* harness = ObjectAccessor::GetCreature(*me, failedHarnessGuid))
+                    harness->DespawnOrUnsummon();
+        }
 
         void PassengerBoarded(Unit* passenger, int8 seatId, bool apply) override
         {
-            if (!apply || seatId != 1 || !passenger->IsPlayer())
+            if (seatId != 1 || !passenger->IsPlayer())
                 return;
+
+            if (!apply)
+            {
+                if (passenger->GetGUID() == playerGuid && !assemblingHarness && !journeyStarted)
+                    events.RescheduleEvent(EVENT_CARRIAGE_START_TIMEOUT, 1ms);
+                return;
+            }
 
             if (!harnessGuid.IsEmpty())
             {
                 if (Creature* harness = ObjectAccessor::GetCreature(*me, harnessGuid))
-                    if (harness->IsInWorld())
+                {
+                    if (harness->IsInWorld() && me->GetVehicleCreatureBase() == harness)
                         return;
+
+                    harness->DespawnOrUnsummon();
+                }
 
                 harnessGuid.Clear();
             }
 
-            if (me->GetVehicleCreatureBase())
-                return;
+            if (Creature* vehicleBase = me->GetVehicleCreatureBase())
+            {
+                if (vehicleBase->GetEntry() != NPC_HARNESS_SUMMONED)
+                {
+                    passenger->ExitVehicle();
+                    return;
+                }
+
+                vehicleBase->DespawnOrUnsummon();
+                me->ExitVehicle();
+            }
+
+            playerGuid = passenger->GetGUID();
+            assemblingHarness = true;
+            journeyStarted = false;
+            SetStarterRigVisible(false);
+            events.RescheduleEvent(EVENT_CARRIAGE_START_TIMEOUT, 5s);
 
             if (Creature* harness = me->SummonCreature(NPC_HARNESS_SUMMONED,
                 me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation()))
             {
+                if (!assemblingHarness)
+                    return;
+
                 harnessGuid = harness->GetGUID();
-                events.ScheduleEvent(EVENT_CARRIAGE_RESUMMON_PASSENGERS, 2000ms);
+                events.ScheduleEvent(EVENT_CARRIAGE_RESUMMON_PASSENGERS, 500ms);
+            }
+            else
+                RecoverStagecoach(false);
+        }
+
+        void SummonedCreatureDespawn(Creature* summon) override
+        {
+            if (summon->GetGUID() != harnessGuid)
+                return;
+
+            harnessGuid.Clear();
+            if (journeyStarted || !playerGuid.IsEmpty())
+                RecoverStagecoach(false);
+        }
+
+        void DoAction(int32 action) override
+        {
+            switch (action)
+            {
+                case ACTION_STAGECOACH_STARTED:
+                    assemblingHarness = false;
+                    journeyStarted = true;
+                    events.CancelEvent(EVENT_CARRIAGE_START_TIMEOUT);
+                    break;
+                case ACTION_STAGECOACH_ABORT:
+                    RecoverStagecoach(false);
+                    break;
+                case ACTION_STAGECOACH_FINISHED:
+                    RecoverStagecoach(false, true);
+                    break;
+                default:
+                    break;
             }
         }
 
@@ -2207,34 +2425,14 @@ public:
             {
                 switch (eventId)
                 {
+                    case EVENT_CARRIAGE_START_TIMEOUT:
+                        RecoverStagecoach(true);
+                        break;
                     case EVENT_CARRIAGE_RESUMMON_PASSENGERS:
                     {
-                        // Re-summon NPC passengers that were kicked off when the
-                        // carriage entered the harness vehicle chain.
-                        struct PassengerDef { int8 seat; uint32 entry; };
-                        PassengerDef const passengers[] = {
-                            { 0, 38853 }, { 2, 44460 }, { 3, 36138 },
-                            { 4, 43907 }, { 5, 43907 }, { 6, 51409 },
-                        };
-                        for (auto const& p : passengers)
-                        {
-                            if (Vehicle* vkit = me->GetVehicleKit())
-                            {
-                                if (vkit->GetPassenger(p.seat))
-                                    continue; // already occupied
-                            }
-                            Creature* npc = me->SummonCreature(p.entry,
-                                me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
-                            if (npc)
-                            {
-                                if ((p.entry == 43907 && p.seat == 5) || p.entry == 51409)
-                                {
-                                    npc->LoadEquipment(1, true);
-                                    npc->SetEmoteState(EMOTE_STATE_HOLD_RIFLE);
-                                }
-                                npc->EnterVehicle(me, p.seat);
-                            }
-                        }
+                        if (!me->GetVehicleCreatureBase())
+                            break;
+                        SummonNpcPassengers();
                         break;
                     }
                     default:
@@ -2257,37 +2455,95 @@ struct npc_stagecoach_harness : public EscortAI
     std::vector<ObjectGuid> ogreGuids;
     std::vector<ObjectGuid> horseGuids;
     EventMap events;
+    ObjectGuid carriageGuid;
+    ObjectGuid pendingPlayerGuid;
+    int8 pendingPlayerSeat = -1;
 
     void OnCharmed(bool apply) override { }
+
+    bool HasPlayerPassenger(Creature* carriage) const
+    {
+        if (!carriage || !carriage->GetVehicleKit())
+            return false;
+
+        for (auto const& seatPair : carriage->GetVehicleKit()->Seats)
+        {
+            VehicleSeat const& seat = seatPair.second;
+            if (seat.IsEmpty())
+                continue;
+            if (Unit* passenger = ObjectAccessor::GetUnit(*me, seat.Passenger.Guid))
+                if (passenger->IsPlayer())
+                    return true;
+        }
+
+        return false;
+    }
+
+    void AbortStagecoach(char const* reason)
+    {
+        TC_LOG_ERROR("scripts", "Exodus stagecoach harness {} aborted: {}", me->GetGUID().GetCounter(), reason);
+
+        if (Creature* carriage = ObjectAccessor::GetCreature(*me, carriageGuid))
+            carriage->AI()->DoAction(ACTION_STAGECOACH_ABORT);
+
+        carriageGuid.Clear();
+        pendingPlayerGuid.Clear();
+        pendingPlayerSeat = -1;
+        me->DespawnOrUnsummon();
+    }
 
     void IsSummonedBy(Unit* owner) override
     {
         me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_NPC | UNIT_FLAG_IMMUNE_TO_PC);
         me->SetControlled(true, UNIT_STATE_ROOT);
 
-        // Find the carriage first (before teleporting), so we can locate
-        // horses relative to it and save its passengers.
-        Creature* carriage = me->FindNearestCreature(NPC_STAGECOACH_CARRIAGE, 25.0f, true);
-
-        // Save all current passengers of the carriage so we can re-seat them
-        // after the carriage enters the harness (EnterVehicle kicks them off).
-        std::vector<std::pair<int8, Unit*>> carriagePassengers;
-        if (carriage)
+        // Bind this run to the carriage that summoned us. A proximity lookup can
+        // select a vehicle accessory clone instead of the carriage with the player.
+        Creature* carriage = owner ? owner->ToCreature() : nullptr;
+        if (!carriage || carriage->GetEntry() != NPC_STAGECOACH_CARRIAGE || !carriage->GetVehicleKit())
         {
-            if (Vehicle* vkit = carriage->GetVehicleKit())
+            me->DespawnOrUnsummon();
+            return;
+        }
+
+        carriageGuid = carriage->GetGUID();
+
+        // Save the current passengers before rebuilding the vehicle chain.
+        // Existing NPC accessories must not be re-boarded: leaving their vehicle
+        // schedules their despawn, so they are replaced by the carriage AI.
+        std::vector<std::pair<int8, ObjectGuid>> carriagePassengers;
+        if (Vehicle* vkit = carriage->GetVehicleKit())
+        {
+            for (int8 seat = 0; seat <= 7; ++seat)
             {
-                for (int8 seat = 0; seat <= 7; ++seat)
-                {
-                    if (Unit* u = vkit->GetPassenger(seat))
-                        carriagePassengers.emplace_back(seat, u);
-                }
+                if (Unit* passenger = vkit->GetPassenger(seat))
+                    carriagePassengers.emplace_back(seat, passenger->GetGUID());
             }
         }
 
-        // Teleport the harness to the carriage's position so the horses
-        // (which stand next to the carriage) are within boarding range.
-        if (carriage)
-            me->NearTeleportTo(carriage->GetPositionX(), carriage->GetPositionY(), carriage->GetPositionZ(), me->GetOrientation());
+        for (auto const& [seat, guid] : carriagePassengers)
+        {
+            if (Unit* passenger = ObjectAccessor::GetUnit(*me, guid))
+            {
+                if (passenger->IsPlayer())
+                {
+                    pendingPlayerGuid = guid;
+                    pendingPlayerSeat = seat;
+                }
+
+                passenger->ExitVehicle();
+                if (Creature* npc = passenger->ToCreature())
+                    npc->DespawnOrUnsummon();
+            }
+        }
+
+        if (pendingPlayerGuid.IsEmpty())
+        {
+            AbortStagecoach("the carriage had no player passenger");
+            return;
+        }
+
+        me->NearTeleportTo(carriage->GetPositionX(), carriage->GetPositionY(), carriage->GetPositionZ(), me->GetOrientation());
 
         // Summon 2 horses and board them onto the harness (seats 0, 1).
         for (int8 horseSeat = 0; horseSeat < 2; ++horseSeat)
@@ -2300,19 +2556,16 @@ struct npc_stagecoach_harness : public EscortAI
             horse->EnterVehicle(me, horseSeat);
         }
 
-        if (carriage)
+        carriage->EnterVehicle(me, 2);
+        if (carriage->GetVehicleCreatureBase() != me)
         {
-            carriage->EnterVehicle(me, 2);
-
-            // Re-seat all saved passengers (player + any NPCs).
-            for (auto const& [seat, unit] : carriagePassengers)
-            {
-                if (unit->IsAlive() && unit->IsInWorld())
-                    unit->EnterVehicle(carriage, seat);
-            }
+            AbortStagecoach("the carriage could not enter harness seat 2");
+            return;
         }
 
-        events.ScheduleEvent(EVENT_BOARD_HORSES, 1000ms);
+        // Re-board the player only after the client has seen the carriage attach
+        // to the harness. NPC passengers are recreated independently.
+        events.ScheduleEvent(EVENT_REBOARD_CARRIAGE_PLAYER, 100ms);
     }
 
     void UpdateEscortAI(uint32 const diff) override
@@ -2324,11 +2577,50 @@ struct npc_stagecoach_harness : public EscortAI
         {
             switch (eventId)
             {
+                case EVENT_REBOARD_CARRIAGE_PLAYER:
+                {
+                    Creature* carriage = ObjectAccessor::GetCreature(*me, carriageGuid);
+                    Unit* player = ObjectAccessor::GetUnit(*me, pendingPlayerGuid);
+                    if (!carriage || carriage->GetVehicleCreatureBase() != me || !player || !player->IsAlive() || !player->IsInWorld())
+                    {
+                        AbortStagecoach("the player could not be re-boarded");
+                        return;
+                    }
+
+                    if (player->GetVehicleBase() && player->GetVehicleBase() != carriage)
+                        player->ExitVehicle();
+                    if (player->GetVehicleBase() != carriage)
+                        player->EnterVehicle(carriage, pendingPlayerSeat);
+                    if (player->GetVehicleBase() != carriage)
+                    {
+                        AbortStagecoach("the player did not enter the carriage");
+                        return;
+                    }
+
+                    events.ScheduleEvent(EVENT_BOARD_HORSES, 650ms);
+                    break;
+                }
                 case EVENT_BOARD_HORSES:
+                {
+                    Creature* carriage = ObjectAccessor::GetCreature(*me, carriageGuid);
+                    if (!carriage || carriage->GetVehicleCreatureBase() != me || !HasPlayerPassenger(carriage))
+                    {
+                        AbortStagecoach("the assembled vehicle chain lost its player");
+                        return;
+                    }
+
                     me->SetControlled(false, UNIT_STATE_ROOT);
                     BoardHorses();
                     DoAction(ACTION_START_WP);
+                    if (!HasEscortState(STATE_ESCORT_ESCORTING))
+                    {
+                        AbortStagecoach("the escort path did not start");
+                        return;
+                    }
+
+                    carriage->AI()->DoAction(ACTION_STAGECOACH_STARTED);
                     break;
+                }
                 default:
                     break;
             }
@@ -2368,6 +2660,41 @@ struct npc_stagecoach_harness : public EscortAI
         }
     }
 
+    bool OpenFirstGateBySpawn(uint32 spawnId, uint32 expectedEntry)
+    {
+        GameObject* gate = me->GetMap()->GetGameObjectBySpawnId(spawnId);
+        if (!gate)
+            return false;
+
+        if (gate->GetEntry() != expectedEntry)
+        {
+            TC_LOG_ERROR("scripts", "Exodus stagecoach gate spawn {} has unexpected entry {} (expected {})",
+                spawnId, gate->GetEntry(), expectedEntry);
+            return false;
+        }
+
+        // Two phase-specific gate objects share the same model and coordinates.
+        // Open by exact DB spawn instead of a phase-filtered nearest-object query,
+        // otherwise the harness can update a different copy than the player sees.
+        if (gate->GetGoState() != GO_STATE_ACTIVE)
+        {
+            gate->SetLootState(GO_READY);
+            gate->SetGoState(GO_STATE_READY);
+            gate->UseDoorOrButton(20, false, me);
+        }
+
+        return gate->GetGoState() == GO_STATE_ACTIVE;
+    }
+
+    void OpenFirstGate()
+    {
+        bool const phasedGateOpened = OpenFirstGateBySpawn(GO_FIRST_GATE_SPAWN, GO_FIRST_GATE);
+        bool const legacyGateOpened = OpenFirstGateBySpawn(GO_FIRST_GATE_LEGACY_SPAWN, GO_FIRST_GATE_LEGACY);
+
+        if (!phasedGateOpened && !legacyGateOpened)
+            TC_LOG_ERROR("scripts", "Exodus stagecoach could not open either Greymane Manor gate spawn");
+    }
+
     void DoAction(int32 action) override
     {
         switch (action)
@@ -2377,8 +2704,7 @@ struct npc_stagecoach_harness : public EscortAI
                 SetRun(true); Start(false, ObjectGuid::Empty, NULL, false, false);
                 SetDespawnAtEnd(true);
 
-                if (GameObject* gate = me->FindNearestGameObject(GO_FIRST_GATE, 80.0f))
-                    gate->UseDoorOrButton(0, false, me);
+                OpenFirstGate();
 
                 me->SetWalk(false);
                 me->SetSpeed(MOVE_RUN, 1.34f, true);
@@ -2393,6 +2719,13 @@ struct npc_stagecoach_harness : public EscortAI
     {
         switch (waypointId)
         {
+            case 1:
+            {
+                // Retry after movement begins in case the grid finished loading
+                // between escort startup and the first path update.
+                OpenFirstGate();
+                break;
+            }
             case 16:
             {
                 if (GameObject* gate = me->FindNearestGameObject(GO_KINGS_GATE, 80.0f))
@@ -2456,26 +2789,10 @@ struct npc_stagecoach_harness : public EscortAI
             }
             case 30:
             {
-                if (Unit* caravan = me->GetVehicleKit()->GetPassenger(2))
+                if (Creature* carriage = ObjectAccessor::GetCreature(*me, carriageGuid))
                 {
-                    // The player's seat is not guaranteed, so locate them by
-                    // scanning the carriage seats instead of assuming a fixed seat.
-                    if (Vehicle* carriageVehicle = caravan->GetVehicleKit())
-                    {
-                        for (auto const& seatPair : carriageVehicle->Seats)
-                        {
-                            VehicleSeat const& seat = seatPair.second;
-                            if (seat.IsEmpty())
-                                continue;
-                            if (Unit* passenger = ObjectAccessor::GetUnit(*me, seat.Passenger.Guid))
-                            {
-                                if (passenger->IsPlayer())
-                                    passenger->ExitVehicle();
-                            }
-                        }
-                    }
-
-
+                    carriage->AI()->DoAction(ACTION_STAGECOACH_FINISHED);
+                    carriageGuid.Clear();
                 }
                 break;
             }
@@ -2487,27 +2804,17 @@ struct npc_stagecoach_harness : public EscortAI
 
 struct npc_ogre_ambusher_exodus : public ScriptedAI
 {
-    npc_ogre_ambusher_exodus(Creature* creature) : ScriptedAI(creature), throwTimer(1500) { }
-
-    uint32 throwTimer;
+    npc_ogre_ambusher_exodus(Creature* creature) : ScriptedAI(creature) { }
 
     void UpdateAI(uint32 diff) override
     {
-        // Decorative ambush: face the carriage and throw a cosmetic boulder at it.
-        // No attack, no threat, no damage — the escort keeps moving and the
-        // passengers stay aboard.
+        // Keep the ambushers decorative. Spell 85407 is a zone-wide cosmetic
+        // channel with a 50000-yard random destination and must not be cast at
+        // a local vehicle (it produces invalid map coordinates).
         if (Creature* caravan = me->FindNearestCreature(NPC_STAGECOACH_CARRIAGE, ogreAmbusherAttackRange, true))
         {
             me->GetMotionMaster()->MoveIdle();
             me->SetFacingToObject(caravan);
-
-            if (throwTimer > diff)
-                throwTimer -= diff;
-            else
-            {
-                throwTimer = 2000;
-                me->CastSpell(caravan->GetPositionX(), caravan->GetPositionY(), caravan->GetPositionZ(), SPELL_OGRE_COSMETIC_BOULDER, true);
-            }
         }
     }
 };

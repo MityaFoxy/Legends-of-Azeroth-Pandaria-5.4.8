@@ -17,13 +17,16 @@
 -- 72764 (Board Vehicle) is the player-facing spellclick on the carriage.
 -- The moving harness (43336) is summoned by the carriage AI (PassengerBoarded)
 -- when the player boards seat 1.
+-- Its horses and the clicked carriage are attached by npc_stagecoach_harness;
+-- do not also define them as 43336 accessories, otherwise an accessory carriage
+-- races the real carriage for harness seat 2 and can strand the player.
 --
--- Trigger: the carriage uses spellclick. Clicking it (when no harness is already
--- nearby) casts 72764, which makes the player enter the vehicle.
+-- Trigger: the carriage uses spellclick. Player clicks cast 72764, which makes
+-- the player enter the vehicle.
 -- The carriage AI then summons the harness (43336), whose IsSummonedBy boards
 -- the carriage (seat 2) and the player (seat 1) and drives the vehicle chain
 -- along the route. The 46598 spellclick row is required for vehicle accessory
--- installation; user_type=0 ensures the spellclick icon is visible.
+-- installation, but must never also be cast by the player click.
 -- ============================================================
 
 -- ---------- creature_template ----------
@@ -64,8 +67,17 @@ SET npcflag = 16777216,
     ScriptName = 'npc_stagecoach_carriage_exodus'
 WHERE entry = 44928;
 
+-- The legacy phase copy of the Greymane Manor gate stores its auto-close
+-- value as three seconds, while the MoP core interprets this field as
+-- milliseconds. A value below 1000 becomes zero and disables the door update
+-- that restores GO_STATE_READY, even when UseDoorOrButton supplies a longer
+-- runtime delay. Normalize the template so both overlapping gate copies close.
+UPDATE gameobject_template
+SET data2 = 3000
+WHERE entry = 196401 AND type = 0 AND data2 = 3;
+
 -- Ogre Ambusher (38762): point at the C++ script that drives the stand-in-place
--- cosmetic rock-throwing attack (summoned at WP24, cleaned up at WP25).
+-- cosmetic ambush (summoned at WP24, cleaned up at WP25).
 UPDATE creature_template
 SET ScriptName = 'npc_ogre_ambusher_exodus'
 WHERE entry = 38762;
@@ -85,17 +97,24 @@ INSERT INTO npc_spellclick_spells (npc_entry, spell_id, cast_flags, user_type) V
     (44928, 46598, 1, 0),
     (44928, 72764, 1, 0);
 
--- ---------- conditions (gate the 72764 spellclick) ----------
+-- ---------- conditions (separate accessory and player spellclicks) ----------
 -- SourceType 18 = SPELL_CLICK_EVENT, SourceGroup = creature, SourceEntry = spell.
--- Only allow casting 72764 when no moving harness (43336) is already within
--- 30 yards (the AI summons the harness on board, so it should not be cast if
--- one is already present).
+-- HandleSpellClick iterates every row for the carriage. Without these mutually
+-- exclusive conditions a player click casts both vehicle-control spells, while
+-- loading each creature accessory does the same. That races PassengerBoarded
+-- against the harness rebuild and can immediately undo the player's boarding.
+-- Target 0 is the clicker: TYPEID_UNIT=3 for accessories, TYPEID_PLAYER=4 for
+-- the player-facing Board Vehicle spell. Quest-state mask 10 means COMPLETE
+-- (2) or INCOMPLETE (8): the carriage remains usable while Exodus is active,
+-- but a character that has already rewarded the quest cannot start it again.
 
 DELETE FROM conditions
-WHERE SourceTypeOrReferenceId = 18 AND SourceGroup = 44928 AND SourceEntry = 72764;
+WHERE SourceTypeOrReferenceId = 18 AND SourceGroup = 44928 AND SourceEntry IN (46598, 72764);
 
 INSERT INTO conditions (SourceTypeOrReferenceId, SourceGroup, SourceEntry, SourceId, ElseGroup, ConditionTypeOrReference, ConditionTarget, ConditionValue1, ConditionValue2, ConditionValue3, NegativeCondition, ErrorType, ErrorTextId, ScriptName) VALUES
-    (18, 44928, 72764, 0, 0, 29, 0, 43336, 30, 0, 1, 0, 0, '');
+    (18, 44928, 46598, 0, 0, 31, 0, 3, 0, 0, 0, 0, 0, ''),
+    (18, 44928, 72764, 0, 0, 31, 0, 4, 0, 0, 0, 0, 0, ''),
+    (18, 44928, 72764, 0, 0, 47, 0, 24438, 10, 0, 0, 0, 0, '');
 
 -- ---------- vehicle_template_accessory ----------
 
@@ -103,9 +122,6 @@ DELETE FROM vehicle_template_accessory
 WHERE entry IN (43336, 44928);
 
 INSERT INTO vehicle_template_accessory (entry, accessory_entry, seat_id, minion, description, summontype, summontimer) VALUES
-    (43336, 43338, 0, 1, 'Stagecoach Harness - Horse', 8, 0),
-    (43336, 43338, 1, 1, 'Stagecoach Harness - Horse', 8, 0),
-    (43336, 44928, 2, 1, 'Stagecoach Harness - Caravan', 8, 0),
     (44928, 38853, 0, 1, 'Stagecoach Carriage', 8, 0),
     (44928, 44460, 2, 1, 'Stagecoach Carriage', 8, 0),
     (44928, 36138, 3, 1, 'Stagecoach Carriage', 8, 0),
@@ -118,8 +134,8 @@ INSERT INTO vehicle_template_accessory (entry, accessory_entry, seat_id, minion,
 DELETE FROM creature_equip_template WHERE CreatureID IN (43907, 51409);
 
 INSERT INTO creature_equip_template (CreatureID, ID, ItemID1, ItemID2, ItemID3) VALUES
-    (43907, 1, 3780, 0, 0),
-    (51409, 1, 3780, 0, 0);
+    (43907, 1, 0, 0, 2552),
+    (51409, 1, 0, 0, 15460);
 
 -- ---------- script_waypoint ----------
 
