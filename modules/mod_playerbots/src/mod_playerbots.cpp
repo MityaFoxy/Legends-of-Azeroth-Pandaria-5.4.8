@@ -21,6 +21,7 @@
 #include "RandomPlayerbotMgr.h"
 #include "RandomItemManager.h"
 #include "RandomPlayerbotBracketMgr.h"
+#include "BattlegroundTestController.h"
 
 #include "Authentication/AuthCrypt.h"
 #include "CharacterHandler.h"
@@ -145,6 +146,7 @@ public:
     {
         sRandomPlayerbotMgr->UpdateAI(diff);
         sRandomPlayerbotMgr->UpdateSessions();
+        BattlegroundTest::Update(diff);
     }
 
     void OnPlayerbotUpdateSessions(Player* player) override

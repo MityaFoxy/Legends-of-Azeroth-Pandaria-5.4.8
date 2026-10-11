@@ -38,6 +38,9 @@ set_tests_properties(map_script_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS
 add_test(NAME spell_loot_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/spell_loot_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(spell_loot_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME spell_power_cost_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/spell_power_cost_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(spell_power_cost_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME gilneas_stagecoach_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/gilneas_stagecoach_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(gilneas_stagecoach_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
@@ -49,3 +52,18 @@ set_tests_properties(movement_path_regression PROPERTIES ENVIRONMENT "UBSAN_OPTI
 add_test(NAME navigation_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/navigation_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(navigation_recovery_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME battleground_test_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_test_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(battleground_test_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME combat_removal_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/combat_removal_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(combat_removal_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME battleground_group_lifecycle_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_group_lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(battleground_group_lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME battleground_resurrection_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(battleground_resurrection_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME path_query_budget_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/path_query_budget_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(path_query_budget_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

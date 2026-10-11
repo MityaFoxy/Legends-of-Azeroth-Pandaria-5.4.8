@@ -284,7 +284,13 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     {
         return false;
     }
-    bool generatePath = !bot->IsFlying() && !bot->IsUnderWater() && !bot->IsInWater();
+    bool const sourceInWater = bot->IsUnderWater() || bot->IsInWater();
+    bool const destinationInWater = bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), x, y, z,
+        MAP_ALL_LIQUIDS, nullptr, bot->GetCollisionHeight()) & MAP_LIQUID_STATUS_IN_CONTACT;
+    // Underwater movement to another underwater point is genuinely 3D. When
+    // the destination is on land, use the mixed ground/water navmesh instead
+    // of drawing one long spline through the river bank or terrain.
+    bool generatePath = !bot->IsFlying() && (!sourceInWater || !destinationInWater);
     if (Vehicle* vehicle = bot->GetVehicle())
     {
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
@@ -677,13 +683,15 @@ void MovementAction::LogNavigationResult(char const* outcome, char const* reason
     last.navigationLogTime = now;
     last.navigationLogSuppressed = 0;
     if (warning)
-        TC_LOG_WARN("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} suppressed={}",
+        TC_LOG_WARN("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} inWater={} underWater={} swimming={} suppressed={}",
             bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            x, y, z, outcome, reason, type, attempts, suppressed);
+            x, y, z, outcome, reason, type, attempts, bot->IsInWater(), bot->IsUnderWater(),
+            bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), suppressed);
     else
-        TC_LOG_INFO("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} suppressed={}",
+        TC_LOG_INFO("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} inWater={} underWater={} swimming={} suppressed={}",
             bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            x, y, z, outcome, reason, type, attempts, suppressed);
+            x, y, z, outcome, reason, type, attempts, bot->IsInWater(), bot->IsUnderWater(),
+            bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), suppressed);
 }
 
 bool MovementAction::CanStartGroundMovement(float x, float y, float z)
@@ -720,6 +728,13 @@ void MovementAction::TrackGroundMovement(float x, float y, float z, bool normalO
     state.generator = bot->GetMotionMaster()->top();
     state.splineId = bot->movespline->GetId();
     state.endpoint = bot->movespline->FinalDestination();
+    // Correlate issued motion with path-query diagnostics without changing
+    // movement or flooding INFO/WARN with every successful primary route.
+    TC_LOG_DEBUG("playerbots.navigation", "bot={} map={} instance={} outcome=ground-movement-started spline={} from=({},{},{}) goal=({},{},{}) endpoint=({},{},{}) normalOnly={} backwards={}",
+        bot->GetGUID().GetCounter(), state.mapId, state.instanceId, state.splineId,
+        bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+        state.goal.x, state.goal.y, state.goal.z, state.endpoint.x, state.endpoint.y, state.endpoint.z,
+        normalOnly, backwards);
 }
 
 void MovementAction::LogStuckResult(char const* outcome, uint32 attempts, bool warning)
@@ -864,12 +879,14 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     uint32 lastType = PATHFIND_BLANK;
     char const* reason = "no-path";
     bool unavailable = false;
+    bool startBridge = false;
     auto query = [&](G3D::Vector3 const& from, G3D::Vector3 const& to, bool completeOnly) -> Movement::PointsArray
     {
         if (attempts >= limit)
             return {};
         ++attempts;
-        PathGenerator gen(bot);
+        // Private bounded query: never resize/mutate the shared NPC query.
+        PathGenerator gen(bot, 4096);
         uint32 const queryStart = getMSTime();
         bool const calculated = gen.CalculatePath(to.x, to.y, to.z, false, false, false, &from);
         PathType const type = gen.GetPathType();
@@ -877,12 +894,25 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         reason = gen.GetPathFailureReason();
         // No amount of waypoint searching can repair a missing map or query.
         unavailable = !gen.HasNavigationData() || (type & PATHFIND_NOT_USING_PATH);
-        Movement::PointsArray const& points = gen.GetPath();
-        TC_LOG_DEBUG("playerbots.navigation", "bot={} map={} instance={} attempt={}/{} from=({},{},{}) to=({},{},{}) calculated={} pathType={} queryStatus={} reason={} points={} queryMs={}",
+        Movement::PointsArray points = gen.GetPath();
+        startBridge = false;
+        auto inLiquid = [this](G3D::Vector3 const& point)
+        {
+            return bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), point.x, point.y, point.z,
+                MAP_ALL_LIQUIDS, nullptr, bot->GetCollisionHeight()) & MAP_LIQUID_STATUS_IN_CONTACT;
+        };
+        if ((type & PATHFIND_FARFROMPOLY_START) && !points.empty()
+            && (points.front() - from).length() <= 16.0f && inLiquid(from) && inLiquid(points.front()))
+            startBridge = true;
+        TC_LOG_DEBUG("playerbots.navigation", "bot={} map={} instance={} attempt={}/{} from=({},{},{}) to=({},{},{}) calculated={} pathType={} queryStatus={} queryNodes={} reason={} points={} startOffset={} endOffset={} progress={} queryMs={}",
             bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), attempts, limit,
-            from.x, from.y, from.z, to.x, to.y, to.z, calculated, uint32(type), gen.GetPathQueryStatus(), reason, points.size(), getMSTimeDiff(queryStart, getMSTime()));
+            from.x, from.y, from.z, to.x, to.y, to.z, calculated, uint32(type), gen.GetPathQueryStatus(), gen.GetPathQueryNodeLimit(), reason, points.size(),
+            points.empty() ? -1.0f : (points.front() - from).length(),
+            points.empty() ? -1.0f : (points.back() - to).length(),
+            points.empty() ? -1.0f : (points.back() - from).length(), getMSTimeDiff(queryStart, getMSTime()));
         if (!calculated || !(type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_SHORT)) ||
-            (type & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH | PATHFIND_FARFROMPOLY_START)))
+            (type & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH))
+            || ((type & PATHFIND_FARFROMPOLY_START) && !startBridge))
             return {};
         if (points.size() < 2 || std::any_of(points.begin(), points.end(), [](G3D::Vector3 const& point)
             { return !Trinity::IsValidMapCoord(point.x, point.y, point.z); }))
@@ -890,22 +920,41 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             reason = "invalid-or-empty-path";
             return {};
         }
-        if ((points.front() - from).length() > 1.0f || (points.back() - from).length() <= 0.01f)
+        if ((points.front() - from).length() > 1.0f && !startBridge)
         {
-            reason = "path-start-mismatch-or-no-progress";
+            reason = "path-start-mismatch";
             return {};
         }
-        if (completeOnly && ((type & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) ||
-            (points.back() - to).length() > 1.0f))
+        if ((points.front() - from).length() > 0.1f && startBridge)
+            points.insert(points.begin(), from);
+        if ((points.back() - from).length() <= 0.01f)
+        {
+            reason = "path-no-progress";
             return {};
+        }
+        bool const bridgedComplete = startBridge && !(type & PATHFIND_FARFROMPOLY_END)
+            && (points.back() - to).length() <= 1.0f;
+        if (completeOnly && (((type & PATHFIND_INCOMPLETE) && !bridgedComplete)
+            || (type & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) ||
+            (points.back() - to).length() > 1.0f))
+        {
+            if (std::string(reason) == "none")
+                reason = "destination-not-reached";
+            return {};
+        }
         return points;
     };
 
     Movement::PointsArray partial = query(start, destination, false);
     uint32 const primaryType = lastType;
+    bool const primaryStartBridge = startBridge;
+    if (!partial.empty() && (partial.back() - destination).length() > 1.0f && std::string(reason) == "none")
+        reason = "destination-not-reached";
     char const* const primaryReason = reason;
-    if (!recoveryAttempt && !partial.empty() && !(primaryType & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) &&
-        (partial.back() - destination).length() <= 1.0f)
+    bool const primaryComplete = !partial.empty() && !(primaryType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
+        && (!(primaryType & PATHFIND_INCOMPLETE) || primaryStartBridge)
+        && (partial.back() - destination).length() <= 1.0f;
+    if (!recoveryAttempt && primaryComplete)
         return partial;
 
     // Detour already searches connected polygons. These are distinct two-leg
@@ -958,8 +1007,25 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         return {};
     }
     usingNavigation = false;
+    // A final no-navigation fallback remains available, but only as a short,
+    // collision-checked step. Re-running normal route selection from the new
+    // position is safer than a long spline that can cross terrain or geometry.
+    G3D::Vector3 fallback = destination;
+    constexpr float DirectFallbackStep = 8.0f;
+    if (distance > DirectFallbackStep)
+        fallback = start + (destination - start) * (DirectFallbackStep / distance);
+    float fallbackX = fallback.x;
+    float fallbackY = fallback.y;
+    float fallbackZ = fallback.z;
+    if (!bot->GetMap()->CheckCollisionAndGetValidCoords(bot, start.x, start.y, start.z,
+        fallbackX, fallbackY, fallbackZ) || (G3D::Vector3(fallbackX, fallbackY, fallbackZ) - start).length() <= 0.01f)
+    {
+        usingNavigation = true;
+        LogNavigationResult("rejected", "unsafe-direct-fallback", primaryType, attempts, x, y, z, true);
+        return {};
+    }
     LogNavigationResult("fallback-direct", primaryReason, primaryType, attempts, x, y, z, true);
-    return {start, destination};
+    return {start, {fallbackX, fallbackY, fallbackZ}};
 }
 
 bool MovementAction::MoveAway(Unit* target, float distance, bool backwards)

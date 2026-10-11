@@ -2417,7 +2417,10 @@ ZLiquidStatus GridMap::GetLiquidStatus(float x, float y, float z, uint8 ReqLiqui
     float ground_level = getHeight(x, y);
 
     // Check water level and ground level
-    if (liquid_level < ground_level || z < ground_level)
+    // Spline/terrain normalization can place a unit a few millimetres below
+    // the sampled floor. Use the same tolerance as the VMAP and full-terrain
+    // paths so that a player standing on a river bed does not lose water state.
+    if (liquid_level < ground_level || z < ground_level - GROUND_HEIGHT_TOLERANCE)
         return LIQUID_MAP_NO_WATER;
 
     // All ok in water -> store data

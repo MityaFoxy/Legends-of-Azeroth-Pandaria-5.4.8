@@ -23,6 +23,7 @@
 #include "DetourNavMeshQuery.h"
 #include "MapDefines.h"
 #include "MoveSplineInitArgs.h"
+#include <memory>
 
 class Unit;
 
@@ -55,7 +56,9 @@ enum PathType
 class TC_GAME_API PathGenerator
 {
     public:
-        explicit PathGenerator(WorldObject const* owner);
+        // Zero retains the core's shared query. Explicit private searches are
+        // bounded to 1024..4096 nodes and owned only for this generator's lifetime.
+        explicit PathGenerator(WorldObject const* owner, uint32 privateQueryNodes = 0);
         ~PathGenerator();
 
         // Calculate the path from owner to given destination
@@ -86,6 +89,7 @@ class TC_GAME_API PathGenerator
         char const* GetPathFailureReason() const { return _failureReason ? _failureReason : "none"; }
         bool HasNavigationData() const { return _navMesh && _navMeshQuery; }
         uint32 GetPathQueryStatus() const { return _queryStatus; }
+        uint32 GetPathQueryNodeLimit() const { return _queryNodeLimit; }
 
         // shortens the path until the destination is the specified distance from the target point
         void ShortenPathUntilDist(G3D::Vector3 const& point, float dist);
@@ -142,6 +146,12 @@ class TC_GAME_API PathGenerator
         WorldObject const* const _source;       // the object that is moving
         dtNavMesh const* _navMesh;              // the nav mesh
         dtNavMeshQuery const* _navMeshQuery;    // the nav mesh query used to find the path
+        struct QueryDeleter
+        {
+            void operator()(dtNavMeshQuery* query) const { dtFreeNavMeshQuery(query); }
+        };
+        std::unique_ptr<dtNavMeshQuery, QueryDeleter> _privateQuery;
+        uint32 _queryNodeLimit = 0;
         char const* _failureReason = nullptr;
         uint32 _queryStatus = 0;
 

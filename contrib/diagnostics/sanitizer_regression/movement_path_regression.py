@@ -43,6 +43,7 @@ using PathType = int;
 constexpr float INVALID_HEIGHT = -100000.0f;
 constexpr int UNIT_STATE_IGNORE_PATHFINDING = 1, UNIT_STAND_STATE_STAND = 0;
 constexpr int MOVE_RUN = 0, MOVE_RUN_BACK = 1;
+constexpr int MAP_ALL_LIQUIDS = 15, MAP_LIQUID_STATUS_IN_CONTACT = 1;
 constexpr int PATHFIND_BLANK = 0, PATHFIND_NORMAL = 1, PATHFIND_SHORTCUT = 2, PATHFIND_INCOMPLETE = 4,
     PATHFIND_NOPATH = 8, PATHFIND_NOT_USING_PATH = 16, PATHFIND_SHORT = 32, PATHFIND_FARFROMPOLY = 192;
 constexpr uint32 DT_OUT_OF_NODES=32, DT_BUFFER_TOO_SMALL=16;
@@ -94,11 +95,18 @@ struct MotionMaster {
         MovePoint(id,path.back().x,path.back().y,path.back().z,true); return true;
     }
 };
+struct Map {
+    bool liquid = false;
+    int GetLiquidStatus(uint32, float, float, float, int, void*, float) const {
+        return liquid ? MAP_LIQUID_STATUS_IN_CONTACT : 0;
+    }
+};
 struct Unit : WorldObject {
     bool VisualizePathfinding = false, ignorePath = false;
     bool flying = false, water = false, sitting = false, battleground = false;
     Vehicle* vehicle = nullptr;
     MotionMaster motion;
+    Map map;
     Unit() { unit = this; }
     bool HasUnitState(int) const { return ignorePath; }
     bool IsFlying() const { return flying; }
@@ -110,6 +118,9 @@ struct Unit : WorldObject {
     void SetStandState(int) { sitting = false; }
     Vehicle* GetVehicle() const { return vehicle; }
     void* GetTransport() const { return nullptr; }
+    Map* GetMap() { return &map; }
+    uint32 GetPhaseMask() const { return 1; }
+    float GetCollisionHeight() const { return 2; }
     MotionMaster* GetMotionMaster() { return &motion; }
     float GetSpeed(int) const { return 10; }
     float GetOrientation() const { return 0; }
@@ -230,15 +241,24 @@ void movementTests() {
         action.allowed = gate != 0; action.duplicate = gate == 1; action.waiting = gate == 2;
         assert(!moveBot(action) && !bot.motion.cleared && !action.last.map);
     }
-    // Explicit, flying, water and configured point branches retain destinations.
+    // Explicit, flying, fully submerged and configured point branches retain destinations.
     for (int mode = 0; mode < 4; ++mode) {
         Unit bot; bot.flying = mode == 1; bot.water = mode == 2;
+        bot.map.liquid = mode == 2;
         config.disableMoveSplinePath = mode == 3 ? 2 : 0;
         MovementAction action{&bot};
         action.path.back() = {100,0,20};
         assert(moveBot(action,false,mode == 0));
         assert(same(bot.motion.destination,{100,0,20}));
         assert(same(action.last.destination,{100,0,20}));
+    }
+    // Leaving water must use the mixed ground/water route, not one unchecked
+    // direct spline through a bank or terrain surface.
+    {
+        Unit bot; bot.water = true; bot.map.liquid = false;
+        MovementAction action{&bot};
+        assert(moveBot(action) && bot.motion.generated);
+        assert(same(bot.motion.destination, action.path.back()));
     }
     config.disableMoveSplinePath = 0;
     for (bool flying : {false,true}) {

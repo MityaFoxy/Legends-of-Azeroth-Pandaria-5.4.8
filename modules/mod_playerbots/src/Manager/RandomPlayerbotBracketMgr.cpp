@@ -114,7 +114,9 @@ void RandomBotBacketManager::Update(uint32 diff)
     for (auto const& itr : allPlayers)
     {
         Player* player = itr.second;
-        if (!player || !player->IsInWorld())
+        // Never schedule a level/equipment rerandomization across a BG bracket
+        // while the bot is queued or playing. The native queue owns that bracket.
+        if (!player || !player->IsInWorld() || player->InBattleground() || player->InBattlegroundQueue())
             continue;
         
         if (!sRandomPlayerbotMgr->IsRandomBot(player->GetGUID().GetCounter()))

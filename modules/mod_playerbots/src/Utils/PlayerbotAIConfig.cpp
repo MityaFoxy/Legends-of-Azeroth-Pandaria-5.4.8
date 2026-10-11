@@ -85,6 +85,7 @@ bool PlayerbotAIConfig::Initialize()
     navigationLogInterval = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.NavigationLogInterval", 30000), 1000, 600000);
     stuckTimeout = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckTimeout", 4000), 2000, 30000);
     stuckMaxAttempts = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckMaxAttempts", 3), 1, 5);
+    battlegroundTest = sConfigMgr->GetBoolDefault("AiPlayerbot.BattlegroundTest", false);
     expireActionTime = sConfigMgr->GetIntDefault("AiPlayerbot.ExpireActionTime", 5000);
     dispelAuraDuration = sConfigMgr->GetIntDefault("AiPlayerbot.DispelAuraDuration", 7000);
     reactDelay = sConfigMgr->GetIntDefault("AiPlayerbot.ReactDelay", 100);

@@ -23,6 +23,7 @@
 #include <string>
 
 #include "AiFactory.h"
+#include "BattlegroundTestController.h"
 #include "ChannelMgr.h"
 #include "CreatureAIImpl.h"
 #include "Engine.h"
@@ -885,6 +886,9 @@ void PlayerbotAI::DoNextAction(bool min)
             _aiObjectContext->GetValue<Unit*>("current target")->Set(nullptr);
         }
     }
+
+    if (BattlegroundTest::DoNextAction(this))
+        return;
 
     bool minimal = !AllowActivity();
     _currentEngine->DoNextAction(nullptr, 0, (minimal || min));

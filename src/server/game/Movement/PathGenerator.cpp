@@ -31,7 +31,7 @@
 #include "DetourNavMeshQuery.h"
 
 ////////////////// PathGenerator //////////////////
-PathGenerator::PathGenerator(WorldObject const* owner) :
+PathGenerator::PathGenerator(WorldObject const* owner, uint32 privateQueryNodes) :
     _polyLength(0), _type(PATHFIND_BLANK), _useStraightPath(false),
     _forceDestination(false), _pointPathLimit(MAX_POINT_PATH_LENGTH),
     _endPosition(G3D::Vector3::zero()), _source(owner), _navMesh(nullptr),
@@ -47,6 +47,22 @@ PathGenerator::PathGenerator(WorldObject const* owner) :
         MMAP::MMapManager* mmap = MMAP::MMapFactory::createOrGetMMapManager();
         _navMesh = mmap->GetNavMesh(mapId);
         _navMeshQuery = mmap->GetNavMeshQuery(mapId, _source->GetInstanceId());
+        if (_navMeshQuery)
+            _queryNodeLimit = 1024;
+        if (_navMesh && privateQueryNodes)
+        {
+            uint32 const nodes = std::clamp<uint32>(privateQueryNodes, 1024, 4096);
+            std::unique_ptr<dtNavMeshQuery, QueryDeleter> query(dtAllocNavMeshQuery());
+            if (query && dtStatusSucceed(query->init(_navMesh, nodes)))
+            {
+                _privateQuery = std::move(query);
+                _navMeshQuery = _privateQuery.get();
+                _queryNodeLimit = nodes;
+            }
+            else
+                TC_LOG_WARN("maps.mmaps", "Private navigation query allocation failed for {} map={} instance={} nodes={}; retaining shared query",
+                    _source->GetGUID().GetCounter(), mapId, _source->GetInstanceId(), nodes);
+        }
     }
 
     CreateFilter();

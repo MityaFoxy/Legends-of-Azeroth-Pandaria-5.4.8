@@ -774,6 +774,15 @@ AiPlayerbot.RandomBotJoinBG = 1
 # Enable Auto join BG - have bots start BG's and Arenas on their own
 AiPlayerbot.RandomBotAutoJoinBG = 0
 
+# Explicit diagnostic workload (OFF by default), independent of the legacy BG keys.
+# Random, unowned bots individually queue for normal Arathi Basin, accept invitations,
+# navigate to existing nodes, use banners with normal capture casts, fight through
+# their existing class AI, resurrect in normal spirit-guide waves, and leave/requeue
+# only after the core completes the match. All level/team/capacity/deserter rules apply.
+# Does NOT change character levels, factions, equipment, BG rules or rewards.
+# State transitions and 60-second snapshots: logger playerbots.bgtest (INFO).
+AiPlayerbot.BattlegroundTest = 0
+
 # Required Configuration for RandomBotAutoJoinBG
 #
 # Known issue: When enabling a lot of brackats in combination with multiple instances,

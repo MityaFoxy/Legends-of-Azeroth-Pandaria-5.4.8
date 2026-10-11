@@ -19,6 +19,66 @@ import time
 from pathlib import Path
 
 
+BG_CYCLE_TIMEOUT_SECONDS = 60 * 60
+
+
+class SanitizerMonitor:
+    """Follow console diagnostics in bounded chunks, including partial writes."""
+
+    CHUNK_BYTES = 64 * 1024
+    SAMPLE_BYTES = 4 * 1024**2
+    MARKERS = (b"runtime error:", b"ERROR: AddressSanitizer",
+               b"ERROR: LeakSanitizer", b"AddressSanitizer:DEADLYSIGNAL",
+               b"SUMMARY: AddressSanitizer", b"SUMMARY: UndefinedBehaviorSanitizer",
+               b"that just lost any reference to the owner")
+
+    def __init__(self, logs):
+        self.logs = logs
+        self.identity = None
+        self.offset = 0
+        self.tail = b""
+
+    def check(self, drain=False):
+        for path in self.logs.iterdir():
+            if path.is_file() and path.name.startswith(("asan.", "ubsan.")) and path.stat().st_size:
+                raise RuntimeError("Sanitizer report appeared: " + path.name)
+        try:
+            console = (self.logs / "console.log").open("rb")
+        except FileNotFoundError:
+            return
+        with console:
+            stat = os.fstat(console.fileno())
+            identity = (stat.st_dev, stat.st_ino)
+            if identity != self.identity or stat.st_size < self.offset:
+                self.identity = identity
+                self.offset = 0
+                self.tail = b""
+            # Bound live work as well as memory. Final shutdown drains the
+            # snapshot in the same small chunks, never read_text() of a huge log.
+            end = stat.st_size if drain else min(stat.st_size, self.offset + self.SAMPLE_BYTES)
+            console.seek(self.offset)
+            overlap = max(map(len, self.MARKERS)) - 1
+            while self.offset < end:
+                chunk = console.read(min(self.CHUNK_BYTES, end - self.offset))
+                if not chunk:
+                    break
+                self.offset = console.tell()
+                text = self.tail + chunk
+                if any(marker in text for marker in self.MARKERS):
+                    raise RuntimeError("Sanitizer or lost-owner finding in console.log")
+                self.tail = text[-overlap:]
+
+
+def check_bg_cycle_deadline(now, population_reached, verified):
+    if (not verified and population_reached is not None
+            and now - population_reached > BG_CYCLE_TIMEOUT_SECONDS):
+        raise RuntimeError("Native BG fight/death/resurrection/completion/reentry cycle was not verified within 60 minutes")
+
+
+def requires_bg_cycle(battleground_test, skip_gate):
+    return battleground_test and not skip_gate
+
+
 def stamp():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -69,12 +129,31 @@ def rss(pid):
     return 0
 
 
+def navigation_diagnostics_overlay(text, enabled):
+    if not enabled:
+        return text
+    # Isolated stage only; keep verbose path/spline traces out of Server.log.
+    return optional_overlay(text, {
+        "Appender.PlayerbotNavigation": "2,2,7,PlayerbotNavigation.log,a,67108864",
+        "Logger.playerbots.navigation": "2,PlayerbotNavigation",
+    })
+
+
 def alive(pid):
     try:
         status = Path("/proc/%d/status" % pid).read_text()
         return not re.search(r"^State:\s+Z", status, re.M)
     except FileNotFoundError:
         return False
+
+
+def initial_population_ready(count, target, console):
+    # A crash leaves characters.online set until the next server clears it.
+    # Only trust initial SQL population after THIS stage initialized its world.
+    if count < target or not console.exists():
+        return False
+    with console.open(errors="replace") as log:
+        return any("World initialized in " in line for line in log)
 
 
 def log_size(directory):
@@ -141,6 +220,16 @@ def stop_after_failure(process, event):
         stop(process)
     except (RuntimeError, OSError) as error:
         event("shutdown_failed", error=str(error), pid=process.pid)
+    # A startup or slow save can outlive the graceful-stop deadline. Never
+    # abandon this child (and release the host inhibitor) while it is alive.
+    # Do not escalate to SIGKILL: preserve normal database cleanup semantics.
+    while process.poll() is None:
+        event("shutdown_waiting", pid=process.pid, still_alive=True,
+              rss_bytes=rss(process.pid), available_bytes=memory()["MemAvailable"])
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            continue
     result = dict(
         pid=process.pid, exit_code=process.poll(), still_alive=process.poll() is None
     )
@@ -151,10 +240,137 @@ def stop_after_failure(process, event):
     return result
 
 
+def guarded_pause(seconds, check_resources):
+    """Keep resource guards responsive between the slower SQL/BG samples."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        time.sleep(min(5, max(0, deadline - time.monotonic())))
+        check_resources()
+
+
 def population_stages(only_bots, soak_duration):
     if only_bots is not None:
         return ((only_bots, soak_duration),)
     return ((25, 300), (50, 300), (100, soak_duration))
+
+
+def backup_databases(run, mysql_args, env, databases, event, skip=False):
+    if skip:
+        event("backup_skipped", reason="Explicit --skip-db-backup waiver; Git does not back up databases")
+        return
+    event("backup_started", databases=databases)
+    dump_help = subprocess.check_output(["mysqldump", "--help"], text=True)
+    options = ["--single-transaction", "--routines", "--events", "--triggers", "--hex-blob"]
+    if "--set-gtid-purged" in dump_help:
+        options.append("--set-gtid-purged=OFF")
+    if "--column-statistics" in dump_help:
+        options.append("--column-statistics=0")
+    path = run / "databases-before-soak.sql"
+    with path.open("wb") as dump, (run / "backup.stderr.log").open("wb") as errors:
+        subprocess.run(["mysqldump", *mysql_args, *options, "--databases", *databases],
+                       env=env, stdout=dump, stderr=errors, check=True)
+    if path.stat().st_size < 1024**2:
+        raise RuntimeError("Database dump is unexpectedly small")
+    with path.open("rb") as dump:
+        digest = hashlib.file_digest(dump, "sha256").hexdigest()
+    event("backup_complete", bytes=path.stat().st_size, sha256=digest)
+
+
+class BattlegroundTelemetry:
+    """Read the rotating BG log incrementally; never scan an unbounded log in RAM."""
+
+    def __init__(self):
+        self.identity = None
+        self.offset = 0
+        self.pending = ""
+        self.phases = {}
+        self.fought = set()
+        self.died = set()
+        self.resurrected = set()
+        self.reentered = set()
+        self.damaged = set()
+        self.latest = {}
+
+    def sample(self, path):
+        if not path.exists():
+            return self.summary()
+        stat = path.stat()
+        identity = (stat.st_dev, stat.st_ino)
+        if identity != self.identity or stat.st_size < self.offset:
+            self.offset = 0
+            self.pending = ""
+            self.identity = identity
+        with path.open("rb") as log:
+            log.seek(self.offset)
+            chunk = log.read(4 * 1024**2)
+            self.offset = log.tell()
+        text = self.pending + chunk.decode(errors="replace")
+        rows = text.split("\n")
+        self.pending = rows.pop()[-8192:]
+        for row in rows:
+            match = re.search(r"\bGUID=(\d+) phase=([\w-]+)\b", row)
+            if not match:
+                continue
+            guid, phase = match.groups()
+            self.latest[guid] = phase
+            self.phases[phase] = self.phases.get(phase, 0) + 1
+            if phase == "combat":
+                self.fought.add(guid)
+            if phase == "dead":
+                self.died.add(guid)
+            if phase == "resurrected":
+                self.resurrected.add(guid)
+            damage = re.search(r"\bdamage_done=(\d+)\b", row)
+            if damage and int(damage[1]) > 0:
+                self.damaged.add(guid)
+            matches = re.search(r"\bmatches=(\d+) completed=(\d+)\b", row)
+            if phase == "entered" and matches and int(matches[1]) >= 2 and int(matches[2]) >= 1:
+                self.reentered.add(guid)
+        return self.summary()
+
+    def summary(self):
+        return dict(phases=dict(self.phases), combat_bots=len(self.fought),
+                    dead_bots=len(self.died), resurrected_bots=len(self.resurrected),
+                    reentered_bots=len(self.reentered),
+                    damage_bots=len(self.damaged),
+                    current_phases={phase: list(self.latest.values()).count(phase)
+                                    for phase in set(self.latest.values())},
+                    cycle_verified=bool(self.fought & self.died & self.resurrected & self.reentered & self.damaged))
+
+
+class WorkloadGuard:
+    """Fail a degraded workload; do not silently count an idle/underfilled server."""
+
+    def __init__(self, target):
+        self.target = target
+        self.dip = None
+        self.last_combat = None
+        self.last_completion = None
+        self.combat_records = 0
+        self.completed_records = 0
+
+    def check(self, now, count, bg_state=None):
+        if count < self.target:
+            if self.dip is None:
+                self.dip = now
+            if now - self.dip >= 120:
+                raise RuntimeError("Bot population stayed below target for two minutes")
+        else:
+            self.dip = None
+        if bg_state is None:
+            return
+        combat = bg_state["phases"].get("combat", 0)
+        completed = bg_state["phases"].get("completed", 0)
+        if self.last_combat is None or combat > self.combat_records:
+            self.last_combat = now
+        if self.last_completion is None or completed > self.completed_records:
+            self.last_completion = now
+        self.combat_records = combat
+        self.completed_records = completed
+        if now - self.last_combat >= 900:
+            raise RuntimeError("BG workload has had no observed combat for fifteen minutes")
+        if now - self.last_completion >= 5400:
+            raise RuntimeError("BG workload has had no observed completed match for ninety minutes")
 
 
 def main():
@@ -169,6 +385,14 @@ def main():
     parser.add_argument("--hours", type=float, default=12)
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--bot-behavior-log", action="store_true")
+    parser.add_argument("--navigation-debug-log", action="store_true",
+                        help="Isolated rotating DEBUG path/query/spline log; counts against the normal log budget")
+    parser.add_argument("--skip-db-backup", action="store_true",
+                        help="Explicitly waive the normally required new SQL backup")
+    parser.add_argument("--battleground-test", action="store_true",
+                        help="Native AB workload; require fight/death/completion/reentry within 60 minutes before timed soak")
+    parser.add_argument("--skip-bg-cycle-gate", action="store_true",
+                        help="Observation run only: collect native BG telemetry without waiting for a full match/reentry cycle")
     parser.add_argument(
         "--min-available-ram-mib",
         type=int,
@@ -191,6 +415,8 @@ def main():
         parser.error("available RAM guard must be at least 256 MiB")
     if args.normal_build and not args.auth_pid:
         parser.error("--normal-build requires --auth-pid")
+    if args.skip_bg_cycle_gate and not args.battleground_test:
+        parser.error("--skip-bg-cycle-gate requires --battleground-test")
     os.umask(0o077)
     args.run.mkdir(parents=True, exist_ok=False)
     events = (args.run / "events.jsonl").open("a", buffering=1)
@@ -314,38 +540,7 @@ def main():
                 time.sleep(1)
             stopped_original = True
         shutil.copytree(args.runtime / "Logs", args.run / "logs-before-soak")
-        event("backup_started", databases=databases)
-        dump_help = subprocess.check_output(["mysqldump", "--help"], text=True)
-        dump_options = [
-            "--single-transaction",
-            "--routines",
-            "--events",
-            "--triggers",
-            "--hex-blob",
-        ]
-        if "--set-gtid-purged" in dump_help:
-            dump_options.append("--set-gtid-purged=OFF")
-        if "--column-statistics" in dump_help:
-            dump_options.append("--column-statistics=0")
-        with (
-            (args.run / "databases-before-soak.sql").open("wb") as dump,
-            (args.run / "backup.stderr.log").open("wb") as errors,
-        ):
-            subprocess.run(
-                ["mysqldump", *mysql_args, *dump_options, "--databases", *databases],
-                env=env,
-                stdout=dump,
-                stderr=errors,
-                check=True,
-            )
-        dump = args.run / "databases-before-soak.sql"
-        if dump.stat().st_size < 1024**2:
-            raise RuntimeError("Database dump is unexpectedly small")
-        event(
-            "backup_complete",
-            bytes=dump.stat().st_size,
-            sha256=hashlib.file_digest(dump.open("rb"), "sha256").hexdigest(),
-        )
+        backup_databases(args.run, mysql_args, env, databases, event, args.skip_db_backup)
         phases = []
         if args.normal_build:
             phases.append(("mimalloc", args.normal_build, 1800))
@@ -353,26 +548,22 @@ def main():
         for phase, build_directory, soak_duration in phases:
             binary = build_directory / "src/server/worldserver/worldserver"
             with (args.run / ("build-%s.log" % phase)).open("wb") as output:
-                build_process = subprocess.Popen(
-                    [
-                        "cmake",
-                        "--build",
-                        str(build_directory),
-                        "--parallel",
-                        str(args.jobs),
-                    ],
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-                event(
-                    "build_started", phase=phase, pid=build_process.pid, jobs=args.jobs
-                )
-                while build_process.poll() is None:
-                    sample("build_sample", build_process.pid, args.run)
-                    time.sleep(30)
-                if build_process.returncode:
-                    raise RuntimeError("%s build failed: inspect its build log" % phase)
+                # Module sources are globbed at configure time. Reconfigure so new
+                # controller files cannot be silently omitted from a cached build.
+                for step, command in (
+                    ("configure", ["cmake", "-S", str(source), "-B", str(build_directory)]),
+                    ("build", ["cmake", "--build", str(build_directory), "--parallel", str(args.jobs)]),
+                ):
+                    sample("build_preflight", os.getpid(), args.run)
+                    build_process = subprocess.Popen(command, stdout=output,
+                                                     stderr=subprocess.STDOUT,
+                                                     start_new_session=True)
+                    event("build_started", phase=phase, step=step, pid=build_process.pid, jobs=args.jobs)
+                    while build_process.poll() is None:
+                        sample("build_sample", build_process.pid, args.run)
+                        time.sleep(30)
+                    if build_process.returncode:
+                        raise RuntimeError("%s %s failed: inspect its build log" % (phase, step))
             linkage = subprocess.check_output(["ldd", str(binary)], text=True)
             (args.run / ("ldd-%s.txt" % phase)).write_text(linkage)
             if "not found" in linkage or "jemalloc" in linkage:
@@ -500,6 +691,13 @@ def main():
                             "AiPlayerbot.LogBehaviorInterval": "60",
                         },
                     )
+                if args.battleground_test:
+                    stage_world = optional_overlay(stage_world, {
+                        "Appender.PlayerbotBG": "2,3,7,PlayerbotBG.log,a,67108864",
+                        "Logger.playerbots.bgtest": "3,PlayerbotBG",
+                    })
+                    stage_bot = optional_overlay(stage_bot, {"AiPlayerbot.BattlegroundTest": "1"})
+                stage_world = navigation_diagnostics_overlay(stage_world, args.navigation_debug_log)
                 (stage / "worldserver.conf").write_text(stage_world)
                 (stage / "playerbots.conf").write_text(stage_bot)
                 server_env = os.environ.copy()
@@ -534,8 +732,17 @@ def main():
                     )
                     started = time.monotonic()
                     reached = None
+                    population_reached = None
+                    bg_telemetry = BattlegroundTelemetry()
+                    bg_verified = not requires_bg_cycle(args.battleground_test, args.skip_bg_cycle_gate)
+                    if args.battleground_test and args.skip_bg_cycle_gate:
+                        event("bg_cycle_gate_skipped", reason="Focused observation run; full native cycle not claimed")
+                    workload_guard = WorkloadGuard(target)
                     behavior_verified = False
+                    sanitizer_monitor = SanitizerMonitor(stage / "Logs") if phase == "sanitizer" else None
                     while reached is None or time.monotonic() - reached < duration:
+                        if sanitizer_monitor:
+                            sanitizer_monitor.check()
                         if process.poll() is not None:
                             raise RuntimeError(
                                 "Worldserver exited unexpectedly with code %s in stage %s"
@@ -548,6 +755,8 @@ def main():
                         )
 
                         def check_query_resources():
+                            if sanitizer_monitor:
+                                sanitizer_monitor.check()
                             if process.poll() is not None:
                                 raise RuntimeError(
                                     "Worldserver exited during SQL check"
@@ -558,6 +767,22 @@ def main():
                             mysql_args, env, sql, event, check_query_resources
                         )
                         sample("stage_sample", process.pid, args.run, count)
+                        bg_state = None
+                        if population_reached is None and initial_population_ready(
+                            count, target, stage / "Logs/console.log"
+                        ):
+                            population_reached = time.monotonic()
+                            event("population_ready", bots=target, pid=process.pid)
+                        if args.battleground_test:
+                            bg_state = bg_telemetry.sample(stage / "Logs/PlayerbotBG.log")
+                            event("bg_sample", **bg_state)
+                            if bg_state["cycle_verified"] and not bg_verified:
+                                bg_verified = True
+                                event("bg_cycle_verified", **bg_state)
+                            if requires_bg_cycle(args.battleground_test, args.skip_bg_cycle_gate):
+                                check_bg_cycle_deadline(time.monotonic(), population_reached, bg_verified)
+                        if reached is not None:
+                            workload_guard.check(time.monotonic(), count, bg_state)
                         if (
                             args.bot_behavior_log
                             and reached is not None
@@ -576,7 +801,7 @@ def main():
                                     )
                             behavior_verified = True
                             event("behavior_logging_verified", file=str(behavior_log))
-                        if count >= target and reached is None:
+                        if count >= target and population_reached is not None and bg_verified and reached is None:
                             reached = time.monotonic()
                             event(
                                 "target_reached",
@@ -584,11 +809,11 @@ def main():
                                 bots=target,
                                 pid=process.pid,
                             )
-                        if reached is None and time.monotonic() - started > 1200:
+                        if population_reached is None and time.monotonic() - started > 1200:
                             raise RuntimeError(
                                 "Target bot population was not reached within twenty minutes"
                             )
-                        time.sleep(30)
+                        guarded_pause(30, check_query_resources)
                     stop(process)
                 event(
                     "stage_finished",
@@ -599,23 +824,7 @@ def main():
                 if process.returncode:
                     raise RuntimeError("Failure on stage shutdown: inspect logs")
                 if phase == "sanitizer":
-                    findings = [
-                        p
-                        for p in (stage / "Logs").iterdir()
-                        if p.is_file()
-                        and p.name.startswith(("asan.", "ubsan."))
-                        and p.stat().st_size
-                    ]
-                    console = (stage / "Logs/console.log").read_text(errors="replace")
-                    if (
-                        findings
-                        or "runtime error:" in console
-                        or "ERROR: AddressSanitizer" in console
-                        or "that just lost any reference to the owner" in console
-                    ):
-                        raise RuntimeError(
-                            "Sanitizer or lost-owner findings in stage logs even though exit code was zero"
-                        )
+                    sanitizer_monitor.check(drain=True)
         event(
             "complete",
             message=(

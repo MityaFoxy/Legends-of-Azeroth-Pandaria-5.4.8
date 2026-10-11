@@ -2694,13 +2694,17 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
         }
     }
 
+    // Health is a special power value (-2), not a bit in a 32-bit power mask.
+    // Keep its cost and spell modifiers, but do not shift by that value.
+    uint32 const powerMask = power < 32 ? uint32(1) << power : 0;
+
     // Flat mod from caster auras by spell school and power type
     Unit::AuraEffectList const& auras = caster->GetAuraEffectsByType(SPELL_AURA_MOD_POWER_COST_SCHOOL);
     for (Unit::AuraEffectList::const_iterator i = auras.begin(); i != auras.end(); ++i)
     {
         if (!((*i)->GetMiscValue() & schoolMask))
             continue;
-        if (!((*i)->GetMiscValueB() & (1 << power)))
+        if (!(uint32((*i)->GetMiscValueB()) & powerMask))
             continue;
         powerCost += (*i)->GetAmount();
     }
@@ -2752,7 +2756,7 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
     {
         if (!((*i)->GetMiscValue() & schoolMask))
             continue;
-        if (!((*i)->GetMiscValueB() & (1 << power)))
+        if (!(uint32((*i)->GetMiscValueB()) & powerMask))
             continue;
         powerCost += CalculatePct(powerCost, (*i)->GetAmount());
     }

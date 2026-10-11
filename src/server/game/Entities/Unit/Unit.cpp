@@ -13881,6 +13881,10 @@ void Unit::RemoveFromWorld()
         GetThreatManager().RemoveMeFromThreatLists();
 
         WorldObject::RemoveFromWorld();
+        // Suppressed PvP references still retain both Units. Once out of world,
+        // neither side may keep this Unit alive through combat, and callbacks
+        // cannot create new combat with it (CanBeginCombat checks IsInWorld).
+        m_CombatManager.EndAllCombat();
         m_duringRemoveFromWorld = false;
     }
 }
@@ -13909,6 +13913,9 @@ void Unit::CleanupBeforeRemoveFromMap(bool finalCleanup)
     GetThreatManager().RemoveMeFromThreatLists();
     GetThreatManager().ClearAllThreat();
     GetMotionMaster()->Clear(false);                    // remove different non-standard movement generators.
+    // Also cover objects already out of world and references retained by late
+    // aura/event/movement cleanup. Generic CombatStop must keep suppression.
+    m_CombatManager.EndAllCombat();
 }
 
 void Unit::CleanupsBeforeDelete(bool finalCleanup)

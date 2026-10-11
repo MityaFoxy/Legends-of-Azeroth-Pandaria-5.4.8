@@ -46,6 +46,7 @@ public:
     uint32 navigationLogInterval = 30000;
     uint32 stuckTimeout = 4000;
     uint32 stuckMaxAttempts = 3;
+    bool battlegroundTest = false;
     float sightDistance, spellDistance, reactDistance, grindDistance, lootDistance, shootDistance, fleeDistance,
         tooCloseDistance, meleeDistance, followDistance, whisperDistance, contactDistance, aoeRadius, rpgDistance,
         targetPosRecalcDistance, farDistance, healDistance, aggroDistance;

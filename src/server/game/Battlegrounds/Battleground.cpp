@@ -229,6 +229,11 @@ Battleground::Battleground()
 
 Battleground::~Battleground()
 {
+    // GroupMgr may destroy these raids after the BG, especially at shutdown.
+    // Detach both sides while the BG is still alive; GroupMgr retains ownership.
+    SetBgRaid(ALLIANCE, nullptr);
+    SetBgRaid(HORDE, nullptr);
+
     // remove objects and creatures
     // (this is done automatically in mapmanager update, when the instance is reset after the reset time)
     uint32 size = uint32(BgCreatures.size());
@@ -533,6 +538,11 @@ void Battleground::ProcessRessurect(uint32 diff)
             if (!player)
                 continue;
             player->ResurrectPlayer(1.0f);
+            // The wave already consumed m_ReviveQueue. Clear its waiting aura
+            // too, or the next death still looks queued to the client/bot.
+            // Aura removal calls RemovePlayerFromResurrectQueue; no revive
+            // queue iterator is held here, and the visual delay stays intact.
+            player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
             player->CastSpell(player, SPELL_SPIRIT_HEAL_MANA, true);
             player->SpawnCorpseBones(false);
         }
