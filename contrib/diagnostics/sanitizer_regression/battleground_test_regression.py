@@ -20,8 +20,30 @@ start = misc.index("void WorldSession::HandleAreaSpiritHealerQueueOpcode")
 spirit = misc[misc.index("    guid[5] = recvData.ReadBit();", start) : misc.index("    Creature* unit =", start)]
 assert 'GetBoolDefault("AiPlayerbot.BattlegroundTest", false)' in (root / "modules/mod_playerbots/src/Utils/PlayerbotAIConfig.cpp").read_text()
 assert "BattlegroundTest::Update(diff)" in (root / "modules/mod_playerbots/src/mod_playerbots.cpp").read_text()
-assert "BattlegroundTest::DoNextAction(this)" in (root / "modules/mod_playerbots/src/AI/PlayerbotAI.cpp").read_text()
-assert "player->InBattleground() || player->InBattlegroundQueue()" in (root / "modules/mod_playerbots/src/Manager/RandomPlayerbotBracketMgr.cpp").read_text()
+playerbot_ai_source = (root / "modules/mod_playerbots/src/AI/PlayerbotAI.cpp").read_text()
+assert "BattlegroundTest::DoNextAction(this)" in playerbot_ai_source
+master_guard_start = playerbot_ai_source.index("// Battleground raids are temporary matchmaker groups.")
+master_guard_end = playerbot_ai_source.index("if (master && master->IsInWorld())", master_guard_start)
+master_guard = playerbot_ai_source[master_guard_start:master_guard_end]
+assert "&& group && !bot->InBattleground())" in master_guard
+assert master_guard.index("!bot->InBattleground()") < master_guard.index("botAI->SetMaster(newMaster)")
+bracket_source = (root / "modules/mod_playerbots/src/Manager/RandomPlayerbotBracketMgr.cpp").read_text()
+assert "!CanPlayerLeaveStartingArea(player)" in bracket_source
+assert "!player->InBattleground()" in bracket_source
+assert "!player->InBattlegroundQueue()" in bracket_source
+world_config = (root / "src/server/worldserver/worldserver.conf.dist").read_text()
+assert "Battleground.IgnoreFaction = 0" in world_config
+battleground_source = (root / "src/server/game/Battlegrounds/Battleground.cpp").read_text()
+add_player = battleground_source[battleground_source.index("void Battleground::AddPlayer(Player* player)"):
+    battleground_source.index("void Battleground::AddPlayer(Player* player)") + 9000]
+for flight_cleanup in ("SPELL_AURA_FLY", "SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED",
+                       "SetCanFly(false)", "SetDisableGravity(false)"):
+    assert flight_cleanup in add_player
+battleground_mgr_source = (root / "src/server/game/Battlegrounds/BattlegroundMgr.cpp").read_text()
+apply_deserter = battleground_mgr_source[battleground_mgr_source.index("void BattlegroundMgr::ApplyDeserter"):
+    battleground_mgr_source.index("void BattlegroundMgr::EnqueueNewGameStat")]
+assert "guid.GetRawValue()" in apply_deserter
+assert "guidLow, guid, SPELL_DESERTER" not in apply_deserter
 
 source = r'''
 #include <algorithm>
@@ -34,7 +56,8 @@ source = r'''
 #include <set>
 #include <string>
 #include <vector>
-using uint8=std::uint8_t; using uint32=std::uint32_t; using uint64=std::uint64_t; using int32=std::int32_t;
+using uint8=std::uint8_t; using uint32=std::uint32_t; using uint64=std::uint64_t;
+using int8=std::int8_t; using int32=std::int32_t;
 constexpr int BATTLEGROUND_AB=3, STATUS_WAIT_LEAVE=4, STATUS_IN_PROGRESS=3,
     STATUS_WAIT_JOIN=2, TEAM_ALLIANCE=0, TEAM_HORDE=1, ALLIANCE=469, HORDE=67,
     PLAYER_FLAGS_GHOST=1, SPELL_WAITING_FOR_RESURRECT=2, UNIT_STATE_CASTING=4,
@@ -45,10 +68,15 @@ constexpr int BATTLEGROUND_AB=3, STATUS_WAIT_LEAVE=4, STATUS_IN_PROGRESS=3,
     CMSG_BATTLEMASTER_JOIN=1, CMSG_BATTLEFIELD_PORT=2, CMSG_REPOP_REQUEST=3,
     CMSG_AREA_SPIRIT_HEALER_QUEUE=4, CMSG_BATTLEFIELD_LEAVE=5,
     CMSG_CANCEL_MOUNT_AURA=6, BOT_STATE_COMBAT=0, SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS=4,
-    CURRENT_GENERIC_SPELL=0;
+    CURRENT_GENERIC_SPELL=0, INVENTORY_SLOT_BAG_0=0, EQUIPMENT_SLOT_START=0,
+    EQUIPMENT_SLOT_BODY=3, EQUIPMENT_SLOT_TABARD=18, EQUIPMENT_SLOT_END=19;
 constexpr float INTERACTION_DISTANCE=5;
 constexpr float INVALID_HEIGHT=-100000;
 const float BG_AB_NodePositions[5][4] = {};
+const float BG_AB_DoorPositions[2][8] = {
+    {1284.597f,1281.167f,0,0,0,0,0,0},
+    {708.0903f,708.4479f,0,0,0,0,0,0}
+};
 using BattlegroundQueueTypeId=int;
 uint32 tick=10000;
 uint32 getMSTime() {return tick;}
@@ -91,7 +119,7 @@ struct WorldPacket {
     void WriteByteSeq(uint8 b) {if(b) *this<<uint8(b^1);}
     void ReadByteSeq(uint8& b) {if(b) {uint8 v; *this>>v; b^=v;}}
 };
-struct Player; struct PlayerbotAI;
+struct Player; struct PlayerbotAI; struct Item {};
 struct SpellInfo {
     uint32 Id=21651; bool ignoreLos=false;
     bool HasAttribute(int) const {return ignoreLos;}
@@ -113,13 +141,20 @@ struct Map {bool los=true; bool isInLineOfSight(float,float,float,float,float,fl
 struct BattlegroundScore {};
 struct Battleground {
     int type=BATTLEGROUND_AB,status=STATUS_WAIT_JOIN; bool rated=false; uint32 id=1;
+    Map* activeMap=nullptr; uint32 objectLookups=0;
     GameObject objects[40];
     std::map<ObjectGuid,BattlegroundScore*> scores;
     auto GetPlayerScoresBegin(){return scores.begin();} auto GetPlayerScoresEnd(){return scores.end();}
     int GetTypeID(){return type;} bool IsRated(){return rated;}
     uint32 GetInstanceID(){return id;} int GetStatus(){return status;}
     uint32 GetTeamScore(int){return 0;}
-    GameObject* GetBGObject(uint32 i){assert(i<40);return &objects[i];}
+    void GetTeamStartLoc(uint32 team,float& x,float& y,float& z,float& o){
+        if(team==ALLIANCE){x=1313.9f;y=1310.74f;z=-9.01043f;}
+        else{x=684.014f;y=681.22f;z=-12.9159f;}
+        o=0;
+    }
+    Map* FindBgMap(){return activeMap;}
+    GameObject* GetBGObject(uint32 i){assert(activeMap && i<40);++objectLookups;return &objects[i];}
 };
 struct WorldSession {
     Player* bot=nullptr; int joins=0,accepts=0,leaves=0,releases=0,revives=0;
@@ -135,14 +170,17 @@ struct Player {
     ObjectGuid guid{1}; WorldSession session; Battleground* bg=nullptr; PlayerbotAI* ai=nullptr;
     bool world=true,teleport=false,alive=true,combat=false,queue=false,invited=false,
         group=false,ghost=false,waiting=false,casting=false,mounted=false,access=true,
-        afk=false,nearGuide=true,hasGuide=true,los=true;
+        afk=false,nearGuide=true,hasGuide=true,los=true,canLeaveStartingArea=true;
     int moves=0,casts=0,stops=0,team=ALLIANCE;
     bool moving=false,castAccepted=true; float x=0,y=0,z=0; Map map;
-    Creature guide;
+    Creature guide; Item item; uint32 level=20,equippedItems=1,saves=0;
     Spell current;
     Player(){session.bot=this;}
     ObjectGuid GetGUID(){return guid;} WorldSession* GetSession(){return &session;}
     bool IsInWorld(){return world;} bool IsBeingTeleported(){return teleport;} uint32 GetInstanceId(){return bg?bg->id:0;}
+    bool IsInFlight(){return false;} uint32 GetLevel(){return level;}
+    Item* GetItemByPos(uint8 bag,uint8 slot){assert(bag==INVENTORY_SLOT_BAG_0);return slot<equippedItems?&item:nullptr;}
+    void SaveToDB(bool){++saves;}
     Battleground* GetBattleground(){return bg;} bool IsAlive(){return alive;}
     bool IsInCombat(){return combat;} bool GetGroup(){return group;}
     bool GetBGAccessByLevel(int){return access;} bool InBattlegroundQueue(){return queue;}
@@ -157,12 +195,13 @@ struct Player {
     float GetDistance2d(float ox,float oy){return std::hypot(x-ox,y-oy);}
     float GetDistance2d(GameObject* o){return GetDistance2d(o->x,o->y);}
     float GetPositionX(){return x;} float GetPositionY(){return y;} float GetPositionZ(){return z;}
-    float GetMapHeight(float,float,float){return 0;} float GetCollisionHeight(){return 2;}
+    float GetMapHeight(float,float,float,bool=true,float=50){return 0;} float GetCollisionHeight(){return 2;}
     Map* GetMap(){return &map;} uint32 GetPhaseMask(){return 1;}
     bool isMoving(){return moving;}
     void StopMoving(){moving=false;++stops;} void CastSpell(GameObject*,int id,bool triggered){assert(id==21651&&!triggered);++casts;}
     bool isAFK(){return afk;} void ToggleAFK(){afk=!afk;}
 };
+bool CanPlayerLeaveStartingArea(Player const* player){return player->canLeaveStartingArea;}
 struct PlayerbotAI {
     Player* bot; bool real=false,master=false; int state=1; uint32 delay=0;
     PlayerbotAI(Player* b):bot(b){bot->ai=this;}
@@ -174,9 +213,21 @@ struct Config {bool battlegroundTest=false,account=true;float sightDistance=60;b
 Config* sPlayerbotAIConfig=&config;
 struct Manager {
     std::map<uint64,Player*> bots;
+    std::map<uint64,uint32> targets;
+    std::set<uint64> pending;
+    uint32 randomizes=0;
     auto GetPlayerBotsBegin(){return bots.begin();} auto GetPlayerBotsEnd(){return bots.end();}
+    uint32 GetValue(Player* bot,std::string const&){auto i=targets.find(bot->guid.value);return i==targets.end()?bot->level:i->second;}
+    bool HasPendingRandomization(Player* bot){return pending.contains(bot->guid.value);}
+    void Randomize(Player* bot){++randomizes;bot->level=GetValue(bot,"level");bot->equippedItems=1;bot->teleport=true;pending.erase(bot->guid.value);}
 } manager;
 Manager* sRandomPlayerbotMgr=&manager;
+uint32 equipmentRepairs=0;
+struct BotFactory {
+    Player* bot;
+    BotFactory(Player* player,uint32):bot(player){}
+    void InitEquipment(bool){++equipmentRepairs;bot->equippedItems=1;}
+};
 struct BattlegroundMgr {static int BGQueueTypeId(int,int){return 1;}};
 #define GET_PLAYERBOT_AI(bot) ((bot)->ai)
 std::vector<std::string> phases;
@@ -241,21 +292,47 @@ int main() {
     BattlegroundTest::Update(1000); assert(bot.session.joins==0);
     bot.group=false;bot.access=false;
     BattlegroundTest::Update(1000); assert(bot.session.joins==0);
-    bot.access=true;bot.teleport=true;
+    bot.access=true;bot.canLeaveStartingArea=false;
     BattlegroundTest::Update(1000); assert(bot.session.joins==0);
-    bot.teleport=false;BattlegroundTest::Update(1000);assert(bot.session.joins==1);
+    bot.canLeaveStartingArea=true;bot.teleport=true;
+    BattlegroundTest::Update(1000); assert(bot.session.joins==0);
+    bot.teleport=false;tick+=60000;manager.targets[1]=44;manager.pending.insert(1);
+    BattlegroundTest::Update(1000);
+    assert(bot.session.joins==0 && manager.randomizes==1 && bot.level==44 && bot.teleport);
+    BattlegroundTest::Update(1000);assert(bot.session.joins==0);
+    bot.teleport=false;bot.equippedItems=0;
+    BattlegroundTest::Update(1000);
+    assert(bot.session.joins==0 && equipmentRepairs==1 && bot.saves==1 && bot.equippedItems==1);
+    BattlegroundTest::Update(1000);assert(bot.session.joins==1);
     BattlegroundTest::Update(1000);assert(bot.session.joins==1 && !bot.session.accepts);
     bot.invited=true;tick+=5000;BattlegroundTest::Update(1000);assert(bot.session.accepts==1);
-    Battleground bg;bot.bg=&bg;
+    Battleground bg;bot.bg=&bg;bg.activeMap=&bot.map;
     BattlegroundTest::Update(1000);assert(!bot.session.leaves);
-    assert(BattlegroundTest::DoNextAction(&ai) && !bot.moves);
+    assert(BattlegroundTest::DoNextAction(&ai) && bot.moves==1);
+    State& preparation=states.at(bot.guid);
+    assert(preparation.preparationSet && preparation.preparationSlot<15);
+    assert(std::hypot(preparation.preparationX-1313.9f,preparation.preparationY-1310.74f)>1.0f);
+    Player teammate;teammate.guid=ObjectGuid(2);teammate.bg=&bg;teammate.team=ALLIANCE;
+    State teammateState;teammateState.instance=bg.id;teammateState.team=ALLIANCE;
+    states[teammate.guid]=teammateState;
+    assert(SelectPreparationPosition(&teammate,&bg,states.at(teammate.guid)));
+    assert(states.at(teammate.guid).preparationSlot!=preparation.preparationSlot);
+    assert(preparation.preparationInstance==bg.id
+        && states.at(teammate.guid).preparationInstance==bg.id);
+    assert(std::hypot(states.at(teammate.guid).preparationX-preparation.preparationX,
+        states.at(teammate.guid).preparationY-preparation.preparationY)>=2.9f);
+    bot.x=preparation.preparationX;bot.y=preparation.preparationY;bot.z=preparation.preparationZ;
+    bot.moving=false;int preparationMoves=bot.moves;
+    assert(BattlegroundTest::DoNextAction(&ai) && bot.moves==preparationMoves);
     bg.status=STATUS_IN_PROGRESS;
-    assert(BattlegroundTest::DoNextAction(&ai) && bot.moves==1 && ai.delay==1000);
+    assert(BattlegroundTest::DoNextAction(&ai) && bot.moves==preparationMoves+1 && ai.delay==1000);
+    int objectiveMoves=bot.moves;
     bot.combat=true;assert(!BattlegroundTest::DoNextAction(&ai));bot.combat=false;
-    bot.casting=true;BattlegroundTest::DoNextAction(&ai);assert(bot.moves==1);bot.casting=false;
+    bot.casting=true;BattlegroundTest::DoNextAction(&ai);assert(bot.moves==objectiveMoves);bot.casting=false;
     AttackEnemyPlayerAction::enemy=true;assert(!BattlegroundTest::DoNextAction(&ai));
     assert(ai.state==BOT_STATE_COMBAT);ai.state=1;AttackEnemyPlayerAction::enemy=false;
     uint32 node=states.at(bot.guid).objective;bg.objects[node*8+BG_AB_OBJECT_BANNER_NEUTRAL].spawned=true;
+    bot.x=bot.y=bot.z=0;
     int arrivedMoves=bot.moves;bot.moving=true;int arrivedStops=bot.stops;
     assert(BattlegroundTest::DoNextAction(&ai));
     assert(bot.moves==arrivedMoves && bot.stops==arrivedStops+1 && !bot.moving);
@@ -316,10 +393,33 @@ int main() {
     assert(states.at(bot.guid).completed==1);
     tick+=60000;BattlegroundTest::Update(1000);assert(bot.session.joins==2);
     bot.queue=false;bot.bg=&bg;bg.id=2;bg.status=STATUS_WAIT_JOIN;
+    // Bot actions can run before the once-per-second lifecycle update after a
+    // port. They must not consume the new instance transition or the same-bot
+    // re-entry gate will miss the second match.
+    assert(BattlegroundTest::DoNextAction(&ai));
+    assert(states.at(bot.guid).matches==1);
     BattlegroundTest::Update(1000);assert(states.at(bot.guid).matches==2);
+    uint32 objectLookups=bg.objectLookups;int teardownMoves=bot.moves;ai.delay=0;
+    bg.activeMap=nullptr;
+    assert(!FindBanner(&bg,states.at(bot.guid).objective).object && bg.objectLookups==objectLookups);
+    assert(BattlegroundTest::DoNextAction(&ai));
+    assert(ai.delay==1000 && bot.moves==teardownMoves && bg.objectLookups==objectLookups);
+    tick+=1000;BattlegroundTest::Update(1000);
+    assert(bot.moves==teardownMoves && bg.objectLookups==objectLookups);
+    bg.activeMap=&bot.map;
     bg.rated=true;assert(!BattlegroundTest::DoNextAction(&ai));
     tick+=10000;BattlegroundTest::Update(1000);assert(bot.session.leaves==1);
     manager.bots.clear();BattlegroundTest::Update(1000);assert(states.empty());
+    Player repairA,repairB,repairC;
+    repairA.guid=ObjectGuid(11);repairB.guid=ObjectGuid(12);repairC.guid=ObjectGuid(13);
+    repairA.equippedItems=repairB.equippedItems=repairC.equippedItems=0;
+    State repairStateA,repairStateB,repairStateC;uint32 repairBudget=2;
+    uint32 repairsBefore=equipmentRepairs;
+    assert(!RepairQueueReadiness(&repairA,repairStateA,tick,repairBudget));
+    assert(!RepairQueueReadiness(&repairB,repairStateB,tick,repairBudget));
+    assert(!RepairQueueReadiness(&repairC,repairStateC,tick,repairBudget));
+    assert(equipmentRepairs==repairsBefore+2 && repairBudget==0);
+    assert(repairA.equippedItems==1 && repairB.equippedItems==1 && repairC.equippedItems==0);
     State wrap;wrap.requested=true;wrap.lastRequest=UINT32_MAX-10;
     assert(!RequestReady(wrap,48,60));assert(RequestReady(wrap,49,60));
 }

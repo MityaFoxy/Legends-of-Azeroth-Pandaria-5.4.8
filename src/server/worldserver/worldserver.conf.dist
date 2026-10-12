@@ -2287,7 +2287,7 @@ Battleground.CastDeserter = 1
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
-Battleground.QueueAnnouncer.Enable = 1
+Battleground.QueueAnnouncer.Enable = 0
 
 #
 #    Battleground.QueueAnnouncer.PlayerOnly
@@ -2471,7 +2471,7 @@ Arena.AutoDistributeInterval = 7
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
-Arena.QueueAnnouncer.Enable = 1
+Arena.QueueAnnouncer.Enable = 0
 
 #
 #    Arena.QueueAnnouncer.PlayerOnly
@@ -4496,7 +4496,7 @@ GuarderSight = 50
 
 Channel.ConstantLocale = 0
 
-Battleground.IgnoreFaction = 1
+Battleground.IgnoreFaction = 0
 Battleground.HugeBgStartTime = 20
 Battleground.HugeBgEndTime = 22
 Battleground.DtBgEnabled = 1

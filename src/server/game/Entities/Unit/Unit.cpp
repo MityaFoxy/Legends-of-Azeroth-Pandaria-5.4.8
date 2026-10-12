@@ -374,6 +374,8 @@ void Unit::Update(uint32 p_time)
     if (!IsInWorld())
         return;
 
+    _functionsDelayed.Update(p_time);
+
     _damageTrackingTimer -= p_time;
     while (_damageTrackingTimer <= 0)
     {
@@ -672,7 +674,7 @@ bool Unit::GetMeleeRepositionPoint(Unit const* attacker, Position& position) con
 
     for (Unit const* other : getAttackers())
     {
-        if (!other || other == attacker || !other->IsAlive() || !other->ToCreature() || other->IsPet())
+        if (!other || other == attacker || !other->IsAlive() || other->IsPet())
             continue;
 
         Position point = other->GetPosition();

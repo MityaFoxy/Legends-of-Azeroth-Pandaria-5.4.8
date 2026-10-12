@@ -3,22 +3,33 @@
 #include "Helper.h"
 #include "PlayerbotSpec.h"
 #include "RandomPlayerbotMgr.h"
+#include "StartingArea.h"
 
 RandomBotBacketManager::RandomBotBacketManager()
     : _timer{ 0 }
-    , _BotDistDebugMode{ true }
+    , _BotDistDebugMode{ false }
 {
+    // These ranges must match PvpDifficulty.dbc. Battleground queues from
+    // level 10 through 89 use five-level brackets; balancing by decades can
+    // leave one real queue starved while its neighbouring queue is crowded.
     _AllianceLevelRanges[0]     = { 1, 9,   2 };
-    _AllianceLevelRanges[1]     = { 10, 19, 8 };
-    _AllianceLevelRanges[2]     = { 20, 29, 8 };
-    _AllianceLevelRanges[3]     = { 30, 39, 8 };
-    _AllianceLevelRanges[4]     = { 40, 49, 8 };
-    _AllianceLevelRanges[5]     = { 50, 59, 9 };
-    _AllianceLevelRanges[6]     = { 60, 69, 9 };
-    _AllianceLevelRanges[7]     = { 70, 79, 9 };
-    _AllianceLevelRanges[8]     = { 80, 84, 9 };
-    _AllianceLevelRanges[9]     = { 85, 89, 10 };
-    _AllianceLevelRanges[10]    = { 90, 90, 20 };
+    _AllianceLevelRanges[1]     = { 10, 14, 4 };
+    _AllianceLevelRanges[2]     = { 15, 19, 4 };
+    _AllianceLevelRanges[3]     = { 20, 24, 4 };
+    _AllianceLevelRanges[4]     = { 25, 29, 4 };
+    _AllianceLevelRanges[5]     = { 30, 34, 4 };
+    _AllianceLevelRanges[6]     = { 35, 39, 4 };
+    _AllianceLevelRanges[7]     = { 40, 44, 4 };
+    _AllianceLevelRanges[8]     = { 45, 49, 4 };
+    _AllianceLevelRanges[9]     = { 50, 54, 4 };
+    _AllianceLevelRanges[10]    = { 55, 59, 5 };
+    _AllianceLevelRanges[11]    = { 60, 64, 4 };
+    _AllianceLevelRanges[12]    = { 65, 69, 5 };
+    _AllianceLevelRanges[13]    = { 70, 74, 4 };
+    _AllianceLevelRanges[14]    = { 75, 79, 5 };
+    _AllianceLevelRanges[15]    = { 80, 84, 9 };
+    _AllianceLevelRanges[16]    = { 85, 89, 10 };
+    _AllianceLevelRanges[17]    = { 90, 90, 20 };
 
     for (uint8 i = 0; i < NUM_RANGES; ++i)
         _HordeLevelRanges[i] = _AllianceLevelRanges[i];
@@ -114,23 +125,40 @@ void RandomBotBacketManager::Update(uint32 diff)
     for (auto const& itr : allPlayers)
     {
         Player* player = itr.second;
-        // Never schedule a level/equipment rerandomization across a BG bracket
-        // while the bot is queued or playing. The native queue owns that bracket.
-        if (!player || !player->IsInWorld() || player->InBattleground() || player->InBattlegroundQueue())
+        if (!player || !player->IsInWorld())
             continue;
-        
+
         if (!sRandomPlayerbotMgr->IsRandomBot(player->GetGUID().GetCounter()))
             continue;
+
+        // Bots confined to an unfinished starting story cannot fill a BG slot.
+        // Excluding them prevents the distribution from counting invitations
+        // which the transfer handler must reject.
+        if (!CanPlayerLeaveStartingArea(player))
+            continue;
+
+        uint32 effectiveLevel = player->GetLevel();
+        bool pendingRandomization = sRandomPlayerbotMgr->HasPendingRandomization(player);
+        if (pendingRandomization)
+        {
+            uint32 targetLevel = sRandomPlayerbotMgr->GetValue(player, "level");
+            if (targetLevel)
+                effectiveLevel = targetLevel;
+        }
+
+        int rangeIndex = GetLevelRangeIndex(effectiveLevel);
+        bool canAdjust = !pendingRandomization && !player->InBattleground()
+            && !player->InBattlegroundQueue();
 
         auto team = player->GetTeam();
         if (team == Team::ALLIANCE)
         {
             totalAllianceBots++;
-            int rangeIndex = GetLevelRangeIndex(player->GetLevel());
             if (rangeIndex >= 0)
             {
                 allianceActualCounts[rangeIndex]++;
-                allianceBotsByRange[rangeIndex].push_back(player);
+                if (canAdjust)
+                    allianceBotsByRange[rangeIndex].push_back(player);
             }
             else if (_BotDistDebugMode)
             {
@@ -141,11 +169,11 @@ void RandomBotBacketManager::Update(uint32 diff)
         else if (team == Team::HORDE)
         {
             totalHordeBots++;
-            int rangeIndex = GetLevelRangeIndex(player->GetLevel());
             if (rangeIndex >= 0)
             {
                 hordeActualCounts[rangeIndex]++;
-                hordeBotsByRange[rangeIndex].push_back(player);
+                if (canAdjust)
+                    hordeBotsByRange[rangeIndex].push_back(player);
             }
             else if (_BotDistDebugMode)
             {

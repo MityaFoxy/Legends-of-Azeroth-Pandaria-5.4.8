@@ -27,6 +27,7 @@
 #include "Language.h"
 #include "Log.h"
 #include "Player.h"
+#include "StartingArea.h"
 #include "Object.h"
 #include "Opcodes.h"
 #include "DisableMgr.h"
@@ -401,6 +402,17 @@ void WorldSession::HandleBattleFieldPortOpcode(WorldPacket &recvData)
     PvPDifficultyEntry const* bracketEntry = sDBCManager.GetBattlegroundBracketByLevel(bg->GetMapId(), _player->GetLevel());
     if (!bracketEntry)
         return;
+
+    // Starter-zone characters may queue, but the client must reject an accepted
+    // invitation until their escape story is complete.  Check before changing
+    // the saved entry point, queue membership or battleground assignment.
+    if (action && !CanPlayerLeaveStartingArea(_player))
+    {
+        _player->SendTransferAborted(bg->GetMapId(), TRANSFER_ABORT_UNIQUE_MESSAGE);
+        action = 0;
+        TC_LOG_DEBUG("bg.battleground", "Player {} ({}) cannot leave the starting area; decline battleground {} before changing battleground state.",
+            _player->GetName().c_str(), _player->GetGUID().GetCounter(), bg->GetTypeID());
+    }
 
     //some checks if player isn't cheating - it is not exactly cheating, but we cannot allow it
     if (action && ginfo.ArenaType == 0)

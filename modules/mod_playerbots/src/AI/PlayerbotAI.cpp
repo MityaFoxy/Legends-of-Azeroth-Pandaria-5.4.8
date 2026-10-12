@@ -909,8 +909,9 @@ void PlayerbotAI::DoNextAction(bool min)
     if (master)
         masterBotAI = GET_PLAYERBOT_AI(master);
 
-    // Test BG master set
-    if ((!master || (masterBotAI && !masterBotAI->IsRealPlayer())) && group)
+    // Battleground raids are temporary matchmaker groups. Do not turn a random
+    // bot into a player-controlled bot merely because a real player shares it.
+    if ((!master || (masterBotAI && !masterBotAI->IsRealPlayer())) && group && !bot->InBattleground())
     {
         PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
         if (!botAI)

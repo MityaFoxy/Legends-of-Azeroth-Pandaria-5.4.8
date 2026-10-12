@@ -145,6 +145,7 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     if (!IsMovingAllowed(target))
         return false;
 
+    float const requestedDistance = distance;
     float bx = bot->GetPositionX();
     float by = bot->GetPositionY();
     float bz = bot->GetPositionZ();
@@ -155,8 +156,32 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     float combatDistance = bot->GetCombatReach() + target->GetCombatReach();
     distance += combatDistance;
 
-    if (bot->GetExactDist(tx, ty, tz) <= distance)
+    bool const melee = requestedDistance <= sPlayerbotAIConfig->meleeDistance + 0.1f;
+    Position reposition = bot->GetPosition();
+    bool const needsReposition = melee && target->GetMeleeRepositionPoint(bot, reposition);
+    if (bot->GetExactDist(tx, ty, tz) <= distance && !needsReposition)
         return false;
+
+    float const disToGo = bot->GetExactDist(tx, ty, tz) - distance;
+    bool contactPoint = false;
+    if (needsReposition)
+    {
+        reposition.GetPosition(tx, ty, tz);
+        contactPoint = true;
+    }
+    else if (melee && disToGo < 10.0f)
+    {
+        // Reserve stable angles around a shared target so Playerbots do not
+        // all shorten their paths to the same contact point.
+        uint32 lane = (bot->GetGUID().GetCounter() * 2654435761U
+            ^ target->GetGUID().GetCounter() * 2246822519U) % 16U;
+        float angle = float(2.0 * M_PI) * float(lane) / 16.0f;
+        target->GetNearPoint(bot, tx, ty, tz, CONTACT_DISTANCE, angle);
+        Position point(tx, ty, tz);
+        target->GetMeleeRepositionPoint(bot, point);
+        point.GetPosition(tx, ty, tz);
+        contactPoint = true;
+    }
 
     PathGenerator path(bot);
     path.CalculatePath(tx, ty, tz, false);
@@ -167,11 +192,11 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     float shortenTo = distance;
 
     // Avoid walking too far when moving towards each other
-    float disToGo = bot->GetExactDist(tx, ty, tz) - distance;
-    if (disToGo >= 10.0f)
+    if (!contactPoint && disToGo >= 10.0f)
         shortenTo = disToGo / 2 + distance;
 
-    path.ShortenPathUntilDist(G3D::Vector3(tx, ty, tz), shortenTo);
+    if (!contactPoint)
+        path.ShortenPathUntilDist(G3D::Vector3(tx, ty, tz), shortenTo);
     G3D::Vector3 endPos = path.GetPath().back();
     return MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
         MovementPriority::MOVEMENT_COMBAT, true);
@@ -284,13 +309,17 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     {
         return false;
     }
+    bool const battlegroundGroundMovement = bot->InBattleground();
+    if (battlegroundGroundMovement)
+        normal_only = true;
     bool const sourceInWater = bot->IsUnderWater() || bot->IsInWater();
     bool const destinationInWater = bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), x, y, z,
         MAP_ALL_LIQUIDS, nullptr, bot->GetCollisionHeight()) & MAP_LIQUID_STATUS_IN_CONTACT;
     // Underwater movement to another underwater point is genuinely 3D. When
     // the destination is on land, use the mixed ground/water navmesh instead
     // of drawing one long spline through the river bank or terrain.
-    bool generatePath = !bot->IsFlying() && (!sourceInWater || !destinationInWater);
+    bool generatePath = battlegroundGroundMovement
+        || (!bot->IsFlying() && (!sourceInWater || !destinationInWater));
     if (Vehicle* vehicle = bot->GetVehicle())
     {
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);

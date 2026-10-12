@@ -476,6 +476,16 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
     return false;
 }
 
+bool RandomPlayerbotMgr::HasPendingRandomization(Player* bot)
+{
+    if (!bot)
+        return false;
+
+    uint32 targetLevel = GetValue(bot, "level");
+    return targetLevel && targetLevel != bot->GetLevel()
+        && !GetEventValue(bot->GetGUID().GetCounter(), "randomize");
+}
+
 void RandomPlayerbotMgr::TagForRandomize(Player* bot, uint32 level)
 {
     ObjectGuid::LowType guid = bot->GetGUID().GetCounter();
@@ -824,7 +834,8 @@ void RandomPlayerbotMgr::OnBotLoginInternal(Player* const bot)
             WorldSession* session = bot->GetSession();
             session->HandleSelectFactionOpcode(packet);
 
-            TC_LOG_INFO("playerbots", "{} Assigned to faction: {}", bot->GetName().c_str(), (bot->GetTeamId() ? "Alliance" : "Horde"));
+            TC_LOG_INFO("playerbots", "{} Assigned to faction: {}", bot->GetName().c_str(),
+                bot->GetTeamId() == TEAM_ALLIANCE ? "Alliance" : "Horde");
         });        
     }
     if (bot->GetRace() == RACE_GOBLIN && bot->GetLevel() == 1)

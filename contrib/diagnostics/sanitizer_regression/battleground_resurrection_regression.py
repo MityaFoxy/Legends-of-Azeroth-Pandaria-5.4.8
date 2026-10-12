@@ -11,6 +11,9 @@ import tempfile
 
 root = Path(sys.argv[1])
 bg = (root / "src/server/game/Battlegrounds/Battleground.cpp").read_text()
+remove_at_leave = bg[bg.index("void Battleground::RemovePlayerAtLeave("):
+    bg.index("void Battleground::Reset()")]
+assert "!player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST)" in remove_at_leave
 
 
 def body(signature):
@@ -24,6 +27,7 @@ def body(signature):
 
 
 source = r'''
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -132,6 +136,18 @@ int main() {
     bg.ProcessRessurect(501);
     assert(bg.m_ResurrectQueue.empty());
     bg.ProcessRessurect(RESURRECTION_INTERVAL);
+    // Leaving during the native half-second visual delay must cancel the
+    // second-stage queue and its waiting aura as well as the first-stage queue.
+    ObjectAccessor::players[a.guid] = &a;
+    a.alive = false;
+    bg.AddPlayerToResurrectQueue(12, a.guid);
+    bg.ProcessRessurect(RESURRECTION_INTERVAL - bg.m_LastResurrectTime);
+    assert(!bg.m_ResurrectQueue.empty() && a.waiting);
+    int resurrectsBeforeLeave = a.resurrects;
+    bg.RemovePlayerFromResurrectQueue(a.guid);
+    assert(bg.m_ResurrectQueue.empty() && !a.waiting);
+    bg.ProcessRessurect(501);
+    assert(a.resurrects == resurrectsBeforeLeave);
     std::puts("BG waves, three death/resurrection cycles, aura callback and offline player: OK");
 }
 '''

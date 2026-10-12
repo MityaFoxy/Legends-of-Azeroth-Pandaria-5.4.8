@@ -87,6 +87,7 @@ public:
 public:
     bool IsRandomBot(Player* bot);
     bool IsRandomBot(ObjectGuid::LowType bot);
+    bool HasPendingRandomization(Player* bot);
 
     void TagForRandomize(Player* bot, uint32 level);
     void RandomizeFirst(Player* bot);

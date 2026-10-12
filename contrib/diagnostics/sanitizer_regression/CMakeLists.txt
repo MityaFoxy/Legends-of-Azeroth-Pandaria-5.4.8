@@ -61,6 +61,11 @@ set_tests_properties(combat_removal_regression PROPERTIES ENVIRONMENT "UBSAN_OPT
 add_test(NAME battleground_group_lifecycle_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_group_lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_group_lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME battleground_starting_area_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_starting_area_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(battleground_starting_area_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME playerbot_bg_bracket_distribution_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_bg_bracket_distribution_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME battleground_resurrection_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_resurrection_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

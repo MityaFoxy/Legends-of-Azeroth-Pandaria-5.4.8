@@ -4,6 +4,7 @@
 #include "Player.h"
 #include "BattlegroundAB.h"
 #include "BattlegroundMgr.h"
+#include "BotFactory.h"
 #include "ChooseTargetActions.h"
 #include "Creature.h"
 #include "Event.h"
@@ -18,6 +19,7 @@
 #include "RandomPlayerbotMgr.h"
 #include "Spell.h"
 #include "SpellMgr.h"
+#include "StartingArea.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 
@@ -30,6 +32,18 @@
 
 namespace
 {
+    constexpr uint32 MAX_QUEUE_READINESS_REPAIRS_PER_UPDATE = 2;
+    constexpr uint32 QUEUE_READINESS_RETRY_INTERVAL = 60000;
+
+    enum class QueueReadinessIssue : uint8
+    {
+        None,
+        PendingRandomization,
+        MissingEquipment,
+        RepairBudget,
+        RepairFailed
+    };
+
     struct State
     {
         uint32 instance = 0;
@@ -49,14 +63,140 @@ namespace
         uint8 objective = 0;
         uint8 approachVariant = 0;
         uint8 approachFailures = 0;
+        uint8 preparationSlot = std::numeric_limits<uint8>::max();
+        uint32 preparationInstance = 0;
+        QueueReadinessIssue readinessIssue = QueueReadinessIssue::None;
+        uint32 lastReadinessLog = 0;
+        uint32 lastReadinessRepair = 0;
+        bool readinessRepairAttempted = false;
+        bool initialQueueDelayStarted = false;
         bool objectiveSet = false;
         bool approachSet = false;
+        bool preparationSet = false;
         float approachX = 0.0f;
         float approachY = 0.0f;
         float approachZ = 0.0f;
+        float preparationX = 0.0f;
+        float preparationY = 0.0f;
+        float preparationZ = 0.0f;
         std::string bannerPhase;
         std::string phase;
     };
+
+    char const* QueueReadinessReason(QueueReadinessIssue issue)
+    {
+        switch (issue)
+        {
+            case QueueReadinessIssue::PendingRandomization:
+                return "pending-randomization";
+            case QueueReadinessIssue::MissingEquipment:
+                return "missing-equipment";
+            case QueueReadinessIssue::RepairBudget:
+                return "repair-budget";
+            case QueueReadinessIssue::RepairFailed:
+                return "repair-failed";
+            default:
+                return "ready";
+        }
+    }
+
+    uint32 EquippedCombatItems(Player* bot)
+    {
+        uint32 equipped = 0;
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            if (slot == EQUIPMENT_SLOT_BODY || slot == EQUIPMENT_SLOT_TABARD)
+                continue;
+            if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                ++equipped;
+        }
+        return equipped;
+    }
+
+    void LogQueueReadiness(Player* bot, State& state, QueueReadinessIssue issue, uint32 now,
+        uint32 equipped, uint32 targetLevel, char const* action)
+    {
+        if (state.readinessIssue == issue && getMSTimeDiff(state.lastReadinessLog, now) < 30000)
+            return;
+
+        char const* phase = QueueReadinessReason(issue); // Used by the standalone regression log double.
+        TC_LOG_INFO("playerbots.bgtest",
+            "Bot={} GUID={} queue_action={} reason={} current_level={} target_level={} equipped_items={}",
+            bot->GetName(), bot->GetGUID().GetCounter(), action, phase, bot->GetLevel(), targetLevel, equipped);
+        state.readinessIssue = issue;
+        state.lastReadinessLog = now;
+    }
+
+    bool RepairQueueReadiness(Player* bot, State& state, uint32 now, uint32& repairBudget)
+    {
+        uint32 targetLevel = sRandomPlayerbotMgr->GetValue(bot, "level");
+        uint32 equipped = EquippedCombatItems(bot);
+        QueueReadinessIssue issue = QueueReadinessIssue::None;
+        if (sRandomPlayerbotMgr->HasPendingRandomization(bot))
+            issue = QueueReadinessIssue::PendingRandomization;
+        // Randomize() normally equips bots, but restored or externally edited
+        // character data can be naked while its long-lived randomize event still
+        // says no refresh is due. Inspect the actual equipment before queueing.
+        else if (!equipped)
+            issue = QueueReadinessIssue::MissingEquipment;
+        else
+        {
+            state.readinessIssue = QueueReadinessIssue::None;
+            state.readinessRepairAttempted = false;
+            return true;
+        }
+
+        if (bot->GetInstanceId() || bot->IsInFlight())
+        {
+            LogQueueReadiness(bot, state, issue, now, equipped, targetLevel, "deferred");
+            return false;
+        }
+
+        if (state.readinessRepairAttempted
+            && getMSTimeDiff(state.lastReadinessRepair, now) < QUEUE_READINESS_RETRY_INTERVAL)
+        {
+            LogQueueReadiness(bot, state, issue, now, equipped, targetLevel, "repair-cooldown");
+            return false;
+        }
+
+        if (!repairBudget)
+        {
+            LogQueueReadiness(bot, state, QueueReadinessIssue::RepairBudget, now,
+                equipped, targetLevel, "deferred");
+            return false;
+        }
+
+        --repairBudget;
+        state.lastReadinessRepair = now;
+        state.readinessRepairAttempted = true;
+        if (issue == QueueReadinessIssue::PendingRandomization)
+        {
+            sRandomPlayerbotMgr->Randomize(bot);
+            equipped = EquippedCombatItems(bot);
+            bool repaired = bot->GetLevel() == targetLevel && equipped;
+            LogQueueReadiness(bot, state, repaired ? issue : QueueReadinessIssue::RepairFailed,
+                now, equipped, targetLevel, repaired ? "repaired" : "repair-failed");
+            if (repaired)
+                state.readinessRepairAttempted = false;
+            return false;
+        }
+
+        BotFactory factory(bot, bot->GetLevel());
+        factory.InitEquipment(false);
+        equipped = EquippedCombatItems(bot);
+        if (equipped)
+        {
+            bot->SaveToDB(false);
+            LogQueueReadiness(bot, state, issue, now, equipped, targetLevel, "repaired");
+            state.readinessRepairAttempted = false;
+        }
+        else
+        {
+            LogQueueReadiness(bot, state, QueueReadinessIssue::RepairFailed, now,
+                equipped, targetLevel, "repair-failed");
+        }
+        return false;
+    }
 
     struct BannerInfo
     {
@@ -74,6 +214,15 @@ namespace
             && sPlayerbotAIConfig->IsInRandomAccountList(ai->GetBot()->GetSession()->GetAccountId());
     }
 
+    bool HasActiveBattlegroundMap(Player* bot, Battleground* bg)
+    {
+        if (!bot || !bg || !bot->IsInWorld() || bot->IsBeingTeleported())
+            return false;
+
+        Map* bgMap = bg->FindBgMap();
+        return bgMap && bot->GetMap() == bgMap && bot->GetInstanceId() == bg->GetInstanceID();
+    }
+
     uint32 Mix(uint32 value)
     {
         value ^= value >> 16;
@@ -85,7 +234,11 @@ namespace
 
     BannerInfo FindBanner(Battleground* bg, uint32 node)
     {
-        if (!bg)
+        // Battleground remains discoverable through BattlegroundMgr briefly
+        // after BattlegroundMap unlinks it during teardown. GetBGObject asserts
+        // when that map is gone, so never perform an object lookup in this
+        // lifecycle window.
+        if (!bg || !bg->FindBgMap())
             return {};
         for (uint32 type = BG_AB_OBJECT_BANNER_NEUTRAL; type <= BG_AB_OBJECT_BANNER_HORDE; ++type)
             if (GameObject* banner = bg->GetBGObject(node * 8 + type))
@@ -132,7 +285,96 @@ namespace
         state.approachSet = false;
     }
 
-    uint32 Objective(Player* bot, State& state, uint32 now)
+    bool ApproachReserved(Player* bot, State const& state, float x, float y)
+    {
+        for (auto const& entry : states)
+        {
+            State const& other = entry.second;
+            if (entry.first == bot->GetGUID() || !other.approachSet || other.instance != state.instance
+                || other.team != state.team || other.objective != state.objective)
+                continue;
+
+            float dx = other.approachX - x;
+            float dy = other.approachY - y;
+            if (dx * dx + dy * dy < 6.25f)
+                return true;
+        }
+        return false;
+    }
+
+    bool SelectPreparationPosition(Player* bot, Battleground* bg, State& state)
+    {
+        constexpr uint8 PreparationSlots = 15;
+        uint32 const instance = bg->GetInstanceID();
+        if (state.preparationInstance != instance)
+        {
+            state.preparationInstance = instance;
+            state.preparationSlot = std::numeric_limits<uint8>::max();
+            state.preparationSet = false;
+        }
+        if (!state.preparationSet)
+        {
+            bool used[PreparationSlots] = {};
+            for (auto const& entry : states)
+            {
+                State const& other = entry.second;
+                if (entry.first != bot->GetGUID() && other.preparationSet
+                    && other.preparationInstance == instance
+                    && other.team == state.team && other.preparationSlot < PreparationSlots)
+                    used[other.preparationSlot] = true;
+            }
+
+            uint8 start = uint8(Mix(bot->GetGUID().GetCounter()) % PreparationSlots);
+            for (uint8 offset = 0; offset < PreparationSlots; ++offset)
+            {
+                uint8 slot = uint8((start + offset) % PreparationSlots);
+                if (!used[slot])
+                {
+                    state.preparationSlot = slot;
+                    break;
+                }
+            }
+            if (state.preparationSlot >= PreparationSlots)
+                return false;
+
+            float startX, startY, startZ, startO;
+            bg->GetTeamStartLoc(bot->GetBGTeam(), startX, startY, startZ, startO);
+            uint8 door = bot->GetBGTeam() == ALLIANCE ? 0 : 1;
+            float directionX = BG_AB_DoorPositions[door][0] - startX;
+            float directionY = BG_AB_DoorPositions[door][1] - startY;
+            float length = std::sqrt(directionX * directionX + directionY * directionY);
+            if (length < 0.1f)
+                return false;
+            directionX /= length;
+            directionY /= length;
+
+            uint8 row = state.preparationSlot / 5;
+            int8 column = int8(state.preparationSlot % 5) - 2;
+            float forward = 5.0f + float(row) * 5.0f;
+            float lateral = float(column) * 3.0f;
+            float x = startX + directionX * forward - directionY * lateral;
+            float y = startY + directionY * forward + directionX * lateral;
+            // Starting rooms contain roofs and other nearby vertical layers.
+            // Search only around the known native start elevation so a roof is
+            // never selected as the staging destination.
+            float z = bot->GetMapHeight(x, y, startZ + 1.0f, true, 3.0f);
+            if (z == INVALID_HEIGHT || !Trinity::IsValidMapCoord(x, y, z))
+                return false;
+
+            state.preparationX = x;
+            state.preparationY = y;
+            state.preparationZ = z;
+            state.preparationSet = true;
+            char const* phase = "preparation-stage"; // Also labels the standalone regression log double.
+            TC_LOG_INFO("playerbots.bgtest",
+                "Bot={} GUID={} preparation_action=stage slot={} instance={} team={} target=({},{},{})",
+                bot->GetName(), bot->GetGUID().GetCounter(), state.preparationSlot, instance,
+                state.team, x, y, z);
+        }
+        return true;
+    }
+
+    uint32 Objective(Player* bot, Battleground* bg, State& state, uint32 now)
     {
         uint32 const reviewInterval = 20000 + Mix(bot->GetGUID().GetCounter()) % 15001;
         if (state.objectiveSet && getMSTimeDiff(state.lastObjectiveReview, now) < reviewInterval)
@@ -144,7 +386,7 @@ namespace
         uint32 epoch = uint32(GameTime::GetGameTime() / 30);
         for (uint32 node = 0; node < BG_AB_DYNAMIC_NODES_COUNT; ++node)
         {
-            BannerInfo banner = FindBanner(bot->GetBattleground(), node);
+            BannerInfo banner = FindBanner(bg, node);
             int32 tactical = 0;
             if (!banner.object)
                 tactical = 100;
@@ -171,7 +413,7 @@ namespace
         state.lastObjectiveReview = now;
         if (bestNode != previous || !state.approachSet)
             ResetApproach(state);
-        BannerInfo banner = FindBanner(bot->GetBattleground(), bestNode);
+        BannerInfo banner = FindBanner(bg, bestNode);
         char const* phase = "objective-selected"; // Also labels the standalone regression log double.
         TC_LOG_INFO("playerbots.bgtest",
             "Bot={} GUID={} objective_action=selected node={} previous_node={} instance={} reason={} assigned={} distance={} review_ms={}",
@@ -205,13 +447,17 @@ namespace
                     score = itr->second;
                     break;
                 }
+        float groundZ = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(),
+            bot->GetPositionZ() + 4.0f);
+        float groundDelta = groundZ == INVALID_HEIGHT ? 0.0f : bot->GetPositionZ() - groundZ;
         TC_LOG_INFO("playerbots.bgtest",
-            "Bot={} GUID={} phase={} level={} faction={} map={} instance={} bg_status={} bg_team={} queue={} alive={} ghost={} waiting_resurrect={} combat={} moving={} hp_pct={} x={} y={} z={} score_a={} score_h={} damage_done={} healing_done={} killing_blows={} deaths={} matches={} completed={}",
+            "Bot={} GUID={} phase={} level={} faction={} map={} instance={} bg_status={} bg_team={} queue={} alive={} ghost={} waiting_resurrect={} combat={} moving={} flying={} can_fly={} gravity_disabled={} ground_delta={} hp_pct={} x={} y={} z={} score_a={} score_h={} damage_done={} healing_done={} killing_blows={} deaths={} matches={} completed={}",
             bot->GetName(), bot->GetGUID().GetCounter(), phase, bot->GetLevel(), bot->GetTeam(),
             bot->GetMapId(), bg ? bg->GetInstanceID() : 0, bg ? uint32(bg->GetStatus()) : 0,
             bg ? bot->GetBGTeam() : bot->GetTeam(), bot->InBattlegroundQueue(), bot->IsAlive(),
             bot->HasPlayerFlag(PLAYER_FLAGS_GHOST), bot->HasAura(SPELL_WAITING_FOR_RESURRECT),
-            bot->IsInCombat(), bot->isMoving(), bot->GetHealthPct(), bot->GetPositionX(),
+            bot->IsInCombat(), bot->isMoving(), bot->IsFlying(), bot->CanFly(),
+            bot->IsGravityDisabled(), groundDelta, bot->GetHealthPct(), bot->GetPositionX(),
             bot->GetPositionY(), bot->GetPositionZ(), bg ? bg->GetTeamScore(TEAM_ALLIANCE) : 0,
             bg ? bg->GetTeamScore(TEAM_HORDE) : 0, score ? score->DamageDone : 0,
             score ? score->HealingDone : 0, score ? score->KillingBlows : 0,
@@ -313,10 +559,15 @@ namespace
         state.bannerPhase = phase;
     }
 
-    void UseBanner(Player* bot, State& state, uint32 now)
+    void UseBanner(Player* bot, Battleground* bg, State& state, uint32 now)
     {
         if (bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING) || bot->IsMounted())
             return;
+        if (!HasActiveBattlegroundMap(bot, bg))
+        {
+            LogBanner(bot, state, now, "bg-map-unavailable");
+            return;
+        }
         if (!sSpellMgr->GetSpellInfo(21651))
         {
             LogBanner(bot, state, now, "missing-opening-spell");
@@ -329,7 +580,7 @@ namespace
         bool friendly = false;
         for (uint32 type = BG_AB_OBJECT_BANNER_NEUTRAL; type <= BG_AB_OBJECT_BANNER_HORDE; ++type)
         {
-            GameObject* banner = bot->GetBattleground()->GetBGObject(node * 8 + type);
+            GameObject* banner = bg->GetBGObject(node * 8 + type);
             if (!banner || !banner->isSpawned())
                 continue;
             spawned = banner;
@@ -362,18 +613,21 @@ namespace
             state.approachBanner = bannerGuid;
         }
 
-        uint32 const variants = friendly ? 12 : 16;
+        uint32 const variants = friendly ? 24 : 32;
         uint32 const start = Mix(bot->GetGUID().GetCounter() ^ (state.objective * 131U)) % variants;
         for (uint32 offset = 0; offset < variants; ++offset)
         {
             uint32 variant = (start + state.approachVariant + offset) % variants;
-            uint32 directions = friendly ? 12 : 8;
-            float radius = friendly ? 10.0f : variant < directions ? 2.75f : 4.25f;
+            uint32 directions = friendly ? 12 : 16;
+            float radius = friendly ? (variant < directions ? 6.5f : 10.0f)
+                : (variant < directions ? 2.75f : 4.25f);
             float angle = float(2.0 * M_PI) * float(variant % directions) / float(directions);
             float x = banner->GetPositionX() + std::cos(angle) * radius;
             float y = banner->GetPositionY() + std::sin(angle) * radius;
             float z = bot->GetMapHeight(x, y, banner->GetPositionZ() + 6.0f);
             if (z == INVALID_HEIGHT || !Trinity::IsValidMapCoord(x, y, z))
+                continue;
+            if (ApproachReserved(bot, state, x, y))
                 continue;
             // A speculative LOS ray from a position the player has not yet
             // reached is not a safe routing gate: dynamic flag geometry can
@@ -391,11 +645,46 @@ namespace
         return false;
     }
 
+    class PreparationMovement : public MovementAction
+    {
+    public:
+        PreparationMovement(PlayerbotAI* ai, Battleground* bg, State& state)
+            : MovementAction(ai, "BG test preparation"), bg(bg), state(state) { }
+
+        bool Execute(Event) override
+        {
+            if (!SelectPreparationPosition(bot, bg, state))
+                return false;
+
+            float dx = bot->GetPositionX() - state.preparationX;
+            float dy = bot->GetPositionY() - state.preparationY;
+            float dz = bot->GetPositionZ() - state.preparationZ;
+            if (dx * dx + dy * dy + dz * dz <= 1.5625f)
+            {
+                if (bot->isMoving())
+                    bot->StopMoving();
+                return true;
+            }
+            if (bot->isMoving())
+                return true;
+
+            // The target stays well inside StartMaxDist and behind the closed
+            // gate. Navigation must find a ground route; no direct fallback is
+            // allowed during preparation.
+            return MoveTo(bot->GetMapId(), state.preparationX, state.preparationY,
+                state.preparationZ, false, false, true);
+        }
+
+    private:
+        Battleground* bg;
+        State& state;
+    };
+
     class ObjectiveMovement : public MovementAction
     {
     public:
-        ObjectiveMovement(PlayerbotAI* ai, State& state, uint32 now)
-            : MovementAction(ai, "BG test objective"), state(state), now(now) { }
+        ObjectiveMovement(PlayerbotAI* ai, Battleground* bg, State& state, uint32 now)
+            : MovementAction(ai, "BG test objective"), bg(bg), state(state), now(now) { }
         bool Execute(Event) override
         {
             if (!bot->IsAlive())
@@ -415,7 +704,7 @@ namespace
             uint32 node = state.objective;
             // The objective is the native interaction area, not the exact
             // banner origin (which can be outside the walkable polygon).
-            BannerInfo banner = FindBanner(bot->GetBattleground(), node);
+            BannerInfo banner = FindBanner(bg, node);
             if (banner.object)
             {
                 bool friendly = IsFriendlyBanner(bot, banner.type);
@@ -452,27 +741,23 @@ namespace
                     return false;
                 }
 
-                // Explore navigated approach points first. Only after repeated
-                // failures may the existing logged direct fallback policy apply,
-                // and then it still targets a bounded approach point rather than
-                // the flag origin. Native spell validation remains authoritative.
-                bool normalOnly = state.approachFailures < 8;
                 if (MoveTo(bot->GetMapId(), state.approachX, state.approachY, state.approachZ,
-                    false, false, normalOnly))
+                    false, false, true))
                     return true;
                 if (getMSTimeDiff(state.approachStarted, now) >= 3000)
                 {
                     state.approachSet = false;
                     ++state.approachFailures;
-                    LogBanner(bot, state, now, normalOnly ? "approach-route-failed" : "approach-fallback-failed", banner.object);
+                    LogBanner(bot, state, now, "approach-route-failed", banner.object);
                 }
                 return true;
             }
             return MoveTo(bot->GetMapId(), BG_AB_NodePositions[node][0], BG_AB_NodePositions[node][1],
-                BG_AB_NodePositions[node][2]);
+                BG_AB_NodePositions[node][2], false, false, true);
         }
 
     private:
+        Battleground* bg;
         State& state;
         uint32 now;
     };
@@ -488,6 +773,7 @@ void BattlegroundTest::Update(uint32 diff)
         return;
     elapsed = 0;
     uint32 now = getMSTime();
+    uint32 repairBudget = MAX_QUEUE_READINESS_REPAIRS_PER_UPDATE;
     std::set<ObjectGuid> online;
     for (auto itr = sRandomPlayerbotMgr->GetPlayerBotsBegin(); itr != sRandomPlayerbotMgr->GetPlayerBotsEnd(); ++itr)
     {
@@ -509,12 +795,22 @@ void BattlegroundTest::Update(uint32 diff)
                 LogState(bot, state, "foreign-bg", now);
                 continue;
             }
+            if (!HasActiveBattlegroundMap(bot, bg))
+            {
+                LogState(bot, state, "bg-map-unavailable", now);
+                continue;
+            }
             if (state.instance != bg->GetInstanceID())
             {
                 state.instance = bg->GetInstanceID();
                 state.team = bot->GetBGTeam();
                 state.objectiveSet = false;
                 state.lastObjectiveReview = 0;
+                if (state.preparationInstance != bg->GetInstanceID())
+                {
+                    state.preparationSlot = std::numeric_limits<uint8>::max();
+                    state.preparationSet = false;
+                }
                 ResetApproach(state);
                 ++state.matches;
                 state.finished = false;
@@ -541,7 +837,7 @@ void BattlegroundTest::Update(uint32 diff)
             if (state.phase == "dead" && bot->IsAlive())
                 LogState(bot, state, "resurrected", now);
             if (bg->GetStatus() == STATUS_IN_PROGRESS && bot->IsAlive())
-                Objective(bot, state, now);
+                Objective(bot, bg, state, now);
             LogState(bot, state, phase, now);
             if (bg->GetStatus() == STATUS_IN_PROGRESS && RequestReady(state, now, 2000))
             {
@@ -556,7 +852,7 @@ void BattlegroundTest::Update(uint32 diff)
                         WorldPacket packet(CMSG_CANCEL_MOUNT_AURA);
                         bot->GetSession()->HandleCancelMountAuraOpcode(packet);
                     }
-                    UseBanner(bot, state, now);
+                    UseBanner(bot, bg, state, now);
                 }
                 MarkRequest(state, now);
             }
@@ -576,12 +872,31 @@ void BattlegroundTest::Update(uint32 diff)
                 LogState(bot, state, "queued", now);
             continue;
         }
-        LogState(bot, state, state.finished ? "rejoin" : "online", now);
-        // No level/faction/gear edits, group manipulation, deserter removal or
-        // forced teleport. The native individual join handler decides eligibility.
-        if (bot->IsAlive() && !bot->IsInCombat() && !bot->GetGroup()
-            && bot->GetBGAccessByLevel(BATTLEGROUND_AB) && RequestReady(state, now, 60000))
+        if (!CanPlayerLeaveStartingArea(bot))
         {
+            LogState(bot, state, "starting-area-locked", now);
+            continue;
+        }
+        LogState(bot, state, state.finished ? "rejoin" : "online", now);
+        // Give the bracket distributor one complete pass before this opt-in
+        // workload occupies every native queue. Subsequent requeues retain the
+        // normal per-bot request interval.
+        if (!state.initialQueueDelayStarted)
+        {
+            state.initialQueueDelayStarted = true;
+            MarkRequest(state, now);
+            continue;
+        }
+        // Resolve an already scheduled level change and repair missing equipment
+        // before joining. Faction, grouping, deserter and native eligibility rules
+        // remain owned by the normal individual queue handler.
+        if (bot->IsAlive() && !bot->IsInCombat() && !bot->GetGroup()
+            && RequestReady(state, now, 60000))
+        {
+            if (!RepairQueueReadiness(bot, state, now, repairBudget))
+                continue;
+            if (!bot->GetBGAccessByLevel(BATTLEGROUND_AB))
+                continue;
             Join(bot);
             MarkRequest(state, now);
             if (!bot->InBattlegroundQueue())
@@ -603,21 +918,27 @@ bool BattlegroundTest::DoNextAction(PlayerbotAI* ai)
     Battleground* bg = bot->GetBattleground();
     if (!bg || bg->GetTypeID() != BATTLEGROUND_AB || bg->IsRated())
         return false;
+    if (!HasActiveBattlegroundMap(bot, bg))
+    {
+        ai->SetNextCheckDelay(1000);
+        return true;
+    }
     if (bot->isAFK())
         bot->ToggleAFK();
     State& state = states[bot->GetGUID()];
     uint32 now = getMSTime();
-    state.instance = bg->GetInstanceID();
     state.team = bot->GetBGTeam();
-    Objective(bot, state, now);
     if (bg->GetStatus() != STATUS_IN_PROGRESS || !bot->IsAlive())
     {
-        if (bg->GetStatus() == STATUS_IN_PROGRESS && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)
+        if (bg->GetStatus() == STATUS_WAIT_JOIN && bot->IsAlive())
+            PreparationMovement(ai, bg, state).Execute(Event());
+        else if (bg->GetStatus() == STATUS_IN_PROGRESS && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)
             && !bot->HasAura(SPELL_WAITING_FOR_RESURRECT))
-            ObjectiveMovement(ai, state, now).Execute(Event());
+            ObjectiveMovement(ai, bg, state, now).Execute(Event());
         ai->SetNextCheckDelay(1000);
         return true; // No ordinary corpse revival/roaming during BG preparation.
     }
+    Objective(bot, bg, state, now);
     if (bot->IsInCombat() || ai->GetState() == BOT_STATE_COMBAT)
         return false; // Existing class combat/healing engine remains in charge.
     if (!bot->HasUnitState(UNIT_STATE_CASTING))
@@ -625,7 +946,7 @@ bool BattlegroundTest::DoNextAction(PlayerbotAI* ai)
         AttackEnemyPlayerAction attack(ai);
         if (attack.isUseful() && attack.Execute(Event()))
             return false;
-        ObjectiveMovement(ai, state, now).Execute(Event());
+        ObjectiveMovement(ai, bg, state, now).Execute(Event());
     }
     ai->SetNextCheckDelay(1000); // Recheck nearby enemies without waiting for a long route.
     return true;

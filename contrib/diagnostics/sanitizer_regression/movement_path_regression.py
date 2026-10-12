@@ -29,6 +29,16 @@ move = method("modules/mod_playerbots/src/strategy/actions/MovementActions.cpp",
               "bool MovementAction::MoveTo(uint32 mapId,")
 calculate = method("src/server/game/Movement/PathGenerator.cpp",
                    "bool PathGenerator::CalculatePath(")
+reach_combat = method("modules/mod_playerbots/src/strategy/actions/MovementActions.cpp",
+                      "bool MovementAction::ReachCombatTo(Unit* target, float distance)")
+reach_useful = method("modules/mod_playerbots/src/strategy/actions/ReachTargetActions.cpp",
+                      "bool ReachTargetAction::isUseful()")
+melee_reposition = method("src/server/game/Entities/Unit/Unit.cpp",
+                          "bool Unit::GetMeleeRepositionPoint(Unit const* attacker, Position& position) const")
+assert "GetMeleeRepositionPoint" in reach_combat
+assert "% 16U" in reach_combat
+assert "GetMeleeRepositionPoint" in reach_useful
+assert "!other->ToCreature()" not in melee_reposition
 
 source = r"""
 #include <algorithm>
@@ -160,6 +170,7 @@ struct MovementAction {
     Movement::PointsArray path = {{0,0,0}, {30,0,4}};
     float height = 4;
     bool allowed = true, duplicate = false, waiting = false;
+    bool lastGeneratePath = false, lastNormalOnly = false;
     bool MoveTo(uint32,float,float,float,bool,bool,bool,bool,MovementPriority,bool,bool);
     void UpdateMovementState() {}
     bool IsMovingAllowed(uint32,float,float,float) const { return allowed; }
@@ -168,7 +179,8 @@ struct MovementAction {
     bool CanStartGroundMovement(float,float,float) const { return true; }
     void TrackGroundMovement(float,float,float,bool,bool) {}
     float MoveDelay(float distance, bool) const { return distance / 10; }
-    Movement::PointsArray SearchForBestPath(float,float,float,bool&,bool) {
+    Movement::PointsArray SearchForBestPath(float,float,float,bool& generate,bool normal) {
+        lastGeneratePath=generate;lastNormalOnly=normal;
         return path;
     }
     void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool) {}
@@ -259,6 +271,15 @@ void movementTests() {
         MovementAction action{&bot};
         assert(moveBot(action) && bot.motion.generated);
         assert(same(bot.motion.destination, action.path.back()));
+    }
+    // Battleground bots always use normal ground navigation, even if a stale
+    // flying flag or an underwater state would normally select a direct spline.
+    {
+        Unit bot;bot.battleground=true;bot.flying=true;bot.water=true;bot.map.liquid=true;
+        MovementAction action{&bot};
+        assert(moveBot(action) && bot.motion.generated);
+        assert(action.lastGeneratePath && action.lastNormalOnly);
+        assert(same(bot.motion.destination,action.path.back()));
     }
     config.disableMoveSplinePath = 0;
     for (bool flying : {false,true}) {

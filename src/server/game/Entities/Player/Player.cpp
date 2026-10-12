@@ -16,6 +16,7 @@
 */
 
 #include "Player.h"
+#include "StartingArea.h"
 #include "RBAC.h"
 #include "GameClient.h"
 #include "AccountMgr.h"
@@ -1838,6 +1839,36 @@ uint8 Player::GetChatTag() const
     return tag;
 }
 
+bool CanPlayerLeaveStartingArea(Player const* player)
+{
+    if (player->IsGameMaster())
+        return true;
+
+    if (player->GetClass() == CLASS_DEATH_KNIGHT)
+        return player->GetMapId() != 609 || player->GetLevel() >= 80 || player->HasSpell(50977);
+
+    // A neutral Pandaren has no Alliance/Horde team yet and cannot enter a
+    // battleground regardless of level or current map.
+    if (player->GetRace() == RACE_PANDAREN_NEUTRAL)
+        return false;
+
+    if (player->GetLevel() >= 30)
+        return true;
+
+    switch (player->GetRace())
+    {
+        case RACE_GOBLIN:
+            return player->GetMapId() != 648 || player->IsQuestRewarded(25266) || player->GetQuestStatus(25266) == QUEST_STATUS_COMPLETE;
+        case RACE_WORGEN:
+            return player->GetMapId() != 654 || player->IsQuestRewarded(26706);
+        case RACE_PANDAREN_ALLIANCE:
+        case RACE_PANDAREN_HORDE:
+            return player->GetMapId() != 860 || player->IsQuestRewarded(31450) || player->GetQuestStatus(31450) == QUEST_STATUS_COMPLETE;
+        default:
+            return true;
+    }
+}
+
 bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options)
 {
     if (z > 500000.0f || z <= -200000.0f)
@@ -1969,16 +2000,11 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
     }
     else
     {
-        if (GetClass() == CLASS_DEATH_KNIGHT && GetMapId() == 609 && !IsGameMaster() && GetLevel() < 80 && !HasSpell(50977))
+        if (!CanPlayerLeaveStartingArea(this))
+        {
+            SendTransferAborted(mapid, TRANSFER_ABORT_UNIQUE_MESSAGE);
             return false;
-        if (GetRace() == RACE_GOBLIN && GetClass() != CLASS_DEATH_KNIGHT && GetMapId() == 648 && !IsGameMaster() && GetLevel() < 30 && !IsQuestRewarded(25266) && GetQuestStatus(25266) != QUEST_STATUS_COMPLETE)
-            return false;
-        if (GetRace() == RACE_WORGEN && GetClass() != CLASS_DEATH_KNIGHT && GetMapId() == 654 && !IsGameMaster() && GetLevel() < 30 && !IsQuestRewarded(26706))
-            return false;
-        if (GetRace() == RACE_PANDAREN_ALLIANCE && GetMapId() == 860 && !IsGameMaster() && GetLevel() < 30 && !IsQuestRewarded(31450) && GetQuestStatus(31450) != QUEST_STATUS_COMPLETE)
-            return false;
-        if (GetRace() == RACE_PANDAREN_HORDE && GetMapId() == 860 && !IsGameMaster() && GetLevel() < 30 && !IsQuestRewarded(31450) && GetQuestStatus(31450) != QUEST_STATUS_COMPLETE)
-            return false;
+        }
 
         // far teleport to another map
         Map* oldmap = IsInWorld() ? GetMap() : nullptr;

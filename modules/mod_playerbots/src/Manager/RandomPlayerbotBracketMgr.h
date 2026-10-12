@@ -30,10 +30,10 @@ public:
 private:
     uint32 _timer;
     const bool   _BotDistDebugMode = false;
-    static const uint8 NUM_RANGES = 11;
+    static const uint8 NUM_RANGES = 18;
     LevelRangeConfig _AllianceLevelRanges[NUM_RANGES];
     LevelRangeConfig _HordeLevelRanges[NUM_RANGES];
-    static const uint32 _BotDistCheckFrequency = 300; // in seconds
+    static const uint32 _BotDistCheckFrequency = 30; // in seconds
 };
 
 #define sBracketMgr RandomBotBacketManager::instance()

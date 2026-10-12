@@ -532,21 +532,24 @@ void Battleground::ProcessRessurect(uint32 diff)
     }
     else if (m_LastResurrectTime > 500)    // Resurrect players only half a second later, to see spirit heal effect on NPC
     {
-        for (std::vector<ObjectGuid>::const_iterator itr = m_ResurrectQueue.begin(); itr != m_ResurrectQueue.end(); ++itr)
+        // Own this wave locally before aura callbacks can remove players from
+        // the shared queues (for example when a player leaves the BG).
+        std::vector<ObjectGuid> resurrecting;
+        resurrecting.swap(m_ResurrectQueue);
+        for (ObjectGuid guid : resurrecting)
         {
-            Player* player = ObjectAccessor::FindPlayer(*itr);
+            Player* player = ObjectAccessor::FindPlayer(guid);
             if (!player)
                 continue;
             player->ResurrectPlayer(1.0f);
             // The wave already consumed m_ReviveQueue. Clear its waiting aura
             // too, or the next death still looks queued to the client/bot.
-            // Aura removal calls RemovePlayerFromResurrectQueue; no revive
-            // queue iterator is held here, and the visual delay stays intact.
+            // Aura removal calls RemovePlayerFromResurrectQueue; the shared
+            // queue is already empty and the visual delay stays intact.
             player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
             player->CastSpell(player, SPELL_SPIRIT_HEAL_MANA, true);
             player->SpawnCorpseBones(false);
         }
-        m_ResurrectQueue.clear();
     }
 }
 
@@ -1382,7 +1385,7 @@ void Battleground::RemovePlayerAtLeave(ObjectGuid guid, bool Transport, bool Sen
 
         player->RemoveAurasDueToSpell(SPELL_DAMPENING);
 
-        if (!player->IsAlive())                              // resurrect on exit
+        if (!player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST)) // resurrect on exit
         {
             player->ResurrectPlayer(1.0f);
             player->SpawnCorpseBones();
@@ -1572,6 +1575,12 @@ void Battleground::AddPlayer(Player* player)
     player->GetSession()->SendPacket(&data);
 
     player->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    player->RemoveAurasByType(SPELL_AURA_FLY);
+    player->RemoveAurasByType(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED);
+    if (player->CanFly())
+        player->SetCanFly(false);
+    if (player->IsGravityDisabled())
+        player->SetDisableGravity(false);
 
     // add arena specific auras
     if (IsArena())
@@ -1882,19 +1891,26 @@ void Battleground::AddPlayerToResurrectQueue(ObjectGuid npc_guid, ObjectGuid pla
 
 void Battleground::RemovePlayerFromResurrectQueue(ObjectGuid player_guid)
 {
+    bool removed = false;
     for (std::map<ObjectGuid, std::vector<ObjectGuid> >::iterator itr = m_ReviveQueue.begin(); itr != m_ReviveQueue.end(); ++itr)
     {
-        for (std::vector<ObjectGuid>::iterator itr2 = (itr->second).begin(); itr2 != (itr->second).end(); ++itr2)
-        {
-            if (*itr2 == player_guid)
-            {
-                (itr->second).erase(itr2);
-                if (Player* player = ObjectAccessor::FindPlayer(player_guid))
-                    player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
-                return;
-            }
-        }
+        std::vector<ObjectGuid>& queue = itr->second;
+        size_t oldSize = queue.size();
+        queue.erase(std::remove(queue.begin(), queue.end(), player_guid), queue.end());
+        removed |= queue.size() != oldSize;
     }
+
+    size_t oldSize = m_ResurrectQueue.size();
+    m_ResurrectQueue.erase(std::remove(m_ResurrectQueue.begin(), m_ResurrectQueue.end(), player_guid),
+        m_ResurrectQueue.end());
+    removed |= m_ResurrectQueue.size() != oldSize;
+
+    // Aura 2584 calls this method from its removal handler. Only initiate the
+    // aura removal when this invocation actually owned a queue entry, so the
+    // callback cannot recurse indefinitely.
+    if (removed)
+        if (Player* player = ObjectAccessor::FindPlayer(player_guid))
+            player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
 }
 
 void Battleground::RelocateDeadPlayers(ObjectGuid queueIndex)

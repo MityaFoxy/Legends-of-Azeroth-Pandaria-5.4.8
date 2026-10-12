@@ -26,9 +26,15 @@ bool ReachTargetAction::isUseful()
     }
     Unit* target = GetTarget();
     // float dis = distance + CONTACT_DISTANCE;
-    return target &&
-        !bot->IsWithinCombatRange(target, distance);  // sServerFacade->IsDistanceGreaterThan(AI_VALUE2(float,
-    // "distance", GetTargetName()), distance);
+    if (!target)
+        return false;
+    if (!bot->IsWithinCombatRange(target, distance))
+        return true;
+    if (distance > sPlayerbotAIConfig->meleeDistance + 0.1f)
+        return false;
+
+    Position reposition = bot->GetPosition();
+    return target->GetMeleeRepositionPoint(bot, reposition);
 }
 
 std::string const ReachTargetAction::GetTargetName() { return "current target"; }
