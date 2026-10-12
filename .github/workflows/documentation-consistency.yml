@@ -1,0 +1,47 @@
+name: Documentation consistency
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches-ignore: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-documentation:
+    name: Verify README and artwork match master
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: master
+          fetch-depth: 1
+
+      - name: Compare shared project files
+        shell: bash
+        run: |
+          files=(
+            README.md
+            docs/assets/pandaria-horizon.jpg
+            docs/assets/mop-panda-emblem.png
+          )
+
+          for file in "${files[@]}"; do
+            test -f "$file"
+            test -f "master/$file"
+            cmp --silent "$file" "master/$file" || {
+              echo "::error file=$file::$file must match master"
+              exit 1
+            }
+          done
