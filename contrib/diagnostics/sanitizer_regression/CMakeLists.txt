@@ -72,3 +72,5 @@ set_tests_properties(battleground_resurrection_regression PROPERTIES ENVIRONMENT
 add_test(NAME path_query_budget_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/path_query_budget_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(path_query_budget_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME configuration_contract_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_regression.py ${LOA_SOURCE_DIR})

@@ -585,7 +585,8 @@ void World::LoadConfigSettings(bool reload)
     if (reload)
         sMapMgr->SetGridCleanUpDelay(m_int_configs[CONFIG_INTERVAL_GRIDCLEAN]);
 
-    m_int_configs[CONFIG_INTERVAL_MAPUPDATE] = 200; // Don't mess around with mapupdate cause of the issues with the mmaps.
+    // Keep map updates at 200 ms: lower configurable intervals caused mmap instability in this fork.
+    m_int_configs[CONFIG_INTERVAL_MAPUPDATE] = 200;
 
     m_int_configs[CONFIG_INTERVAL_CHANGEWEATHER] = sConfigMgr->GetIntDefault("ChangeWeatherInterval", 10 * MINUTE * IN_MILLISECONDS);
 
@@ -1324,7 +1325,13 @@ void World::LoadConfigSettings(bool reload)
     TC_LOG_INFO("server.loading", "VMap support included. LineOfSight: {}, getHeight: {}, indoorCheck: {}", enableLOS, enableHeight, enableIndoor);
     TC_LOG_INFO("server.loading", "VMap data directory is: {}vmaps", m_dataPath.c_str());
 
-    m_int_configs[CONFIG_MAX_WHO] = 49;
+    int32 maxWhoListReturns = sConfigMgr->GetIntDefault("MaxWhoListReturns", 49);
+    if (maxWhoListReturns < 1 || maxWhoListReturns > 49)
+    {
+        TC_LOG_ERROR("server.loading", "MaxWhoListReturns ({}) must be in range 1..49. Using 49.", maxWhoListReturns);
+        maxWhoListReturns = 49;
+    }
+    m_int_configs[CONFIG_MAX_WHO] = uint32(maxWhoListReturns);
     m_int_configs[CONFIG_MAX_ICORE] = 49;
     m_bool_configs[CONFIG_START_ALL_SPELLS] = sConfigMgr->GetBoolDefault("PlayerStart.AllSpells", false);
     if (m_bool_configs[CONFIG_START_ALL_SPELLS])
@@ -1359,7 +1366,7 @@ void World::LoadConfigSettings(bool reload)
     m_bool_configs[CONFIG_CHATLOG_BGROUND] = sConfigMgr->GetBoolDefault("ChatLogs.BattleGround", false);
 
     // Warden
-    m_bool_configs[CONFIG_WARDEN_ENABLED]             =  true;
+    m_bool_configs[CONFIG_WARDEN_ENABLED]              = sConfigMgr->GetBoolDefault("Warden.Enabled", true);
     m_int_configs[CONFIG_WARDEN_NUM_MEM_CHECKS]        = sConfigMgr->GetIntDefault("Warden.NumMemChecks", 3);
     m_int_configs[CONFIG_WARDEN_NUM_OTHER_CHECKS]      = sConfigMgr->GetIntDefault("Warden.NumOtherChecks", 7);
     m_int_configs[CONFIG_WARDEN_CLIENT_BAN_DURATION]   = sConfigMgr->GetIntDefault("Warden.BanDuration", 86400);

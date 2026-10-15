@@ -357,7 +357,7 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recvData)
 
     std::shared_lock<std::shared_mutex> lock(*HashMapHolder<Player>::GetLock());
     HashMapHolder<Player>::MapType const& m = ObjectAccessor::GetPlayers();
-    for (auto itr = m.begin(); itr != m.end() && displaycount <= sWorld->getIntConfig(CONFIG_MAX_WHO); ++itr)
+    for (auto itr = m.begin(); itr != m.end() && displaycount < sWorld->getIntConfig(CONFIG_MAX_WHO); ++itr)
     {
         Player* target = itr->second;
         // player can see member of other team only if CONFIG_ALLOW_TWO_SIDE_WHO_LIST
