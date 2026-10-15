@@ -23,7 +23,7 @@
 #include <string>
 
 #include "AiFactory.h"
-#include "BattlegroundTestController.h"
+#include "ArathiBasinPlayerbot.h"
 #include "ChannelMgr.h"
 #include "CreatureAIImpl.h"
 #include "Engine.h"
@@ -887,7 +887,7 @@ void PlayerbotAI::DoNextAction(bool min)
         }
     }
 
-    if (BattlegroundTest::DoNextAction(this))
+    if (ArathiBasinPlayerbot::DoNextAction(this))
         return;
 
     bool minimal = !AllowActivity();

@@ -5,6 +5,7 @@
 #include <stack>
 
 #include "Chat.h"
+#include "ArathiBasinPlayerbot.h"
 #include "Event.h"
 #include "Item.h"
 #include "PlayerbotAIBase.h"
@@ -148,6 +149,7 @@ public:
     BotState GetState() { return _currentState; };
     const NewRpgInfo& GetRpgInfo() { return _rpgInfo; }
     float GetRange(std::string const type);
+    ArathiBasinPlayerbot::State& GetArathiBasinState() { return _arathiBasinState; }
 
     bool IsOpposing(Player* player);
     static bool IsOpposing(uint8 race1, uint8 race2);
@@ -229,6 +231,7 @@ protected:
     Engine* _engines[BOT_STATE_MAX];
     BotState _currentState;
     NewRpgInfo _rpgInfo;
+    ArathiBasinPlayerbot::State _arathiBasinState;
     //ChatHelper chatHelper;
     //std::list<ChatCommandHolder> chatCommands;
     //std::list<ChatQueuedReply> chatReplies;

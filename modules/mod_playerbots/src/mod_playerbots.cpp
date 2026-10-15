@@ -22,6 +22,7 @@
 #include "RandomItemManager.h"
 #include "RandomPlayerbotBracketMgr.h"
 #include "BattlegroundTestController.h"
+#include "ArathiBasinPlayerbot.h"
 
 #include "Authentication/AuthCrypt.h"
 #include "CharacterHandler.h"
@@ -146,6 +147,7 @@ public:
     {
         sRandomPlayerbotMgr->UpdateAI(diff);
         sRandomPlayerbotMgr->UpdateSessions();
+        ArathiBasinPlayerbot::Update(diff);
         BattlegroundTest::Update(diff);
     }
 

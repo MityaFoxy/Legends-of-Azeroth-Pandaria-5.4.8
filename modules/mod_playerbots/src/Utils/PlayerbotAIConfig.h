@@ -47,6 +47,10 @@ public:
     uint32 stuckTimeout = 4000;
     uint32 stuckMaxAttempts = 3;
     bool battlegroundTest = false;
+    bool randomBotJoinBG = true;
+    bool randomBotAutoJoinBG = false;
+    uint32 randomBotAutoJoinBGABCount = 1;
+    std::set<uint32> randomBotAutoJoinABBrackets;
     float sightDistance, spellDistance, reactDistance, grindDistance, lootDistance, shootDistance, fleeDistance,
         tooCloseDistance, meleeDistance, followDistance, whisperDistance, contactDistance, aoeRadius, rpgDistance,
         targetPosRecalcDistance, farDistance, healDistance, aggroDistance;

@@ -7,6 +7,7 @@
 
 #include "DatabaseEnvFwd.h"
 #include "Battleground.h"
+#include "Creature.h"
 #include "Event.h"
 #include "ObjectDefines.h"
 #include "ObjectGuid.h"
@@ -102,40 +103,39 @@ bool AutoReleaseSpiritAction::Execute(Event event)
     TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> releases spirit", bot->GetGUID().ToString().c_str(),
               bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
-    if (bot->InBattleground() && (time(NULL) - bg_gossip_time >= 15 || !bot->HasAura(SPELL_WAITING_FOR_RESURRECT)))
+    if (bot->InBattleground() && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)
+        && !bot->HasAura(SPELL_WAITING_FOR_RESURRECT))
     {
-        GuidVector npcs = AI_VALUE(GuidVector, "nearest npcs");
-        ObjectGuid guid;
-        Unit* unit;
-        for (GuidVector::iterator i = npcs.begin(); i != npcs.end(); i++)
+        uint32 entry = bot->GetBGTeam() == ALLIANCE
+            ? BG_CREATURE_ENTRY_A_SPIRITGUIDE : BG_CREATURE_ENTRY_H_SPIRITGUIDE;
+        Creature* guide = bot->FindNearestCreature(entry, sPlayerbotAIConfig->sightDistance, true);
+        if (!guide)
+            guide = bot->FindNearestCreature(entry, sPlayerbotAIConfig->sightDistance, false);
+        if (!guide || !guide->IsSpiritService())
+            return true;
+
+        if (!bot->IsWithinDistInMap(guide, INTERACTION_DISTANCE))
         {
-            unit = botAI->GetUnit(*i);
-            if (unit && unit->IsSpiritService())
+            if (!bot->isMoving())
             {
-                guid = unit->GetGUID();
-                break;
+                MotionMaster& mm = *bot->GetMotionMaster();
+                mm.Clear();
+                mm.MovePoint(guide->GetGUID().GetCounter(), guide->GetPositionX(),
+                    guide->GetPositionY(), guide->GetPositionZ(), true);
             }
         }
-        if (!guid)
+        else if (!botAI->IsRealPlayer())
         {
-            return true;
-        }
-        if (bot->GetDistance(unit) >= INTERACTION_DISTANCE)
-        {
-            // bot needs to actually click spirit-healer in BG to get res timer going
-            // and in IOC it's not within clicking range when they res in own base
-            MotionMaster& mm = *bot->GetMotionMaster();
-            mm.Clear();
-            mm.MovePoint(bot->GetMapId(), unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ(), true);
-        }
-        else if (!botAI->IsRealPlayer()) // below doesnt work properly on realplayer, but its also not needed
-        {
-            bg_gossip_time = time(NULL);
-            WorldPacket data(CMSG_GOSSIP_HELLO);
-            data << guid;
-            WorldPackets::NPC::GossipHello gossipHello(std::move(data));
-            gossipHello.Read();
-            bot->GetSession()->HandleGossipHelloOpcode(gossipHello);
+            if (bot->isMoving())
+                bot->StopMoving();
+            ObjectGuid guid = guide->GetGUID();
+            WorldPacket packet(CMSG_AREA_SPIRIT_HEALER_QUEUE);
+            for (uint8 index : {5, 4, 0, 2, 7, 1, 6, 3})
+                packet.WriteBit(guid[index]);
+            packet.FlushBits();
+            for (uint8 index : {1, 7, 6, 2, 4, 3, 0, 5})
+                packet.WriteByteSeq(guid[index]);
+            bot->GetSession()->HandleAreaSpiritHealerQueueOpcode(packet);
         }
     }
     botAI->SetNextCheckDelay(1000);

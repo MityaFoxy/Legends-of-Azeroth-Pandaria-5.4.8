@@ -6,8 +6,6 @@
 #ifndef _PLAYERBOT_RELEASESPIRITACTION_H
 #define _PLAYERBOT_RELEASESPIRITACTION_H
 
-#include <cstdint>
-
 #include "Action.h"
 #include "ReviveFromCorpseAction.h"
 
@@ -31,9 +29,6 @@ public:
 
     bool Execute(Event event) override;
     bool isUseful() override;
-
-private:
-    uint32_t bg_gossip_time = 0;
 };
 
 class RepopAction : public SpiritHealerAction

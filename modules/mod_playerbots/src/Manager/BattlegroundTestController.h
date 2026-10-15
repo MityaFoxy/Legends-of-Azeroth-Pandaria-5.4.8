@@ -6,8 +6,7 @@ class PlayerbotAI;
 
 namespace BattlegroundTest
 {
-    // World-thread only: native queue, invite, resurrection and banner cast.
+    // Optional diagnostic load lifecycle and telemetry. Objective behavior is
+    // provided by ArathiBasinPlayerbot and is not test-mode-specific.
     void Update(uint32 diff);
-    // Map-thread AI action: normal navigation/PvP AI, never global queue mutation.
-    bool DoNextAction(PlayerbotAI* ai);
 }

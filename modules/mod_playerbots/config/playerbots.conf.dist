@@ -518,7 +518,7 @@ AiPlayerbot.EnableRotation = 0
 AiPlayerbot.RotationPoolSize = 500
 
 AiPlayerbot.RandomBotMinLevel = 1
-AiPlayerbot.RandomBotMaxLevel = 80
+AiPlayerbot.RandomBotMaxLevel = 90
 
 # Sync max random bot level with max level of online players
 # Default: 0 (disabled)
@@ -768,10 +768,12 @@ AiPlayerbot.AutoTeleportForLevel = 1
 #
 #
 
-# Enable BG/Arena for random Bots
+# Allow random bots to participate in supported battleground automation.
+# Production automation currently supports Arathi Basin only.
 AiPlayerbot.RandomBotJoinBG = 1
 
-# Enable Auto join BG - have bots start BG's and Arenas on their own
+# Let autonomous random bots queue for supported battlegrounds on their own.
+# The diagnostic AiPlayerbot.BattlegroundTest workload is independent of this switch.
 AiPlayerbot.RandomBotAutoJoinBG = 0
 
 # Explicit diagnostic workload (OFF by default), independent of the legacy BG keys.
@@ -783,41 +785,31 @@ AiPlayerbot.RandomBotAutoJoinBG = 0
 # State transitions and 60-second snapshots: logger playerbots.bgtest (INFO).
 AiPlayerbot.BattlegroundTest = 0
 
-# Required Configuration for RandomBotAutoJoinBG
+# Required Arathi Basin configuration for RandomBotAutoJoinBG
 #
 # Known issue: When enabling a lot of brackats in combination with multiple instances,
 #              can lead to more instances created by bots than intended (over-queuing).
 #
-# This section controls the level brackets and 
-# automatic bot participation in battlegrounds and arenas.
+# Arathi Basin uses its map-specific PvPDifficulty bracket IDs from the client DBC.
+# Multiple bracket IDs can be specified as a comma-separated list.
+# For the shipped 5.4.8 DBC: 0 = 10-14, 1 = 15-19, then five-level
+# brackets through 15 = 85-89; 16 = level 90.
 #
-# Brackets:
-# - Specify the level ranges for bots to auto-join:
-#   - Warsong Gulch (WS): 0 = 10-19, 1 = 20-29, 2 = 30-39, ..., 7 = 80 (default: 7)
-#   - Rated Arena: 0 = 10-14, 1 = 15-19, ..., 14 = 80-84 (default: 14)
-# - Multiple brackets can be specified as a comma-separated list (e.g., "0,2,5").
-#
-# Counts:
-# - Specify the number of Battlegrounds to auto-fill per bracket.
-# - For battlegrounds, Count is the number of bots per bracket. For example:
-#   - Warsong Gulch Count = 1 adds 20 bots (10 per team).
-# - Ensure there are enough eligible bots to meet the specified counts.
-#
-# Arena Considerations:
-# - Rated Arena brackets default to level 80-84 (bracket 14).
-# - Custom code changes are required for lower-level arena brackets to function properly.
+# RandomBotAutoJoinBGABCount is the number of complete AB instances to fill per
+# configured bracket. Count 1 targets one native max-size team on each faction.
+# Native queue eligibility, capacity and deserter rules remain authoritative.
 #
 # Battleground bracket range possibilities:
 # AiPlayerbot.RandomBotAutoJoinICBrackets = 0,1
 # AiPlayerbot.RandomBotAutoJoinEYBrackets = 0,1,2
 # AiPlayerbot.RandomBotAutoJoinAVBrackets = 0,1,2,3
-# AiPlayerbot.RandomBotAutoJoinABBrackets = 0,1,2,3,4,5,6
+# AiPlayerbot.RandomBotAutoJoinABBrackets = 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 # AiPlayerbot.RandomBotAutoJoinWSBrackets = 0,1,2,3,4,5,6,7
 
 AiPlayerbot.RandomBotAutoJoinICBrackets = 1
 AiPlayerbot.RandomBotAutoJoinEYBrackets = 2
 AiPlayerbot.RandomBotAutoJoinAVBrackets = 3
-AiPlayerbot.RandomBotAutoJoinABBrackets = 6
+AiPlayerbot.RandomBotAutoJoinABBrackets = 16
 AiPlayerbot.RandomBotAutoJoinWSBrackets = 7
 
 # Battlegrounds count (per bracket!):
