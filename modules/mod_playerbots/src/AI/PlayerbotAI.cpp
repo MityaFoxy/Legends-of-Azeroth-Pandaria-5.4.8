@@ -242,7 +242,7 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 
     AllowActivity();
 
-    if (_aiObjectContext && _aiObjectContext->GetValue<LastMovement&>("last movement")->Get().groundMovement.active)
+    if (_aiObjectContext && !IsRealPlayer())
         MovementAction(this, "stuck recovery").CheckStuck(elapsed);
 
     if (!CanUpdateAI())
@@ -2234,6 +2234,8 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 
     Pet* pet = bot->GetPet();
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+    if (!spellInfo)
+        return false;
     if (pet && pet->HasSpell(spellId))
     {
         bool autocast = false;
@@ -2343,7 +2345,9 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     }
 
     spell->prepare(&targets);
-    SpellCastResult result = spell->CheckCast(false);
+    // A second, non-strict check skips instant-spell range and can report OK
+    // after prepare already rejected the cast. That starves movement actions.
+    SpellCastResult result = spell->GetCastResult();
     if (result != SPELL_CAST_OK)
     {
         // if (!sPlayerbotAIConfig->logInGroupOnly || (bot->GetGroup() && HasRealPlayerMaster())) {
@@ -2375,6 +2379,8 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
 
     Pet* pet = bot->GetPet();
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+    if (!spellInfo)
+        return false;
     if (pet && pet->HasSpell(spellId))
     {
         bool autocast = false;
@@ -2441,22 +2447,24 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
     }
     else
     {
+        delete spell;
         return false;
     }
 
     if (spellInfo->Effects[0].Effect == SPELL_EFFECT_OPEN_LOCK || spellInfo->Effects[0].Effect == SPELL_EFFECT_SKINNING)
     {
+        delete spell;
         return false;
     }
 
     spell->prepare(&targets);
-
-    if (bot->isMoving() && spell->GetCastTime())
+    // prepare transfers ownership to SpellEvent, including failed casts.
+    // Read its result; cancelling/deleting it here leaves a dangling event.
+    SpellCastResult result = spell->GetCastResult();
+    if (result != SPELL_CAST_OK)
     {
-        // bot->StopMoving();
-        SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
-        spell->cancel();
-        delete spell;
+        if (result == SPELL_FAILED_MOVING)
+            SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
         return false;
     }
 

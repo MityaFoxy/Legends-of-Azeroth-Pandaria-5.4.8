@@ -74,6 +74,9 @@ class TC_GAME_API PathGenerator
         void SetUseStraightPath(bool useStraightPath) { _useStraightPath = useStraightPath; }
         void SetPathLengthLimit(float distance) { _pointPathLimit = std::min<uint32>(uint32(distance/SMOOTH_PATH_STEP_SIZE), MAX_POINT_PATH_LENGTH); }
         void SetUseRaycast(bool useRaycast) { _useRaycast = useRaycast; }
+        void SetUseWaterShortcut(bool enabled) { _useWaterShortcut = enabled; }
+        // Relative travel time, normalized to keep Detour's distance heuristic admissible.
+        void SetTravelSpeeds(float runSpeed, float swimSpeed);
 
         // result getters
         G3D::Vector3 const& GetStartPosition() const { return _startPosition; }
@@ -138,6 +141,7 @@ class TC_GAME_API PathGenerator
         bool _forceDestination; // when set, we will always arrive at given point
         uint32 _pointPathLimit; // limit point path size; min(this, MAX_POINT_PATH_LENGTH)
         bool _useRaycast;       // use raycast if true for a straight line path
+        bool _useWaterShortcut = true;
 
         G3D::Vector3 _startPosition;        // {x, y, z} of current location
         G3D::Vector3 _endPosition;          // {x, y, z} of the destination

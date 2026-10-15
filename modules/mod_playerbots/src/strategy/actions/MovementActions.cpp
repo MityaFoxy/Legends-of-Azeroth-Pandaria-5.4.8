@@ -146,10 +146,6 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
         return false;
 
     float const requestedDistance = distance;
-    float bx = bot->GetPositionX();
-    float by = bot->GetPositionY();
-    float bz = bot->GetPositionZ();
-
     float tx = target->GetPositionX();
     float ty = target->GetPositionY();
     float tz = target->GetPositionZ();
@@ -159,7 +155,7 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     bool const melee = requestedDistance <= sPlayerbotAIConfig->meleeDistance + 0.1f;
     Position reposition = bot->GetPosition();
     bool const needsReposition = melee && target->GetMeleeRepositionPoint(bot, reposition);
-    if (bot->GetExactDist(tx, ty, tz) <= distance && !needsReposition)
+    if (bot->GetExactDist(tx, ty, tz) <= distance && !needsReposition && bot->IsWithinLOSInMap(target))
         return false;
 
     float const disToGo = bot->GetExactDist(tx, ty, tz) - distance;
@@ -183,11 +179,12 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
         contactPoint = true;
     }
 
-    PathGenerator path(bot);
-    path.CalculatePath(tx, ty, tz, false);
-    PathType type = path.GetPathType();
-    int typeOk = PATHFIND_NORMAL | PATHFIND_INCOMPLETE | PATHFIND_SHORTCUT;
-    if (!(type & typeOk))
+    // Combat must use the same checked ground/water corridors as objective
+    // movement. The legacy preliminary path could select a river-bottom point
+    // before MoveTo ever reached that planner, leaving the bot unable to chase.
+    bool usingNavigation = true;
+    Movement::PointsArray path = SearchForBestPath(tx, ty, tz, usingNavigation, true);
+    if (path.size() < 2)
         return false;
     float shortenTo = distance;
 
@@ -195,9 +192,25 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     if (!contactPoint && disToGo >= 10.0f)
         shortenTo = disToGo / 2 + distance;
 
+    G3D::Vector3 endPos = path.back();
     if (!contactPoint)
-        path.ShortenPathUntilDist(G3D::Vector3(tx, ty, tz), shortenTo);
-    G3D::Vector3 endPos = path.GetPath().back();
+    {
+        G3D::Vector3 targetPosition(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+        for (size_t i = 1; i < path.size(); ++i)
+        {
+            G3D::Vector3 const& point = path[i];
+            // Stop at a reachable path vertex with sight of the opponent.
+            // Range alone can leave a caster firing into a wall indefinitely.
+            if ((point - targetPosition).length() <= shortenTo &&
+                bot->GetMap()->isInLineOfSight(point.x, point.y, point.z + bot->GetCollisionHeight(),
+                    targetPosition.x, targetPosition.y, targetPosition.z + target->GetCollisionHeight(),
+                    bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing))
+            {
+                endPos = point;
+                break;
+            }
+        }
+    }
     return MoveTo(target->GetMapId(), endPos.x, endPos.y, endPos.z, false, false, false, false,
         MovementPriority::MOVEMENT_COMBAT, true);
 }
@@ -287,6 +300,7 @@ bool MovementAction::MoveTo(WorldObject* target, float distance, MovementPriorit
 bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react, bool normal_only,
     bool exact_waypoint, MovementPriority priority, bool lessDelay, bool backwards)
 {
+    lastMoveFailure = MoveFailure::None;
     UpdateMovementState();
     // Never turn an invalid destination into an unchecked fallback movement.
     if (mapId != bot->GetMapId() || !Trinity::IsValidMapCoord(x, y, z))
@@ -298,9 +312,11 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     {
         return false;
     }
-    if (!bot->GetVehicle() && !bot->GetTransport() && !bot->IsFlying() && !bot->IsInWater() &&
-        !bot->IsUnderWater() && !CanStartGroundMovement(x, y, z))
+    if (!bot->GetVehicle() && !bot->GetTransport() && !bot->IsFlying() && !CanStartGroundMovement(x, y, z))
+    {
+        lastMoveFailure = MoveFailure::RecoveryExhausted;
         return false;
+    }
     if (IsDuplicateMove(mapId, x, y, z))
     {
         return false;
@@ -387,6 +403,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         Movement::PointsArray path = SearchForBestPath(x, y, z, generatePath, normal_only);
         if (path.size() < 2)
         {
+            lastMoveFailure = MoveFailure::Route;
             return false;
         }
         // Partial paths may stop before the requested destination. Move to
@@ -785,11 +802,17 @@ void MovementAction::CheckStuck(uint32 elapsed)
 {
     LastMovement& last = AI_VALUE(LastMovement&, "last movement");
     GroundMovementState& state = last.groundMovement;
+    MotionMaster& mm = *bot->GetMotionMaster();
+    bool const swimming = bot->IsInWater() || bot->IsUnderWater();
+    // Native chase and idle bots need the same water mode refresh as issued
+    // point routes. A transition must not wait for another AI MoveTo call.
+    if (!bot->GetVehicle() && !bot->GetTransport() && !bot->IsFlying()
+        && !bot->IsBeingTeleported() && bot->IsAlive() && bot->SetSwim(swimming))
+        mm.PropagateSpeedChange();
     if (!state.active)
         return;
-    MotionMaster& mm = *bot->GetMotionMaster();
     if (state.mapId != bot->GetMapId() || state.instanceId != bot->GetInstanceId() ||
-        bot->GetVehicle() || bot->GetTransport() || bot->IsFlying() || bot->IsInWater() || bot->IsUnderWater() ||
+        bot->GetVehicle() || bot->GetTransport() || bot->IsFlying() ||
         bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||
         mm.GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
     {
@@ -797,7 +820,8 @@ void MovementAction::CheckStuck(uint32 elapsed)
         return;
     }
     G3D::Vector3 const position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
-    float const speed = bot->GetSpeed(state.backwards ? MOVE_RUN_BACK : MOVE_RUN);
+    float const speed = bot->GetSpeed(swimming ? (state.backwards ? MOVE_SWIM_BACK : MOVE_SWIM)
+        : (state.backwards ? MOVE_RUN_BACK : MOVE_RUN));
     if (!IsMovingAllowed() || bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED) ||
         bot->IsNonMeleeSpellCasted(false) || bot->IsSitState() || speed <= 0.01f)
     {
@@ -889,6 +913,61 @@ void MovementAction::CheckStuck(uint32 elapsed)
     LogStuckResult("stuck-recovery-started", state.attempts, false);
 }
 
+bool MovementAction::ValidateWaterConnection(G3D::Vector3 const& from, G3D::Vector3 const& to)
+{
+    float distance = (to - from).length();
+    if (distance > 16.0f)
+        return false;
+    uint32 steps = std::max<uint32>(1, uint32(std::ceil(distance / 0.5f)));
+    for (uint32 step = 0; step <= steps; ++step)
+    {
+        G3D::Vector3 point = from + (to - from) * (float(step) / float(steps));
+        LiquidData liquid{};
+        if (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), point.x, point.y, point.z,
+            MAP_ALL_LIQUIDS, &liquid, bot->GetCollisionHeight()) == LIQUID_MAP_NO_WATER ||
+            !std::isfinite(liquid.level) || liquid.level <= INVALID_HEIGHT ||
+            liquid.level <= liquid.depth_level || point.z < liquid.depth_level - 0.05f ||
+            point.z > liquid.level + 0.75f)
+            return false;
+    }
+    // The voxel water surface may lie slightly above the liquid plane. Every
+    // intermediate sample must still be over water and above its bottom, and
+    // the swim segment must not pass through a bank, wall or underwater roof.
+    float eye = bot->GetCollisionHeight() * 0.5f;
+    return bot->GetMap()->isInLineOfSight(from.x, from.y, from.z + eye,
+        to.x, to.y, to.z + eye, bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing);
+}
+
+bool MovementAction::ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vector3 const& to)
+{
+    // Detour's voxel surface and the exact terrain surface can differ near
+    // polygon edges. Connect only a short, supported, unobstructed segment.
+    // This must not accept a shortcut over a cliff, hole, roof or dry bank.
+    float distance = (to - from).length();
+    if (distance > 3.0f)
+        return false;
+    float eye = bot->GetCollisionHeight() * 0.5f;
+    if (!bot->GetMap()->isInLineOfSight(from.x, from.y, from.z + eye,
+        to.x, to.y, to.z + eye, bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing))
+        return false;
+    uint32 steps = std::max<uint32>(1, uint32(std::ceil(distance / 0.25f)));
+    for (uint32 step = 0; step <= steps; ++step)
+    {
+        G3D::Vector3 point = from + (to - from) * (float(step) / float(steps));
+        LiquidData liquid{};
+        if (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), point.x, point.y, point.z,
+            MAP_ALL_LIQUIDS, &liquid, bot->GetCollisionHeight()) != LIQUID_MAP_NO_WATER
+            && std::isfinite(liquid.level) && liquid.level > liquid.depth_level
+            && point.z >= liquid.depth_level - 0.05f && point.z <= liquid.level + 0.75f)
+            continue; // A short shore transition may become supported by water.
+        float ground = bot->GetMapHeight(point.x, point.y, point.z + 2.0f, true, 4.0f);
+        if (!std::isfinite(ground) || ground <= INVALID_HEIGHT
+            || std::fabs(point.z - ground) > 2.0f)
+            return false;
+    }
+    return true;
+}
+
 Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float z, bool& usingNavigation, bool normalOnly, uint32 recoveryAttempt)
 {
     usingNavigation = true;
@@ -903,12 +982,57 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     if (distance <= 0.01f)
         return {};
 
+    auto retainReplanOverlap = [](Movement::PointsArray& points)
+    {
+        // Restart before, rather than exactly on, a point-buffer boundary.
+        // Nearest-poly selection at the last smoothed point can choose an
+        // adjacent isolated layer even though the original corridor crossed
+        // it. Keeping a short validated overlap lets the next spline carry the
+        // bot through that boundary before another independent query starts.
+        constexpr float ReplanOverlap = 8.0f;
+        if (points.size() <= 2)
+            return;
+        float overlap = 0.0f;
+        size_t end = points.size() - 1;
+        while (end > 1 && overlap < ReplanOverlap)
+        {
+            overlap += (points[end] - points[end - 1]).length();
+            --end;
+        }
+        points.resize(end + 1);
+    };
+
+    // Nearby underwater gameplay is three-dimensional. A verified swim inside
+    // the liquid volume need not climb to the surface just to reach its target.
+    if (!recoveryAttempt && bot->IsUnderWater() && (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), x, y, z,
+        MAP_ALL_LIQUIDS, nullptr, bot->GetCollisionHeight()) & LIQUID_MAP_UNDER_WATER)
+        && ValidateWaterConnection(start, destination))
+        return {start, destination};
+
     uint32 const limit = std::clamp<uint32>(sPlayerbotAIConfig->navigationMaxAttempts, 1, 10);
     uint32 attempts = 0;
     uint32 lastType = PATHFIND_BLANK;
     char const* reason = "no-path";
     bool unavailable = false;
     bool startBridge = false;
+    bool avoidLiquids = false;
+    bool hasObstruction = false;
+    G3D::Vector3 obstruction;
+    NavigationDetourState& detour = AI_VALUE(LastMovement&, "last movement").navigationDetour;
+    uint32 const now = getMSTime();
+    if (detour.mapId != bot->GetMapId() || detour.instanceId != bot->GetInstanceId()
+        || (detour.goal - destination).length() > 10.0f || getMSTimeDiff(detour.updatedAt, now) > 60000)
+    {
+        detour = {};
+        detour.mapId = bot->GetMapId();
+        detour.instanceId = bot->GetInstanceId();
+        detour.goal = destination;
+    }
+    auto rememberContinuation = [&](Movement::PointsArray const& points)
+    {
+        detour.continuation.assign(points.begin(), points.end());
+        detour.updatedAt = now;
+    };
     auto query = [&](G3D::Vector3 const& from, G3D::Vector3 const& to, bool completeOnly) -> Movement::PointsArray
     {
         if (attempts >= limit)
@@ -916,23 +1040,33 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         ++attempts;
         // Private bounded query: never resize/mutate the shared NPC query.
         PathGenerator gen(bot, 4096);
+        // A deeply submerged start still needs a corridor to the shore.
+        // Connect to its water polygon with a checked swimming segment below,
+        // instead of letting the core replace the whole route with a shortcut.
+        gen.SetUseWaterShortcut(false);
+        gen.SetTravelSpeeds(bot->GetSpeed(MOVE_RUN), avoidLiquids ? 0.01f : bot->GetSpeed(MOVE_SWIM));
         uint32 const queryStart = getMSTime();
         bool const calculated = gen.CalculatePath(to.x, to.y, to.z, false, false, false, &from);
         PathType const type = gen.GetPathType();
         lastType = type;
         reason = gen.GetPathFailureReason();
+        if (std::string(reason) == "unsafe-surface-normalization" || std::string(reason) == "smoothing-loop")
+            avoidLiquids = true;
         // No amount of waypoint searching can repair a missing map or query.
         unavailable = !gen.HasNavigationData() || (type & PATHFIND_NOT_USING_PATH);
         Movement::PointsArray points = gen.GetPath();
-        startBridge = false;
-        auto inLiquid = [this](G3D::Vector3 const& point)
+        if (std::string(reason) == "path-body-obstructed" && !points.empty())
         {
-            return bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), point.x, point.y, point.z,
-                MAP_ALL_LIQUIDS, nullptr, bot->GetCollisionHeight()) & MAP_LIQUID_STATUS_IN_CONTACT;
-        };
-        if ((type & PATHFIND_FARFROMPOLY_START) && !points.empty()
-            && (points.front() - from).length() <= 16.0f && inLiquid(from) && inLiquid(points.front()))
-            startBridge = true;
+            obstruction = points.back();
+            hasObstruction = true;
+            // A water corridor can approach a bridge/bank from below even
+            // though a land corridor is connected. Retry with land preference.
+            if (bot->IsInWater() || bot->IsUnderWater())
+                avoidLiquids = true;
+        }
+        startBridge = false;
+        if (!points.empty() && ((type & PATHFIND_FARFROMPOLY_START) || (points.front() - from).length() > 1.0f))
+            startBridge = ValidateWaterConnection(from, points.front());
         TC_LOG_DEBUG("playerbots.navigation", "bot={} map={} instance={} attempt={}/{} from=({},{},{}) to=({},{},{}) calculated={} pathType={} queryStatus={} queryNodes={} reason={} points={} startOffset={} endOffset={} progress={} queryMs={}",
             bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), attempts, limit,
             from.x, from.y, from.z, to.x, to.y, to.z, calculated, uint32(type), gen.GetPathQueryStatus(), gen.GetPathQueryNodeLimit(), reason, points.size(),
@@ -949,10 +1083,14 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             reason = "invalid-or-empty-path";
             return {};
         }
-        if ((points.front() - from).length() > 1.0f && !startBridge)
+        if ((points.front() - from).length() > 0.1f && !startBridge)
         {
-            reason = "path-start-mismatch";
-            return {};
+            if (!ValidateGroundConnection(from, points.front()))
+            {
+                reason = "path-start-mismatch";
+                return {};
+            }
+            points.insert(points.begin(), from);
         }
         if ((points.front() - from).length() > 0.1f && startBridge)
             points.insert(points.begin(), from);
@@ -975,6 +1113,8 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     };
 
     Movement::PointsArray partial = query(start, destination, false);
+    if (partial.empty() && avoidLiquids && attempts < limit)
+        partial = query(start, destination, false);
     uint32 const primaryType = lastType;
     bool const primaryStartBridge = startBridge;
     if (!partial.empty() && (partial.back() - destination).length() > 1.0f && std::string(reason) == "none")
@@ -984,48 +1124,214 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         && (!(primaryType & PATHFIND_INCOMPLETE) || primaryStartBridge)
         && (partial.back() - destination).length() <= 1.0f;
     if (!recoveryAttempt && primaryComplete)
+    {
+        detour.continuation.clear();
         return partial;
+    }
+    if (!recoveryAttempt && !partial.empty() && (primaryType & PATHFIND_SHORT))
+    {
+        retainReplanOverlap(partial);
+        rememberContinuation(partial);
+        LogNavigationResult("partial-route", primaryReason, primaryType, attempts, x, y, z, false);
+        return partial;
+    }
+
+    // A validated partial spline can finish beside an overlapping or isolated
+    // navmesh layer. If the next query cannot safely connect its actual start
+    // to Detour's projected start, walk backwards over the remembered spline
+    // and retry from an earlier point. This is not a direct fallback: every
+    // retreat segment came from the preceding validated route and is checked
+    // again, while every forward continuation is a normal bounded mmap query.
+    if (!recoveryAttempt && partial.empty() && std::string(primaryReason) == "path-start-mismatch"
+        && detour.continuation.size() >= 2 && (detour.continuation.back() - start).length() <= 1.5f)
+    {
+        Movement::PointsArray retreat{start};
+        float retreatDistance = 0.0f;
+        for (size_t index = detour.continuation.size() - 1; index > 0 && attempts < limit; --index)
+        {
+            G3D::Vector3 const& candidate = detour.continuation[index - 1];
+            float const step = (retreat.back() - candidate).length();
+            if (step <= 0.01f)
+                continue;
+            if (!ValidateGroundConnection(retreat.back(), candidate))
+                break;
+            retreat.push_back(candidate);
+            retreatDistance += step;
+            if (retreatDistance < 4.0f)
+                continue;
+
+            Movement::PointsArray continuation = query(candidate, destination, false);
+            if (continuation.empty())
+                continue;
+            bool const continuationComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
+                && (!(lastType & PATHFIND_INCOMPLETE) || startBridge)
+                && (continuation.back() - destination).length() <= 1.0f;
+            if (!continuationComplete && !(lastType & PATHFIND_SHORT))
+                continue;
+            if ((retreat.back() - continuation.front()).length() > 0.1f)
+                continue;
+
+            retreat.insert(retreat.end(), continuation.begin() + 1, continuation.end());
+            bool const partialContinuation = !continuationComplete;
+            bool const truncated = retreat.size() > MAX_POINT_PATH_LENGTH;
+            if (truncated)
+                retreat.resize(MAX_POINT_PATH_LENGTH);
+            if (truncated || partialContinuation)
+                retainReplanOverlap(retreat);
+            if (truncated || partialContinuation)
+                rememberContinuation(retreat);
+            else
+                detour.continuation.clear();
+            LogNavigationResult(partialContinuation ? "partial-continuation-retreat-route"
+                : "continuation-retreat-route", primaryReason, primaryType, attempts, x, y, z, false);
+            return retreat;
+        }
+    }
 
     // Detour already searches connected polygons. These are distinct two-leg
     // searches, useful for local mesh/smoothing failures or query-node limits,
     // not repeated calls with identical start/end coordinates.
-    float const dx = x - start.x;
-    float const dy = y - start.y;
+    // A blocked segment can be far ahead of the starting point. Place the
+    // alternatives beside that obstruction, not beside the already safe start.
+    bool const aroundObstruction = hasObstruction;
+    G3D::Vector3 const origin = aroundObstruction ? obstruction : start;
+    Movement::PointsArray bypass;
+    float bypassRemaining = distance + 16.0f;
+    float const dx = x - origin.x;
+    float const dy = y - origin.y;
     float const horizontal = std::sqrt(dx * dx + dy * dy);
     if (!unavailable && horizontal > 0.1f && !bot->GetTransport())
     {
-        float const forward = std::min(horizontal * 0.5f, 16.0f);
-        for (uint32 candidate = 0; candidate < limit && attempts + 2 <= limit; ++candidate)
+        for (uint32 candidate = 0; candidate < limit && attempts < limit; ++candidate)
         {
-            // Each invocation owns a disjoint candidate block, including the
-            // initial search. Failed first legs/invalid heights must not cause
-            // the next recovery attempt to repeat previously tested waypoints.
-            uint32 const variant = candidate + recoveryAttempt * limit;
-            float const side = (variant % 2 ? -1.0f : 1.0f) * (8.0f + 8.0f * (variant / 2));
-            float const wx = start.x + (dx * forward - dy * side) / horizontal;
-            float const wy = start.y + (dy * forward + dx * side) / horizontal;
-            float const wz = bot->GetMapHeight(wx, wy, start.z + 8.0f);
-            if (wz == INVALID_HEIGHT || !Trinity::IsValidMapCoord(wx, wy, wz) || std::fabs(wz - start.z) > 8.0f)
+            // Planning can fail before a movement generator is launched, so
+            // the running-spline recovery counter cannot advance this search.
+            // Rotate bounded lateral candidates across those failed calls too.
+            uint32 const variant = recoveryAttempt ? candidate + recoveryAttempt * limit
+                : (candidate + detour.nextVariant) % 32;
+            uint32 const lateralVariant = recoveryAttempt ? variant : variant % 16;
+            float forward = aroundObstruction ? -2.0f : std::min(horizontal * 0.5f, 16.0f);
+            float side = (lateralVariant % 2 ? -1.0f : 1.0f) * (8.0f + 8.0f * (lateralVariant / 2));
+            if (aroundObstruction && !recoveryAttempt)
+            {
+                // A shallow pool or concave bank can require leaving in the
+                // opposite direction first. Lateral-only candidates cannot
+                // find that exit, regardless of how far sideways they search.
+                static constexpr float forwardFactors[] = {0, 0, -0.707107f, -0.707107f, 0.707107f, 0.707107f, -1, 1};
+                static constexpr float sideFactors[] = {1, -1, 0.707107f, -0.707107f, 0.707107f, -0.707107f, 0, 0};
+                float const radius = 8.0f * float(1u << (variant / 8));
+                forward += forwardFactors[variant % 8] * radius;
+                side = sideFactors[variant % 8] * radius;
+            }
+            float const wx = origin.x + (dx * forward - dy * side) / horizontal;
+            float const wy = origin.y + (dy * forward + dx * side) / horizontal;
+            float wz = bot->GetMapHeight(wx, wy, origin.z + (aroundObstruction ? 2.0f : 8.0f),
+                true, aroundObstruction ? 4.0f : 50.0f);
+            if (bot->CanSwim())
+            {
+                LiquidData liquid{};
+                if (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), wx, wy, wz,
+                    MAP_ALL_LIQUIDS, &liquid, bot->GetCollisionHeight()) != LIQUID_MAP_NO_WATER
+                    && std::isfinite(liquid.level) && liquid.level > liquid.depth_level)
+                {
+                    // Detour's liquid corridor is at the water plane. Asking
+                    // for the river bottom marks a valid bypass FARFROMPOLY_END.
+                    // The path normalizer supplies the swimmer's feet height.
+                    wz = std::max(wz, liquid.level);
+                }
+            }
+            if (wz == INVALID_HEIGHT || !Trinity::IsValidMapCoord(wx, wy, wz) || std::fabs(wz - origin.z) > 8.0f)
                 continue;
-            Movement::PointsArray first = query(start, {wx, wy, wz}, true);
+            Movement::PointsArray first = query(start, {wx, wy, wz}, false);
             if (first.empty())
                 continue;
+            if (aroundObstruction && (lastType & PATHFIND_SHORT))
+            {
+                // A long, collision-free leg toward the bypass may itself
+                // fill the point buffer. Replan from its validated endpoint.
+                retainReplanOverlap(first);
+                rememberContinuation(first);
+                LogNavigationResult("partial-alternative-route", reason, lastType, attempts, x, y, z, false);
+                return first;
+            }
+            G3D::Vector3 const waypoint(wx, wy, wz);
+            // A waypoint selected from ground height can be below the water
+            // surface corridor. Accept that vertical adjustment only inside
+            // a continuous, unobstructed liquid volume at the same XY.
+            bool const reachedWaypoint = (first.back() - waypoint).length() <= 1.0f
+                || (std::hypot(first.back().x - wx, first.back().y - wy) <= 1.0f
+                    && ValidateWaterConnection(waypoint, first.back()));
+            if ((lastType & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
+                || !reachedWaypoint)
+                continue;
+            // Several separate obstacles may lie on the remaining corridor.
+            // Retain a fully validated bypass leg while looking for a complete
+            // alternative. It must end clear of the original obstruction and
+            // away from recent origins. A bounded retreat is necessary when
+            // the first part of a real obstacle bypass leads away from the goal.
+            float const remaining = (first.back() - destination).length();
+            if (aroundObstruction && remaining < bypassRemaining && detour.origins.size() < 16
+                && (first.back() - origin).length() >= 4.0f && (first.back() - start).length() >= 4.0f
+                && std::none_of(detour.origins.begin(), detour.origins.end(), [&](G3D::Vector3 const& previous)
+                    { return (first.back() - previous).length() < 4.0f; }))
+            {
+                bypass = first;
+                bypassRemaining = remaining;
+            }
+            // A complete alternative needs a second query. If failed first
+            // legs used the budget unevenly, do not discard the final allowed
+            // first-leg query; a validated obstruction bypass can still move.
+            if (attempts >= limit)
+                continue;
             // Use the first route's actual endpoint, not a theoretical waypoint.
-            Movement::PointsArray second = query(first.back(), destination, true);
+            Movement::PointsArray second = query(first.back(), destination, false);
             if (second.empty())
                 continue;
-            if ((first.back() - second.front()).length() > 0.1f || first.size() + second.size() - 1 > MAX_POINT_PATH_LENGTH)
+            bool const secondComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
+                && (!(lastType & PATHFIND_INCOMPLETE) || startBridge)
+                && (second.back() - destination).length() <= 1.0f;
+            // Only an explicitly bounded, validated prefix is a usable
+            // truncated second leg; a mesh-hole corridor is not a detour.
+            if (!secondComplete && !(lastType & PATHFIND_SHORT))
+                continue;
+            if ((first.back() - second.front()).length() > 0.1f)
             {
-                reason = "discontinuous-or-oversized-alternative";
+                reason = "discontinuous-alternative";
                 continue;
             }
             first.insert(first.end(), second.begin() + 1, second.end());
+            bool const partialSecond = !secondComplete;
+            if (first.size() > MAX_POINT_PATH_LENGTH || partialSecond)
+            {
+                // Both legs are validated. Execute their bounded prefix and
+                // replan from its endpoint, as for a normal partial corridor.
+                // Never replace the omitted tail with a straight segment.
+                if (first.size() > MAX_POINT_PATH_LENGTH)
+                    first.resize(MAX_POINT_PATH_LENGTH);
+                retainReplanOverlap(first);
+                rememberContinuation(first);
+                LogNavigationResult("partial-alternative-route", partialSecond ? reason : "path-point-limit", primaryType, attempts, x, y, z, false);
+                return first;
+            }
+            detour.continuation.clear();
             LogNavigationResult("alternative-route", primaryReason, primaryType, attempts, x, y, z, false);
             return first;
         }
     }
+    if (!bypass.empty())
+    {
+        detour.origins.push_back(start);
+        detour.updatedAt = now;
+        detour.nextVariant = 0;
+        rememberContinuation(bypass);
+        LogNavigationResult("partial-alternative-route", "validated-obstacle-bypass", primaryType, attempts, x, y, z, false);
+        return bypass;
+    }
+    detour.nextVariant = (detour.nextVariant + 2) % 32;
+    detour.updatedAt = now;
     if (!recoveryAttempt && !partial.empty() && (partial.back() - destination).length() + 0.1f < distance)
     {
+        rememberContinuation(partial);
         LogNavigationResult("partial-route", primaryReason, primaryType, attempts, x, y, z, true);
         return partial;
     }

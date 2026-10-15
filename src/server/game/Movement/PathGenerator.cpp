@@ -145,22 +145,26 @@ bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool fo
     UpdateFilter();
 
     BuildPolyPath(start, dest);
-    if (_queryStatus & DT_OUT_OF_NODES)
-        _failureReason = "navigation-query-node-limit";
-    else if (_queryStatus & DT_BUFFER_TOO_SMALL)
-        _failureReason = "navigation-query-buffer-limit";
-    else if (_type & PATHFIND_NOPATH)
-        _failureReason = "no-path-or-mesh-hole";
-    else if (_type & PATHFIND_SHORTCUT)
-        _failureReason = "shortcut";
-    else if (_type & PATHFIND_NOT_USING_PATH)
-        _failureReason = "not-using-navigation";
-    else if (_type & PATHFIND_FARFROMPOLY)
-        _failureReason = "far-from-navigation-polygon";
-    else if (_type & PATHFIND_SHORT)
-        _failureReason = "path-point-limit";
-    else if (_type & PATHFIND_INCOMPLETE)
-        _failureReason = "incomplete-path";
+    // Keep a more specific validation failure from point-path generation.
+    if (!_failureReason)
+    {
+        if (_queryStatus & DT_OUT_OF_NODES)
+            _failureReason = "navigation-query-node-limit";
+        else if (_queryStatus & DT_BUFFER_TOO_SMALL)
+            _failureReason = "navigation-query-buffer-limit";
+        else if (_type & PATHFIND_NOPATH)
+            _failureReason = "no-path-or-mesh-hole";
+        else if (_type & PATHFIND_SHORTCUT)
+            _failureReason = "shortcut";
+        else if (_type & PATHFIND_NOT_USING_PATH)
+            _failureReason = "not-using-navigation";
+        else if (_type & PATHFIND_FARFROMPOLY)
+            _failureReason = "far-from-navigation-polygon";
+        else if (_type & PATHFIND_SHORT)
+            _failureReason = "path-point-limit";
+        else if (_type & PATHFIND_INCOMPLETE)
+            _failureReason = "incomplete-path";
+    }
 
     // GameObjects can also be path sources; visualization requires a Unit.
     if (_sourceUnit && _sourceUnit->VisualizePathfinding)
@@ -260,7 +264,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
         BuildShortcut();
         bool path = _source->GetTypeId() == TYPEID_UNIT && _source->ToCreature()->CanFly();
 
-        bool waterPath = _source->GetTypeId() == TYPEID_UNIT && _source->ToCreature()->CanSwim() && !_source->GetTransport();
+        bool waterPath = _useWaterShortcut && _source->GetTypeId() == TYPEID_UNIT && _source->ToCreature()->CanSwim() && !_source->GetTransport();
         if (waterPath)
         {
             // Check both start and end points, if they're both in water, then we can *safely* let the creature move
@@ -304,7 +308,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
         {
             TC_LOG_DEBUG("maps.mmaps", "++ BuildPolyPath :: underWater case\n");
             if (Unit const* _sourceUnit = _source->ToUnit())
-                if (_sourceUnit->CanSwim())
+                if (_useWaterShortcut && _sourceUnit->CanSwim())
                     buildShotrcut = true;
         }
         else
@@ -652,8 +656,15 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
     // Special case with start and end positions very close to each other
     if (_polyLength == 1 && pointCount == 1)
     {
-        // First point is start position, append end position
-        dtVcopy(&pathPoints[1 * VERTEX_SIZE], endPoint);
+        // A sub-slop route still needs a surface endpoint, not the original
+        // unprojected height which may be above or below this polygon.
+        if (dtStatusFailed(_navMeshQuery->closestPointOnPoly(_pathPolyRefs[0], endPoint,
+            &pathPoints[VERTEX_SIZE], nullptr)))
+        {
+            BuildShortcut();
+            _type = PATHFIND_NOPATH;
+            return;
+        }
         pointCount++;
     }
     else if (pointCount < 2 || dtStatusFailed(dtResult))
@@ -668,10 +679,12 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
     }
     else if (pointCount >= _pointPathLimit) // _useRaycast assumes the path is already of a valid length todo
     {
-        TC_LOG_DEBUG("maps.mmaps", "++ PathGenerator::BuildPointPath FAILED! path sized {} returned, lower than limit set to {}\n", pointCount, _pointPathLimit);
-        BuildShortcut();
-        _type = PathType(_type | PATHFIND_SHORT);
-        return;
+        // A full point buffer still contains a usable surface prefix. This also
+        // applies to shared queries: fear limits paths to 30m, and replacing its
+        // prefix with a direct line can leave the unit above/below the terrain
+        // when the effect ends. Let callers continue from the actual endpoint.
+        _type = PathType((_type & ~PATHFIND_NORMAL) | PATHFIND_INCOMPLETE | PATHFIND_SHORT);
+        _failureReason = "path-point-limit";
     }
 
     _pathPoints.resize(pointCount);
@@ -680,8 +693,11 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
 
     NormalizePath();
 
+    if (_type & PATHFIND_NOPATH)
+        return;
+
     // first point is always our current location - we need the next one
-    SetActualEndPosition(_pathPoints[pointCount-1]);
+    SetActualEndPosition(_pathPoints.back());
 
     // force the given destination, if needed
     if (_forceDestination &&
@@ -708,7 +724,75 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
 void PathGenerator::NormalizePath()
 {
     for (uint32 i = 0; i < _pathPoints.size(); ++i)
-        _source->UpdateAllowedPositionZ(_pathPoints[i].x, _pathPoints[i].y, _pathPoints[i].z);
+    {
+        float surfaceZ = _pathPoints[i].z;
+        float groundZ = INVALID_HEIGHT;
+        _source->UpdateAllowedPositionZ(_pathPoints[i].x, _pathPoints[i].y, _pathPoints[i].z, &groundZ);
+        // Some coarse water polygons span dry cells in the liquid height map.
+        // Dropping their surface points to the bottom destroys the corridor:
+        // the resulting spline crosses steep banks and cannot be replanned.
+        // Let the private bot planner choose another corridor instead.
+        if (_privateQuery && std::fabs(surfaceZ - _pathPoints[i].z) > 2.0f)
+        {
+            float surface[] = {_pathPoints[i].y, surfaceZ, _pathPoints[i].x};
+            float extents[] = {0.5f, 1.0f, 0.5f};
+            float closest[VERTEX_SIZE];
+            dtPolyRef polygon = INVALID_POLYREF;
+            unsigned short flags = 0;
+            // Terrain detail and the ground navmesh can differ by over two
+            // metres on a valid slope. Only a liquid surface must retain its
+            // water-plane corridor; ordinary ground is adjusted to the terrain.
+            if (dtStatusFailed(_navMeshQuery->findNearestPoly(surface, extents, &_filter, &polygon, closest))
+                || !polygon || dtStatusFailed(_navMesh->getPolyFlags(polygon, &flags))
+                || (flags & (NAV_WATER | NAV_MAGMA | NAV_SLIME)))
+            {
+                _failureReason = "unsafe-surface-normalization";
+                _type = PATHFIND_NOPATH;
+                return;
+            }
+        }
+        if (_privateQuery)
+            if (Unit const* unit = _source->ToUnit())
+                if (unit->CanSwim() && !unit->HasAuraType(SPELL_AURA_WATER_WALK))
+                {
+                    LiquidData liquid{};
+                    G3D::Vector3& point = _pathPoints[i];
+                    if (_source->GetMap()->GetLiquidStatus(_source->GetPhaseMask(), point.x, point.y, point.z,
+                        MAP_ALL_LIQUIDS, &liquid, _source->GetCollisionHeight()) != LIQUID_MAP_NO_WATER
+                        && std::fabs(point.z - liquid.level) <= 0.75f && liquid.level > liquid.depth_level)
+                    {
+                        // Navmesh stores the water plane, not a swimmer's feet.
+                        // Standing exactly on that plane reports WATER_WALK and
+                        // prevents both swimming animation and swimming speed.
+                        // ADT liquid depth can be below a VMAP rock or bridge.
+                        // Preserve the support found by UpdateAllowedPositionZ;
+                        // sinking the path into it makes every exit fail LOS.
+                        point.z = std::max(std::max(groundZ, liquid.depth_level),
+                            liquid.level - std::max(0.1f, _source->GetMinHeightInWater()));
+                    }
+                }
+    }
+
+    if (_privateQuery && _source->ToUnit())
+    {
+        float const bodyHeight = _source->GetCollisionHeight() * 0.5f;
+        for (uint32 i = 1; i < _pathPoints.size(); ++i)
+        {
+            G3D::Vector3 const& from = _pathPoints[i - 1];
+            G3D::Vector3 const& to = _pathPoints[i];
+            if (_source->GetMap()->isInLineOfSight(from.x, from.y, from.z + bodyHeight,
+                to.x, to.y, to.z + bodyHeight, _source->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing))
+                continue;
+
+            // A normalized ramp may intersect a small object's edge. Keep
+            // the blocked endpoint for the caller's detour search, but never
+            // dispatch this path or a prefix that can strand it at that edge.
+            _failureReason = "path-body-obstructed";
+            _pathPoints.resize(i + 1);
+            _type = PATHFIND_NOPATH;
+            return;
+        }
+    }
 }
 
 void PathGenerator::BuildShortcut()
@@ -754,6 +838,19 @@ void PathGenerator::CreateFilter()
     _filter.setExcludeFlags(excludeFlags);
 
     UpdateFilter();
+}
+
+void PathGenerator::SetTravelSpeeds(float runSpeed, float swimSpeed)
+{
+    if (!std::isfinite(runSpeed) || !std::isfinite(swimSpeed) || runSpeed <= 0.0f || swimSpeed <= 0.0f)
+        return;
+    float fastest = std::max(runSpeed, swimSpeed);
+    _filter.setAreaCost(NAV_AREA_GROUND, fastest / runSpeed);
+    _filter.setAreaCost(NAV_AREA_GROUND_STEEP, fastest / runSpeed);
+    _filter.setAreaCost(NAV_AREA_WATER, fastest / swimSpeed);
+    // ADT water in existing tiles is encoded as area 8 (NAV_WATER), while
+    // WMO water uses NAV_AREA_WATER. Both liquid areas use swimming speed.
+    _filter.setAreaCost(NAV_AREA_MAGMA_SLIME, fastest / swimSpeed);
 }
 
 void PathGenerator::UpdateFilter()
@@ -958,29 +1055,79 @@ dtStatus PathGenerator::FindSmoothPath(float const* startPos, float const* endPo
                                      float* smoothPath, int* smoothPathSize, uint32 maxSmoothPathSize)
 {
     *smoothPathSize = 0;
+    if (!polyPathSize || !maxSmoothPathSize)
+        return DT_FAILURE;
+
+    if (_privateQuery)
+    {
+        // Preserve the corridor selected by the weighted search. Surface
+        // traversal may otherwise enter a neighbouring, more expensive polygon.
+        constexpr uint32 CornerLimit = MAX_PATH_LENGTH * 2 + 2;
+        float corners[CornerLimit * VERTEX_SIZE];
+        unsigned char flags[CornerLimit];
+        dtPolyRef refs[CornerLimit];
+        int count = 0;
+        dtStatus status = _navMeshQuery->findStraightPath(startPos, endPos, polyPath, polyPathSize,
+            corners, flags, refs, &count, CornerLimit, DT_STRAIGHTPATH_ALL_CROSSINGS);
+        if (dtStatusFailed(status) || !count || dtStatusDetail(status, DT_BUFFER_TOO_SMALL))
+            return DT_FAILURE;
+        bool offMesh = false;
+        for (int i = 0; i < count; ++i)
+            offMesh = offMesh || (flags[i] & DT_STRAIGHTPATH_OFFMESH_CONNECTION);
+        if (!offMesh)
+        {
+            uint32 written = 0;
+            for (int segment = 0; segment + 1 < count; ++segment)
+            {
+                float const* from = &corners[segment * VERTEX_SIZE];
+                float const* to = &corners[(segment + 1) * VERTEX_SIZE];
+                float distance = dtVdist2D(from, to);
+                uint32 steps = std::max<uint32>(1, uint32(std::ceil(distance / 0.5f)));
+                for (uint32 step = segment ? 1 : 0; step <= steps; ++step)
+                {
+                    if (written >= maxSmoothPathSize)
+                    {
+                        *smoothPathSize = written;
+                        return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
+                    }
+                    float point[VERTEX_SIZE], surface[VERTEX_SIZE];
+                    dtVlerp(point, from, to, float(step) / float(steps));
+                    if (!refs[segment] || dtStatusFailed(_navMeshQuery->closestPointOnPoly(refs[segment], point, surface, nullptr))
+                        || dtVdist2D(point, surface) > 0.05f)
+                        return DT_FAILURE;
+                    dtVcopy(&smoothPath[written * VERTEX_SIZE], surface);
+                    ++written;
+                }
+            }
+            if (count == 1)
+            {
+                if (dtStatusFailed(_navMeshQuery->closestPointOnPoly(polyPath[0], startPos, smoothPath, nullptr)))
+                    return DT_FAILURE;
+                written = 1;
+            }
+            *smoothPathSize = written;
+            return DT_SUCCESS;
+        }
+    }
+
     uint32 nsmoothPath = 0;
 
     dtPolyRef polys[MAX_PATH_LENGTH];
     memcpy(polys, polyPath, sizeof(dtPolyRef)*polyPathSize);
     uint32 npolys = polyPathSize;
+    // Four-metre chords can cut through small objects between valid surface
+    // vertices. Bot splines need finer sampling to remain on that surface.
+    float const stepSize = _privateQuery ? 0.5f : SMOOTH_PATH_STEP_SIZE;
 
     float iterPos[VERTEX_SIZE], targetPos[VERTEX_SIZE];
 
-    if (polyPathSize > 1)
-    {
-        // Pick the closest points on poly border
-        if (dtStatusFailed(_navMeshQuery->closestPointOnPolyBoundary(polys[0], startPos, iterPos)))
-            return DT_FAILURE;
-
-        if (dtStatusFailed(_navMeshQuery->closestPointOnPolyBoundary(polys[npolys - 1], endPos, targetPos)))
-            return DT_FAILURE;
-    }
-    else
-    {
-        // Case where the path is on the same poly
-        dtVcopy(iterPos, startPos);
-        dtVcopy(targetPos, endPos);
-    }
+    // Boundary projection preserves the input height inside a polygon. A
+    // near-ground target may therefore end several metres below its surface,
+    // even with a successful corridor. Use the detail surface for both ends,
+    // including a route contained in a single polygon.
+    if (!npolys || dtStatusFailed(_navMeshQuery->closestPointOnPoly(polys[0], startPos, iterPos, nullptr)) ||
+        dtStatusFailed(_navMeshQuery->closestPointOnPoly(polys[npolys - 1], endPos, targetPos, nullptr)))
+        return DT_FAILURE;
 
     dtVcopy(&smoothPath[nsmoothPath*VERTEX_SIZE], iterPos);
     nsmoothPath++;
@@ -1004,11 +1151,12 @@ dtStatus PathGenerator::FindSmoothPath(float const* startPos, float const* endPo
         float delta[VERTEX_SIZE];
         dtVsub(delta, steerPos, iterPos);
         float len = dtMathSqrtf(dtVdot(delta, delta));
-        // If the steer target is end of path or off-mesh link, do not move past the location.
-        if ((endOfPath || offMeshConnection) && len < SMOOTH_PATH_STEP_SIZE)
+        // Dense bot paths must not overshoot intermediate corners either:
+        // crossing a nearby corner can alternate between two surface points.
+        if ((_privateQuery || endOfPath || offMeshConnection) && len < stepSize)
             len = 1.0f;
         else
-            len = SMOOTH_PATH_STEP_SIZE / len;
+            len = stepSize / len;
 
         float moveTgt[VERTEX_SIZE];
         dtVmad(moveTgt, iterPos, delta, len);
@@ -1024,7 +1172,15 @@ dtStatus PathGenerator::FindSmoothPath(float const* startPos, float const* endPo
         npolys = FixupCorridor(polys, npolys, MAX_PATH_LENGTH, visited, nvisited);
 
         if (dtStatusFailed(_navMeshQuery->getPolyHeight(polys[0], result, &result[1])))
-            TC_LOG_DEBUG("maps.mmaps", "Cannot find height at position X: {} Y: {} Z: {} for {}", result[2], result[0], result[1], _source->GetGUID().GetCounter());
+        {
+            // moveAlongSurface can leave a point just outside an edge due to
+            // rounding. Reproject onto that polygon instead of carrying the
+            // previous height forward through an unchecked segment.
+            float surface[VERTEX_SIZE];
+            if (dtStatusFailed(_navMeshQuery->closestPointOnPoly(polys[0], result, surface, nullptr)))
+                return DT_FAILURE;
+            dtVcopy(result, surface);
+        }
         result[1] += 0.5f;
         dtVcopy(iterPos, result);
 
@@ -1075,6 +1231,20 @@ dtStatus PathGenerator::FindSmoothPath(float const* startPos, float const* endPo
             }
         }
 
+        if (_privateQuery)
+        {
+            // A full buffer is a usable prefix only while the route advances.
+            // Never execute an oscillation as a long path and strand the bot
+            // between differently normalized ground and water surfaces.
+            uint32 const first = nsmoothPath > 16 ? nsmoothPath - 16 : 0;
+            for (uint32 previous = first; previous < nsmoothPath; ++previous)
+                if (InRangeYZX(iterPos, &smoothPath[previous * VERTEX_SIZE], 0.05f, 0.25f))
+                {
+                    _failureReason = "smoothing-loop";
+                    return DT_FAILURE;
+                }
+        }
+
         // Store results.
         if (nsmoothPath < maxSmoothPathSize)
         {
@@ -1084,6 +1254,9 @@ dtStatus PathGenerator::FindSmoothPath(float const* startPos, float const* endPo
     }
 
     *smoothPathSize = nsmoothPath;
+
+    if (nsmoothPath == maxSmoothPathSize)
+        return DT_SUCCESS | DT_BUFFER_TOO_SMALL;
 
     // this is most likely a loop
     return nsmoothPath < MAX_POINT_PATH_LENGTH ? DT_SUCCESS : DT_FAILURE;
@@ -1329,6 +1502,7 @@ void PathGenerator::ShortenPathUntilDist(G3D::Vector3 const& target, float dist)
         {
             // whenver we find a point that is not in LoS anymore, simply use last valid path
             _pathPoints.resize(i + 1);
+            SetActualEndPosition(_pathPoints.back());
             return;
         }
 
@@ -1337,6 +1511,7 @@ void PathGenerator::ShortenPathUntilDist(G3D::Vector3 const& target, float dist)
             // no point found that fulfills the condition
             _pathPoints[0] = _pathPoints[1];
             _pathPoints.resize(2);
+            SetActualEndPosition(_pathPoints.back());
             return;
         }
     }
@@ -1346,6 +1521,14 @@ void PathGenerator::ShortenPathUntilDist(G3D::Vector3 const& target, float dist)
     // (@todo review this)
     _pathPoints[i] += (_pathPoints[i - 1] - _pathPoints[i]).direction() * (dist - (_pathPoints[i] - target).length());
     _pathPoints.resize(i+1);
+
+    // The original waypoints were normalized before shortening. Interpolating
+    // between them can put the new endpoint above a bank or inside a VMAP
+    // object, leaving Charge/chase unable to start its next ground path.
+    // Use the same height rules, including valid swimming and flying heights.
+    G3D::Vector3& end = _pathPoints.back();
+    _source->UpdateAllowedPositionZ(end.x, end.y, end.z);
+    SetActualEndPosition(end);
 }
 
 bool PathGenerator::IsInvalidDestinationZ(Unit const* target) const

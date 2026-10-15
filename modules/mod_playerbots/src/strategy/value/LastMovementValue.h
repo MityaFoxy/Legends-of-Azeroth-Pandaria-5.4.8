@@ -35,6 +35,7 @@ public:
         navigationLogStarted = other.navigationLogStarted;
         navigationLogWarning = other.navigationLogWarning;
         groundMovement = other.groundMovement;
+        navigationDetour = other.navigationDetour;
         return *this;
     };
 
@@ -67,6 +68,7 @@ public:
     bool navigationLogStarted = false;
     bool navigationLogWarning = false;
     GroundMovementState groundMovement;
+    NavigationDetourState navigationDetour;
 };
 
 class LastMovementValue : public ManualSetValue<LastMovement&>

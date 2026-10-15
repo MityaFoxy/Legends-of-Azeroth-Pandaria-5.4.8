@@ -280,12 +280,12 @@ AiPlayerbot.DisableMoveSplinePath = 0
 AiPlayerbot.MaxMovementSearchTime = 3
 
 # Navigation-first MoveTo: total path queries, not the number of extra routes.
-# A complete alternative through a waypoint needs two queries. Default 5:
-# one primary query and up to two complete alternatives. Clamped to [1, 10].
+# A complete alternative through a waypoint needs two queries. Default 7:
+# one primary query and up to three complete alternatives. Clamped to [1, 10].
 # Stop at the first complete route; try a useful partial route before direct fallback.
 # Does not change chase, vehicles, swimming or flying. MoveTo always uses the
 # PointMovementGenerator (including precomputed paths), not raw MoveSplinePath.
-AiPlayerbot.NavigationMaxAttempts = 5
+AiPlayerbot.NavigationMaxAttempts = 7
 
 # Rate limit navigation outcome messages per bot, shared by its movement actions.
 # Milliseconds, clamped to [1000, 600000]. Debug-level individual queries are not throttled.

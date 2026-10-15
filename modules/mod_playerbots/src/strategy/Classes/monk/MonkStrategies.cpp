@@ -91,6 +91,9 @@ NextAction** MistweaverMonkStrategy::getDefaultActions()
 
 void MistweaverMonkStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
+    // Healers still need target cleanup, range, mount and combat recovery.
+    // Without these a lost enemy leaves the AI in combat with no active task.
+    CombatStrategy::InitTriggers(triggers);
     triggers.push_back(new TriggerNode(
         "medium group heal setting",
         NextAction::array(0, new NextAction("uplift", ACTION_CRITICAL_HEAL + 3),

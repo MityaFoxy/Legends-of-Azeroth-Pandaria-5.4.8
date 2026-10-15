@@ -54,10 +54,10 @@ public:
     std::string const getName() override { return "aoe"; }
 };
 
-class MistweaverMonkStrategy : public Strategy
+class MistweaverMonkStrategy : public CombatStrategy
 {
 public:
-    MistweaverMonkStrategy(PlayerbotAI* botAI) : Strategy(botAI) {}
+    MistweaverMonkStrategy(PlayerbotAI* botAI) : CombatStrategy(botAI) {}
 
     void InitTriggers(std::vector<TriggerNode*>& triggers) override;
     NextAction** getDefaultActions() override;

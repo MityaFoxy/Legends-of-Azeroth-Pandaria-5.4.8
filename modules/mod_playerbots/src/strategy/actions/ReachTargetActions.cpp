@@ -28,7 +28,7 @@ bool ReachTargetAction::isUseful()
     // float dis = distance + CONTACT_DISTANCE;
     if (!target)
         return false;
-    if (!bot->IsWithinCombatRange(target, distance))
+    if (!bot->IsWithinCombatRange(target, distance) || !bot->IsWithinLOSInMap(target))
         return true;
     if (distance > sPlayerbotAIConfig->meleeDistance + 0.1f)
         return false;

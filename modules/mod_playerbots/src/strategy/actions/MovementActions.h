@@ -36,6 +36,8 @@ public:
     bool ReachCombatTo(Unit* target, float distance = 0.0f);
 
 protected:
+    enum class MoveFailure { None, Route, RecoveryExhausted };
+    MoveFailure lastMoveFailure = MoveFailure::None;
     void UpdateMovementState();
     void ClearIdleState();
 
@@ -72,6 +74,8 @@ protected:
     };
 
 private:
+    bool ValidateWaterConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
+    bool ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     Movement::PointsArray SearchForBestPath(float x, float y, float z, bool& usingNavigation,
         bool normalOnly = false, uint32 recoveryAttempt = 0);
     bool CanStartGroundMovement(float x, float y, float z);

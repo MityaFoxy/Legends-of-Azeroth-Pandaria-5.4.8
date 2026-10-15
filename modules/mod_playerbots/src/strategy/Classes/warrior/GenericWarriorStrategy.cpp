@@ -29,7 +29,7 @@ public:
 
 private:
     ACTION_NODE(heroic_strike, "heroic strike");
-    ACTION_NODE_A(heroic_leap, "heroic leap", "melee");
+    ACTION_NODE_A(heroic_leap, "heroic leap", "reach melee");
     ACTION_NODE_A(charge, "charge", "heroic leap");
 
     ACTION_NODE(whirlwind, "whirlwind");
@@ -48,14 +48,16 @@ private:
     ACTION_NODE(pummel, "pummel");
 };
 
-GenericWarriorStrategy::GenericWarriorStrategy(PlayerbotAI* botAI) : CombatStrategy(botAI)
+GenericWarriorStrategy::GenericWarriorStrategy(PlayerbotAI* botAI) : MeleeCombatStrategy(botAI)
 {
     actionNodeFactories.Add(new GenericWarriorStrategyActionNodeFactory());
 }
 
 void GenericWarriorStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
-    CombatStrategy::InitTriggers(triggers);
+    // Charge/leap can be unavailable or inside their minimum range. Keep
+    // ordinary melee approach eligible independently of those spell actions.
+    MeleeCombatStrategy::InitTriggers(triggers);
 
     triggers.push_back(new TriggerNode("battle stance", NextAction::array(0, new NextAction("battle stance", ACTION_DEFAULT), nullptr)));
     triggers.push_back(new TriggerNode("defensive stance", NextAction::array(0, new NextAction("defensive stance", ACTION_DEFAULT), nullptr)));

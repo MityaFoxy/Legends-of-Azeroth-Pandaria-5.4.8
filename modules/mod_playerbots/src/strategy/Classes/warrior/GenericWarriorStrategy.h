@@ -1,11 +1,11 @@
 #ifndef _PLAYERBOT_GENERICWARRIORSTRATEGY_H
 #define _PLAYERBOT_GENERICWARRIORSTRATEGY_H
 
-#include "CombatStrategy.h"
+#include "MeleeCombatStrategy.h"
 
 class PlayerbotAI;
 
-class GenericWarriorStrategy : public CombatStrategy
+class GenericWarriorStrategy : public MeleeCombatStrategy
 {
 public:
     GenericWarriorStrategy(PlayerbotAI* botAI);

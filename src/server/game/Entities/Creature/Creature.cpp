@@ -250,6 +250,12 @@ void Creature::AddToWorld()
     ///- Register the creature for guid lookup
     if (!IsInWorld())
     {
+        if (Creature* existing = GetMap()->GetCreature(GetGUID()); existing && existing != this)
+            TC_LOG_ERROR("entities.unit", "Duplicate creature {} on map {} instance {}: new spawn {} at ({}, {}, {}), existing spawn {} at ({}, {}, {})",
+                GetGUID().ToString(), GetMap()->GetId(), GetMap()->GetInstanceId(), GetSpawnId(),
+                GetPositionX(), GetPositionY(), GetPositionZ(), existing->GetSpawnId(),
+                existing->GetPositionX(), existing->GetPositionY(), existing->GetPositionZ());
+
         GetMap()->GetObjectsStore().Insert<Creature>(GetGUID(), this);
         if (m_spawnId)
             GetMap()->GetCreatureBySpawnIdStore().insert(std::make_pair(m_spawnId, this));
@@ -1395,7 +1401,10 @@ bool Creature::LoadCreatureFromDB(uint32 guid, Map* map, bool addToMap)
     m_spawnId = guid;
     if (map->GetInstanceId() == 0)
     {
-        if (map->GetCreature(ObjectGuid(HighGuid::Unit, data->id, guid)))
+        // A spawn can survive outside its unloaded home grid. Its runtime GUID
+        // may use HighGuid::Vehicle or an entry replaced by a zone script, so
+        // reconstructing a Unit GUID misses an already registered creature.
+        if (map->GetCreatureBySpawnId(m_spawnId))
             return false;
     }
     else

@@ -6101,6 +6101,11 @@ void Spell::EffectSkinPlayerCorpse(SpellEffIndex /*effIndex*/)
         return;
 
     target->RemovedInsignia(player);
+
+    // Removing insignia deletes the corpse and may register bones with the
+    // same GUID. Refresh the explicit target before AfterCast hooks/procs
+    // inspect it; the cached corpse pointer is no longer valid.
+    m_targets.Update(m_caster);
 }
 
 void Spell::EffectStealBeneficialBuff(SpellEffIndex effIndex)

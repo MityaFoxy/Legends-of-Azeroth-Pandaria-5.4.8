@@ -4423,9 +4423,9 @@ void Map::SetZoneOverrideLight(uint32 zoneId, uint32 areaLightId, uint32 overrid
 
 bool Map::HasEnoughWater(WorldObject const* searcher, float x, float y, float z) const
 {
-    LiquidData* liquidData = nullptr;
-    ZLiquidStatus status = GetLiquidStatus(searcher->GetPhaseMask(), x, y, z, MAP_ALL_LIQUIDS, liquidData, searcher->GetCollisionHeight());
-    return (status & LIQUID_MAP_UNDER_WATER) != 0 && HasEnoughWater(searcher, liquidData);
+    LiquidData liquidData;
+    ZLiquidStatus status = GetLiquidStatus(searcher->GetPhaseMask(), x, y, z, MAP_ALL_LIQUIDS, &liquidData, searcher->GetCollisionHeight());
+    return (status & LIQUID_MAP_UNDER_WATER) != 0 && HasEnoughWater(searcher, &liquidData);
 }
 
 bool Map::HasEnoughWater(WorldObject const* searcher, const LiquidData* liquidData) const

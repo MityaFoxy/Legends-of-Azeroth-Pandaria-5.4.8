@@ -665,7 +665,12 @@ void WorldSession::LogoutPlayer(bool save)
             {
                 _player->RemoveBattlegroundQueueId(bgQueueTypeId);
                 BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(bgQueueTypeId);
-                queue.RemovePlayer(_player->GetGUID(), true);
+                // An active match retains its client queue slot, but its queue
+                // record was consumed by HandleBattleFieldPortOpcode. Only
+                // waiting/invited records still own an invitation to release.
+                GroupQueueInfo queuedGroup;
+                if (queue.GetPlayerGroupInfoData(_player->GetGUID(), &queuedGroup))
+                    queue.RemovePlayer(_player->GetGUID(), true);
             }
         }
 

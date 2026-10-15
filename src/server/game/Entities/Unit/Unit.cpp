@@ -18456,7 +18456,10 @@ bool Unit::CanSwim() const
     // Mirror client behavior, if this method returns false then client will not use swimming animation and for players will apply gravity as if there was no water
     if (HasUnitFlag(UNIT_FLAG_CANNOT_SWIM))
         return false;
-    if (HasUnitFlag(UNIT_FLAG_PLAYER_CONTROLLED)) // is player
+    // In 5.4.8 PLAYER_CONTROLLED is a controlled-creature flag, not a
+    // player marker. Players can swim even after SetSwim(false) on shore
+    // clears the temporary CAN_SWIM flag.
+    if (GetTypeId() == TYPEID_PLAYER || HasUnitFlag(UNIT_FLAG_PLAYER_CONTROLLED))
         return true;
     if (HasUnitFlag2(UNIT_FLAG2_UNUSED_6))
         return false;

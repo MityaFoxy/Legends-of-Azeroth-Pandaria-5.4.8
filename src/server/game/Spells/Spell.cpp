@@ -4378,6 +4378,9 @@ void Spell::finish(bool ok)
 
 void Spell::SendCastResult(SpellCastResult result)
 {
+    // Native callers also need failures that occur before CheckCast, including
+    // casts in progress or disabled spells, even when no packet can be sent.
+    m_castResult = result;
     if (result == SPELL_CAST_OK)
         return;
 

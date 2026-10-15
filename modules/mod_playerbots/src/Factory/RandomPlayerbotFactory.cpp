@@ -597,7 +597,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
         RandomPlayerbotFactory factory(accountId);
 
         WorldSession* session = new WorldSession(accountId, accountName, nullptr, AccountTypes::SEC_PLAYER, EXPANSION_MISTS_OF_PANDARIA,
-            time_t(0), LOCALE_enUS, 0, false, false, true);
+            time_t(0), LOCALE_enUS, 0, /*flags*/ 0, /*isARecruiter*/ false, /*hasBoost*/ false, /*isBot*/ true);
         //session->SetVirtualRealmID(1);
         sessionBots.push_back(session);
 

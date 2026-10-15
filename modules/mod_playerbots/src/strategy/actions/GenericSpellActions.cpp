@@ -280,7 +280,14 @@ Value<Unit*>* CastSpellOnEnemyHealerAction::GetTargetValue()
     return context->GetValue<Unit*>("enemy healer target", spell);
 }
 
-Value<Unit*>* CastSnareSpellAction::GetTargetValue() { return context->GetValue<Unit*>("snare target", spell); }
+Value<Unit*>* CastSnareSpellAction::GetTargetValue()
+{
+    // Contexts without a specialized snare selector still have a combat target.
+    // Preserve an available selector, including its explicit no-target result.
+    if (Value<Unit*>* target = context->GetValue<Unit*>("snare target", spell))
+        return target;
+    return context->GetValue<Unit*>("current target");
+}
 
 Value<Unit*>* CastCrowdControlSpellAction::GetTargetValue() { return context->GetValue<Unit*>("cc target", getName()); }
 
