@@ -74,3 +74,5 @@ add_test(NAME path_query_budget_regression COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(path_query_budget_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME configuration_contract_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_regression.py ${LOA_SOURCE_DIR})
+add_test(NAME botlife_scaffold_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_scaffold_regression.py ${LOA_SOURCE_DIR})

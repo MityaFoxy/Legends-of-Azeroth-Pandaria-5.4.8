@@ -1,8 +1,11 @@
 #ifndef _PLAYERBOT_PLAYERBOTAI_H
 #define _PLAYERBOT_PLAYERBOTAI_H
 
+#include <memory>
 #include <queue>
 #include <stack>
+
+#include "PlayerbotAIExtension.h"
 
 #include "Chat.h"
 #include "ArathiBasinPlayerbot.h"
@@ -232,6 +235,7 @@ protected:
     BotState _currentState;
     NewRpgInfo _rpgInfo;
     ArathiBasinPlayerbot::State _arathiBasinState;
+    std::vector<std::unique_ptr<PlayerbotAIExtension>> _extensions;
     //ChatHelper chatHelper;
     //std::list<ChatCommandHolder> chatCommands;
     //std::list<ChatQueuedReply> chatReplies;

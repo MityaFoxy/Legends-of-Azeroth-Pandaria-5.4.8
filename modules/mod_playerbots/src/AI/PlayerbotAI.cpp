@@ -102,7 +102,8 @@ PlayerbotAI::PlayerbotAI()
     _aiObjectContext{ nullptr },
     _currentEngine{ nullptr },
     _engines{ nullptr },
-    _currentState(BOT_STATE_NON_COMBAT)
+    _currentState(BOT_STATE_NON_COMBAT),
+    _extensions(sPlayerbotAIExtensionRegistry->CreateExtensions())
 {
     for (uint8 i = 0; i < BOT_STATE_MAX; i++)
         _engines[i] = nullptr;
@@ -121,7 +122,8 @@ PlayerbotAI::PlayerbotAI(Player* bot)
     master(nullptr),
     _aiObjectContext{ nullptr },
     _currentEngine{ nullptr },
-    _engines{ nullptr }
+    _engines{ nullptr },
+    _extensions(sPlayerbotAIExtensionRegistry->CreateExtensions())
 {
     for (uint8 i = 0; i < MAX_ACTIVITY_TYPE; i++)
     {
@@ -151,6 +153,9 @@ PlayerbotAI::PlayerbotAI(Player* bot)
 
 PlayerbotAI::~PlayerbotAI()
 {
+    for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
+        extension->Reset(*this);
+
     for (uint8 i = 0; i < BOT_STATE_MAX; i++)
     {
         if (_engines[i])
@@ -361,7 +366,16 @@ void PlayerbotAI::UpdateAIInternal([[maybe_unused]] uint32 elapsed, bool minimal
     masterIncomingPacketHandlers.Handle(helper);
     masterOutgoingPacketHandlers.Handle(helper);
 
-    DoNextAction(minimal);
+    bool runBaseAI = true;
+    for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
+    {
+        if (extension->Update(*this, elapsed) == PlayerbotAIExtensionResult::SuppressBaseNonCombatAction &&
+            _currentState == BOT_STATE_NON_COMBAT)
+            runBaseAI = false;
+    }
+
+    if (runBaseAI)
+        DoNextAction(minimal);
 
     if (pmo)
         pmo->finish();
@@ -700,6 +714,9 @@ bool PlayerbotAI::AllowActivity(ActivityType activityType, bool checkNow)
 
 void PlayerbotAI::Reset(bool full)
 {
+    for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
+        extension->Reset(*this);
+
     if (bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
         return;
 

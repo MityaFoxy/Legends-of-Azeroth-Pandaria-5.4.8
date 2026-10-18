@@ -1,0 +1,12 @@
+###################################################################################################
+# BotLife optional Playerbot activity layer
+###################################################################################################
+
+[botlife]
+
+# Requires a build configured with PLAYERBOTS=1 and BOTLIFE=1.
+# Enable BotLife only for the comma-separated character GUID counters listed below.
+# The current diagnostic slice cycles FREE/QUEST/TOWN/REST stubs and never issues gameplay actions.
+AiPlayerbot.BotLife.Enabled = 0
+AiPlayerbot.BotLife.BotGuids =
+AiPlayerbot.BotLife.StubActivityDuration = 10000

@@ -1,6 +1,6 @@
-﻿# Fichier source temporaire généré
-set(MODULES_LOADER_TEMP "${CMAKE_BINARY_DIR}/ModulesLoader.cpp")
-set(MODULES_LOADER_FINAL "${CMAKE_SOURCE_DIR}/modules/ModulesLoader.cpp")
+﻿# Fichier source généré propre à chaque répertoire de build
+set(MODULES_LOADER_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/ModulesLoader.cpp")
+set(MODULES_LOADER_HEADER_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/ModulesLoader.h")
 set(MODULES_LOADER_TEMPLATE "${CMAKE_SOURCE_DIR}/modules/ModulesLoader.cpp.in.cmake")
 
 # Fonction pour récupérer tous les sous-dossiers d'un répertoire donné
@@ -30,8 +30,14 @@ foreach(MODULE ${MODULE_DIRS})
         endif()
     endif()
 endforeach()
+if(BOTLIFE AND NOT PLAYERBOTS)
+    message(FATAL_ERROR "BOTLIFE requires PLAYERBOTS")
+endif()
 if(NOT PLAYERBOTS)
     list(REMOVE_ITEM VALID_MODULES "mod_playerbots")
+endif()
+if(NOT BOTLIFE)
+    list(REMOVE_ITEM VALID_MODULES "mod_botlife")
 endif()
 
 message(STATUS "Modules : ${VALID_MODULES}")
@@ -68,16 +74,15 @@ foreach(MODULE ${VALID_MODULES})
     set(MODULES_CALLS "${MODULES_CALLS}    AddSC_${MODULE_FUNC_NAME}();\n")
 endforeach()
 
-# Génération temporaire du fichier ModulesLoader.cpp
-configure_file(${MODULES_LOADER_TEMPLATE} ${MODULES_LOADER_TEMP} @ONLY)
-
-# Copie du fichier généré dans le dossier source réel (remplace l'ancien)
-execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MODULES_LOADER_TEMP} ${MODULES_LOADER_FINAL})
+# Génération du fichier ModulesLoader.cpp dans le répertoire de build.
+# Plusieurs configurations peuvent ainsi coexister sans modifier le source tree.
+configure_file(${MODULES_LOADER_TEMPLATE} ${MODULES_LOADER_GENERATED} @ONLY)
+configure_file(${CMAKE_SOURCE_DIR}/modules/ModulesLoader.h ${MODULES_LOADER_HEADER_GENERATED} COPYONLY)
 
 # Inclure explicitement ModulesLoader.cpp et ModulesLoader.h
 set(MODULES_LOADER_FILES
-    ${MODULES_LOADER_FINAL}
-    ${CMAKE_SOURCE_DIR}/modules/ModulesLoader.h
+    ${MODULES_LOADER_GENERATED}
+    ${MODULES_LOADER_HEADER_GENERATED}
 )
 
 # Ajouter ces fichiers dans les sources

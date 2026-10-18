@@ -14,6 +14,7 @@ option(SCRIPTS          "Build core with scripts included"                      
 option(TOOLS            "Build map/vmap/mmap extraction/assembler tools"              0)
 option(ELUNA            "Build Eluna Lua Engine"                                      1)
 option(PLAYERBOTS       "Build core with playerbots included"                         1)
+option(BOTLIFE          "Build optional BotLife layer for playerbots"                 0)
 option(USE_SCRIPTPCH    "Use precompiled headers when compiling scripts"              1)
 option(USE_COREPCH      "Use precompiled headers when compiling servers"              1)
 option(WITH_WARNINGS    "Show all warnings during compile"                            0)
