@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include "G3D/Vector3.h"
 
@@ -26,6 +27,9 @@ struct NavigationDetourState
 // Keep the requested goal separate from a partial route's reachable endpoint.
 struct GroundMovementState
 {
+    // Optional caller identity, never an AI/world pointer. Recovery retains it;
+    // every newly issued MoveTo revokes it, even for the same destination.
+    std::shared_ptr<void const> owner;
     bool tracked = false;
     bool active = false;
     bool exhausted = false;

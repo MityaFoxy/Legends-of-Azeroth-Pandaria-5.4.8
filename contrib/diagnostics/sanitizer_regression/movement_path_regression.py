@@ -46,6 +46,7 @@ source = r"""
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 using uint32 = std::uint32_t;
@@ -150,6 +151,7 @@ struct Vehicle {
 };
 enum class MovementPriority { MOVEMENT_NORMAL, MOVEMENT_COMBAT, MOVEMENT_FORCED };
 struct LastMovement {
+    struct { std::shared_ptr<void const> owner; } groundMovement;
     uint32 map = 0;
     G3D::Vector3 destination;
     float delay = 0;
@@ -164,19 +166,21 @@ struct Config {
 Config* sPlayerbotAIConfig = &config;
 struct BotAI { int GetReactDelay() const { return 100; } } ai;
 struct MovementAction {
+    enum class MoveFailure { None, Route, RecoveryExhausted };
     Unit* bot;
+    MoveFailure lastMoveFailure = MoveFailure::None;
     BotAI* botAI = &ai;
     LastMovement last;
     Movement::PointsArray path = {{0,0,0}, {30,0,4}};
     float height = 4;
-    bool allowed = true, duplicate = false, waiting = false;
+    bool allowed = true, duplicate = false, waiting = false, recoveryAllowed = true;
     bool lastGeneratePath = false, lastNormalOnly = false;
     bool MoveTo(uint32,float,float,float,bool,bool,bool,bool,MovementPriority,bool,bool);
     void UpdateMovementState() {}
     bool IsMovingAllowed(uint32,float,float,float) const { return allowed; }
     bool IsDuplicateMove(uint32,float,float,float) const { return duplicate; }
     bool IsWaitingForLastMove(MovementPriority) const { return waiting; }
-    bool CanStartGroundMovement(float,float,float) const { return true; }
+    bool CanStartGroundMovement(float,float,float) const { return recoveryAllowed; }
     void TrackGroundMovement(float,float,float,bool,bool) {}
     float MoveDelay(float distance, bool) const { return distance / 10; }
     Movement::PointsArray SearchForBestPath(float,float,float,bool& generate,bool normal) {
@@ -252,6 +256,21 @@ void movementTests() {
         MovementAction action{&bot};
         action.allowed = gate != 0; action.duplicate = gate == 1; action.waiting = gate == 2;
         assert(!moveBot(action) && !bot.motion.cleared && !action.last.map);
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::None);
+    }
+    // Callers must distinguish route/recovery failure from ordinary AI gates.
+    {
+        Unit bot;
+        MovementAction action{&bot}; action.recoveryAllowed = false;
+        assert(!moveBot(action) && !bot.motion.moves && !bot.motion.cleared);
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::RecoveryExhausted);
+        action.recoveryAllowed = true; action.path.clear();
+        assert(!moveBot(action) && !bot.motion.moves && !bot.motion.cleared);
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::Route);
+        action.allowed = false;
+        assert(!moveBot(action) && action.lastMoveFailure == MovementAction::MoveFailure::None);
+        action.allowed = true; action.path = {{0,0,0},{30,0,4}};
+        assert(moveBot(action) && action.lastMoveFailure == MovementAction::MoveFailure::None);
     }
     // Explicit, flying, fully submerged and configured point branches retain destinations.
     for (int mode = 0; mode < 4; ++mode) {
@@ -260,7 +279,9 @@ void movementTests() {
         config.disableMoveSplinePath = mode == 3 ? 2 : 0;
         MovementAction action{&bot};
         action.path.back() = {100,0,20};
+        if (mode == 1 || mode == 2) action.last.groundMovement.owner=std::make_shared<int>(1);
         assert(moveBot(action,false,mode == 0));
+        if (mode == 1 || mode == 2) assert(!action.last.groundMovement.owner);
         assert(same(bot.motion.destination,{100,0,20}));
         assert(same(action.last.destination,{100,0,20}));
     }
@@ -271,6 +292,13 @@ void movementTests() {
         MovementAction action{&bot};
         assert(moveBot(action) && bot.motion.generated);
         assert(same(bot.motion.destination, action.path.back()));
+    }
+    // Explicit navigation-only callers cannot bypass route validation underwater.
+    {
+        Unit bot; bot.water=true; bot.map.liquid=true;
+        MovementAction action{&bot};
+        assert(action.MoveTo(1,100,0,20,false,false,true,false,MovementPriority::MOVEMENT_NORMAL,false,false));
+        assert(action.lastGeneratePath && action.lastNormalOnly && bot.motion.generated);
     }
     // Battleground bots always use normal ground navigation, even if a stale
     // flying flag or an underwater state would normally select a direct spline.

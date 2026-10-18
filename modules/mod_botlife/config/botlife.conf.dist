@@ -6,7 +6,36 @@
 
 # Requires a build configured with PLAYERBOTS=1 and BOTLIFE=1.
 # Enable BotLife only for the comma-separated character GUID counters listed below.
-# The current diagnostic slice cycles FREE/QUEST/TOWN/REST stubs and never issues gameplay actions.
+# Normal mode cycles FREE/QUEST/TOWN/REST stubs without gameplay actions.
+# The explicit one-bot TravelTest below is the only movement-enabled scenario.
 AiPlayerbot.BotLife.Enabled = 0
 AiPlayerbot.BotLife.BotGuids =
 AiPlayerbot.BotLife.StubActivityDuration = 10000
+
+# Travel uses the native Playerbots stuck watchdog, not a second movement controller.
+# Configure AiPlayerbot.StuckTimeout (4000 ms) and StuckMaxAttempts (3) in playerbots.conf.
+# Native bounded path recovery is reported as Recovering / RecoveryExhausted.
+# Emergency teleport is not implemented yet. Its approved future policy requires
+# an explicit emergency and NO real players on either source or destination map.
+# Combat pauses and foreign motion remain authoritative.
+
+# Opt-in ONE-SHOT integration test, not an autonomous activity. Restart required.
+# Requires Enabled=1 and BotGuids containing ONLY the matching TravelTest.BotGuid.
+# Destination syntax: "mapId x y z" on the bot's current map. No teleport.
+# For isolated console login: RandomBotAutologin=0, then botlife-test-login.
+# Observe native combat pause/resume; failure/arrival/cancellation does not retry.
+AiPlayerbot.BotLife.TravelTest.Enabled = 0
+AiPlayerbot.BotLife.TravelTest.BotGuid = 0
+AiPlayerbot.BotLife.TravelTest.Destination = ""
+
+# ONE-SHOT read-only quest diagnostic; does not log bots in or issue gameplay actions.
+# Restart required (also after quest/relations/spawn reload). TravelTest must be OFF.
+# Requires Enabled=1 and BotGuids containing ONLY the matching QuestPlan.BotGuid.
+# QuestId is an explicit allowlist of ONE ordinary, non-repeatable kill quest.
+# On the bot's next login: logs Acquire/Hunt/AwaitCompletion/TurnIn/Done or rejection.
+# Candidates are same-map phaseMask spawns, NOT proven paths or live interactions.
+# PhaseID/groups, instances, pools/events, GO givers, items and scripted objectives
+# are unsupported in this slice. No accepting, credit, rewards or movement.
+AiPlayerbot.BotLife.QuestPlan.Enabled = 0
+AiPlayerbot.BotLife.QuestPlan.BotGuid = 0
+AiPlayerbot.BotLife.QuestPlan.QuestId = 0

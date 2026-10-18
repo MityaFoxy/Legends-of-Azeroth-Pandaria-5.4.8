@@ -32,6 +32,7 @@ def method(path, signature):
 action_path = "modules/mod_playerbots/src/strategy/actions/MovementActions.cpp"
 point_path = "src/server/game/Movement/MovementGenerators/PointMovementGenerator.cpp"
 methods = [method(action_path, signature) for signature in (
+    "bool MovementAction::ValidateWaterConnection(", "bool MovementAction::ValidateGroundConnection(",
     "void MovementAction::LogNavigationResult(", "Movement::PointsArray MovementAction::SearchForBestPath(",
     "bool MovementAction::CanStartGroundMovement(", "void MovementAction::TrackGroundMovement(",
     "void MovementAction::LogStuckResult(", "void MovementAction::CheckStuck(")]
@@ -65,10 +66,13 @@ constexpr int PATHFIND_BLANK=0, PATHFIND_NORMAL=1, PATHFIND_SHORTCUT=2, PATHFIND
     PATHFIND_NOPATH=8, PATHFIND_NOT_USING_PATH=16, PATHFIND_SHORT=32,
     PATHFIND_FARFROMPOLY_START=64, PATHFIND_FARFROMPOLY_END=128, MAX_POINT_PATH_LENGTH=200;
 constexpr float INVALID_HEIGHT=-100000;
-constexpr int UNIT_STATE_ROOT=1, UNIT_STATE_STUNNED=2, UNIT_STATE_ROAMING=4, UNIT_STATE_ROAMING_MOVE=8;
+constexpr int UNIT_STATE_ROOT=1, UNIT_STATE_STUNNED=2, UNIT_STATE_ROAMING=4, UNIT_STATE_ROAMING_MOVE=8, UNIT_STATE_LOST_CONTROL=16;
 constexpr int TYPEID_UNIT=0, TYPEID_PLAYER=1, EVENT_CHARGE_PREPATH=99;
 constexpr int POINT_MOTION_TYPE=1, CHASE_MOTION_TYPE=2, MOVE_RUN=0, MOVE_RUN_BACK=1, MOVEMENTFLAG_SWIMMING=8;
+constexpr int MOVE_SWIM=2, MOVE_SWIM_BACK=3, LIQUID_MAP_NO_WATER=0, LIQUID_MAP_UNDER_WATER=8;
 constexpr int MAP_ALL_LIQUIDS=15, MAP_LIQUID_STATUS_IN_CONTACT=14;
+namespace VMAP { enum class ModelIgnoreFlags { Nothing }; }
+struct LiquidData { float level=1, depth_level=-10; };
 using MovementSlot = int;
 constexpr MovementSlot MOTION_SLOT_ACTIVE=1;
 uint32 tick=100;
@@ -95,8 +99,13 @@ struct Formation { Creature* GetLeader() const { return nullptr; } void LeaderSt
 struct Creature { Formation* GetFormation() const { return nullptr; } };
 struct Guid { uint32 GetCounter() const { return 7; } };
 struct Map {
-    bool collision=true, liquid=false;
-    int GetLiquidStatus(uint32,float,float,float,int,void*,float) const { return liquid ? MAP_LIQUID_STATUS_IN_CONTACT : 0; }
+    bool collision=true, liquid=false, los=true, liquidGap=false;
+    LiquidData waterData;
+    int GetLiquidStatus(uint32,float x,float,float,int,LiquidData* data,float) const {
+        if (data) *data=waterData;
+        return liquid && !(liquidGap && x>2 && x<3) ? MAP_LIQUID_STATUS_IN_CONTACT : LIQUID_MAP_NO_WATER;
+    }
+    bool isInLineOfSight(float,float,float,float,float,float,uint32,VMAP::ModelIgnoreFlags) const { return los; }
     bool CheckCollisionAndGetValidCoords(void const*,float,float,float,float& x,float& y,float& z,bool=true) const {
         (void)x;(void)y;(void)z; return collision;
     }
@@ -117,8 +126,10 @@ struct Unit {
     bool transport=false, invalidHeight=false, stopped=true;
     int state=0;
     uint32 map=1,instance=2;
-    bool flying=false,water=false,vehicle=false,teleport=false,alive=true,casting=false,sitting=false;
-    float speed=7;
+    bool flying=false,water=false,swimming=false,vehicle=false,teleport=false,alive=true,casting=false,sitting=false;
+    bool canSwim=true;
+    float speed=7, swimSpeed=4, groundHeight=0;
+    mutable int lastSpeedMode=MOVE_RUN;
     Map mapObject;
     MotionMaster* motion=nullptr;
     Spline spline;
@@ -133,7 +144,7 @@ struct Unit {
     uint32 GetPhaseMask() const { return 1; }
     float GetCollisionHeight() const { return 2; }
     void* GetTransport() const { return transport ? (void*)this : nullptr; }
-    float GetMapHeight(float,float,float) const { return invalidHeight ? INVALID_HEIGHT : 0; }
+    float GetMapHeight(float,float,float,bool=true,float=50) const { return invalidHeight ? INVALID_HEIGHT : groundHeight; }
     bool IsStopped() const { return stopped; }
     void StopMoving() { stopped=true; }
     MotionMaster* GetMotionMaster() const { return motion; }
@@ -141,12 +152,17 @@ struct Unit {
     bool IsFlying() const { return flying; }
     bool IsInWater() const { return water; }
     bool IsUnderWater() const { return water; }
-    bool HasUnitMovementFlag(int flag) const { assert(flag==MOVEMENTFLAG_SWIMMING); return water; }
+    bool HasUnitMovementFlag(int flag) const { assert(flag==MOVEMENTFLAG_SWIMMING); return swimming; }
+    bool CanSwim() const { return canSwim; }
+    bool SetSwim(bool value) { bool changed=swimming!=value; swimming=value; return changed; }
     bool IsBeingTeleported() const { return teleport; }
     bool IsAlive() const { return alive; }
     bool IsNonMeleeSpellCasted(bool) const { return casting; }
     bool IsSitState() const { return sitting; }
-    float GetSpeed(int) const { return speed; }
+    float GetSpeed(int mode) const {
+        lastSpeedMode=mode;
+        return mode==MOVE_SWIM || mode==MOVE_SWIM_BACK ? swimSpeed : speed;
+    }
     float GetOrientation() const { return 0; }
     void AddUnitState(int flags) { state|=flags; }
     void ClearUnitState(int flags) { state&=~flags; }
@@ -185,10 +201,13 @@ struct MotionMaster {
     Unit* _owner;
     int mutations=0;
     std::unique_ptr<MovementGenerator> movement;
-    int type=POINT_MOTION_TYPE,cleared=0;
+    int type=POINT_MOTION_TYPE,cleared=0,expired=0;
+    int speedChanges=0;
+    void PropagateSpeedChange() { ++speedChanges; }
     MovementGenerator* top() const { return movement.get(); }
     int GetCurrentMovementGeneratorType() const { return type; }
     void Clear() { ++cleared; movement.reset(); }
+    void MovementExpired() { ++expired; movement.reset(); }
     void Mutate(MovementGenerator* m,MovementSlot) { ++mutations; movement.reset(m); }
     bool MovePointPath(uint32,Movement::PointsArray const&,MovementSlot=MOTION_SLOT_ACTIVE);
 };
@@ -197,6 +216,7 @@ struct LastMovement {
     uint32 navigationLogTime=0,navigationLogSuppressed=0;
     bool navigationLogStarted=false,navigationLogWarning=false;
     GroundMovementState groundMovement;
+    NavigationDetourState navigationDetour;
     float lastdelayTime=5000;
     int priority=1;
     G3D::Vector3 destination;
@@ -207,13 +227,15 @@ Config* sPlayerbotAIConfig=&config;
 struct MovementAction {
     Unit* bot;
     LastMovement last;
+    bool ValidateWaterConnection(G3D::Vector3 const&,G3D::Vector3 const&);
+    bool ValidateGroundConnection(G3D::Vector3 const&,G3D::Vector3 const&);
     Movement::PointsArray SearchForBestPath(float,float,float,bool&,bool=false,uint32=0);
     void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool);
     bool CanStartGroundMovement(float,float,float);
     void TrackGroundMovement(float,float,float,bool,bool);
     void LogStuckResult(char const*,uint32,bool=true);
     void CheckStuck(uint32);
-    bool IsMovingAllowed() const { return true; } // state-only root/stun have no aura guard
+    bool IsMovingAllowed() const { return !bot->HasUnitState(UNIT_STATE_LOST_CONTROL); }
 };
 #define AI_VALUE(type,name) this->last
 struct Row { std::string level,text; };
@@ -234,15 +256,20 @@ struct Route {
     Movement::PointsArray points;
 };
 std::deque<Route> replies;
-struct Query { G3D::Vector3 from,to; };
+struct Query { G3D::Vector3 from,to; float runSpeed,swimSpeed; };
 std::vector<Query> queries;
 struct PathGenerator {
     Unit* source;
     Route route;
+    bool waterShortcut=true;
+    float runSpeed=0,swimSpeed=0;
     explicit PathGenerator(Unit* u,uint32 nodes):source(u) { assert(nodes==4096); }
+    void SetUseWaterShortcut(bool value) { waterShortcut=value; }
+    void SetTravelSpeeds(float run,float swim) { runSpeed=run; swimSpeed=swim; }
     bool CalculatePath(float x,float y,float z,bool,bool,bool,G3D::Vector3 const* from) {
+        assert(!waterShortcut && runSpeed>0 && swimSpeed>0);
         assert(!replies.empty()); route=replies.front(); replies.pop_front();
-        queries.push_back({*from,{x,y,z}}); tick+=2;
+        queries.push_back({*from,{x,y,z},runSpeed,swimSpeed}); tick+=2;
         if (route.automatic) route.points={*from,{x,y,z}};
         return route.calculated;
     }
@@ -262,6 +289,83 @@ bool hasLog(char const* level,char const* text) {
     });
 }
 int summaries() { return std::count_if(logs.begin(),logs.end(),[](Row const& r){return r.level!="debug";}); }
+void connectionTests() {
+    reset(); Unit bot; MovementAction action{&bot};
+    // These are production validators, not unconditional "safe" stubs.
+    assert(action.ValidateGroundConnection({0,0,0},{3,0,0}));
+    assert(!action.ValidateGroundConnection({0,0,0},{3.01f,0,0}));
+    bot.mapObject.los=false;
+    assert(!action.ValidateGroundConnection({0,0,0},{2,0,0}));
+    bot.mapObject.los=true; bot.invalidHeight=true;
+    assert(!action.ValidateGroundConnection({0,0,0},{2,0,0}));
+    bot.invalidHeight=false; bot.groundHeight=-3;
+    assert(!action.ValidateGroundConnection({0,0,0},{2,0,0}));
+    bot.mapObject.liquid=true;
+    assert(action.ValidateGroundConnection({0,0,0},{2,0,0})); // Supported by water at shore.
+    assert(action.ValidateWaterConnection({0,0,0},{16,0,0}));
+    assert(!action.ValidateWaterConnection({0,0,0},{16.01f,0,0}));
+    bot.mapObject.liquidGap=true;
+    assert(!action.ValidateWaterConnection({0,0,0},{6,0,0})); // Endpoints alone are insufficient.
+    bot.mapObject.liquidGap=false; bot.mapObject.los=false;
+    assert(!action.ValidateWaterConnection({0,0,0},{6,0,0}));
+    bot.mapObject.los=true;
+    assert(!action.ValidateWaterConnection({0,0,0},{0,0,-11})); // Below the bottom.
+    assert(!action.ValidateWaterConnection({0,0,0},{0,0,2}));   // Above the allowed surface margin.
+    bot.mapObject.waterData.level=std::numeric_limits<float>::quiet_NaN();
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    bot.mapObject.waterData={1,1};
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0})); // No liquid depth.
+    bot.mapObject.waterData={}; bot.mapObject.liquid=false;
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+}
+
+void waterAndProjectionTests() {
+    reset(); Unit bot; MovementAction action{&bot}; bool navigation=false;
+    bot.water=true; bot.mapObject.liquid=true;
+    auto path=action.SearchForBestPath(10,0,0,navigation,true);
+    assert(navigation && queries.empty() && same(path.back(),{10,0,0}));
+    // An interrupted liquid volume cannot become a direct underwater shortcut.
+    bot.mapObject.liquidGap=true; config.navigationMaxAttempts=1; replies={bad()};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty() && queries.size()==1);
+    reset(); action.last={}; bot.mapObject.liquidGap=false; bot.mapObject.los=false;
+    config.navigationMaxAttempts=1; replies={bad()};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty() && queries.size()==1);
+    bot.mapObject.los=true;
+
+    // A submerged path start may join its surface polygon, but only through
+    // the short validated liquid volume. Preserve the actual starting point.
+    reset(); action.last={};
+    Route wet; wet.type=PATHFIND_INCOMPLETE|PATHFIND_FARFROMPOLY_START;
+    wet.automatic=false; wet.points={{0,0,1},{100,0,0}}; replies={wet};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(navigation && queries.size()==1 && path.size()==3 && same(path.front(),bot.position));
+    reset(); action.last={}; wet.points.front()={0,0,3};
+    config.navigationMaxAttempts=1; replies={wet};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty());
+
+    // Surface-normalization failure triggers one land-preferred retry inside
+    // the SAME query budget, with water shortcuts still disabled.
+    reset(); action.last={}; replies={bad("unsafe-surface-normalization"),Route{}};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(navigation && queries.size()==2 && same(path.back(),{100,0,0}));
+    assert(queries[0].swimSpeed==bot.swimSpeed && queries[1].swimSpeed==0.01f);
+    reset(); action.last={}; config.navigationMaxAttempts=1;
+    replies={bad("unsafe-surface-normalization")};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty() && queries.size()==1);
+
+    // The formerly rejected 2m start offset is now valid IF supported and
+    // unobstructed; a wall or missing terrain must still reject it.
+    bot.water=false; bot.mapObject.liquid=false;
+    Route projected; projected.automatic=false; projected.points={{2,0,0},{100,0,0}};
+    reset(); action.last={}; replies={projected};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(path.size()==3 && same(path.front(),bot.position) && queries.size()==1);
+    reset(); action.last={}; bot.invalidHeight=true; config.navigationMaxAttempts=1; replies={projected};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty()); bot.invalidHeight=false;
+    reset(); action.last={}; bot.mapObject.los=false; config.navigationMaxAttempts=1; replies={projected};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty());
+}
+
 void searchTests() {
     reset(); Unit bot; MovementAction action{&bot}; bool navigation=false;
     replies={Route{}};
@@ -317,7 +421,7 @@ void searchTests() {
     replies={partial,bad(),bad(),bad(),bad()};
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(navigation && hasLog("warn","destination-not-reached"));
-    reset(); action.last={}; partial.points={{2,0,0},{40,0,0}};
+    reset(); action.last={}; partial.points={{4,0,0},{40,0,0}};
     replies={partial,bad(),bad(),bad(),bad()};
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(!navigation && same(path.back(),{8,0,0}) && hasLog("warn","path-start-mismatch"));
@@ -369,7 +473,7 @@ void logTests() {
     tick=100;
     action.LogNavigationResult("fallback-direct","missing-navmesh",16,1,100,0,0,true);
     assert(summaries()==3); // Unsigned server timer rollover must not defeat throttling.
-    action.last={}; bot.water=true;
+    action.last={}; bot.water=true; bot.swimming=true;
     action.LogNavigationResult("fallback-direct","far-from-navigation-polygon",68,4,100,0,0,true);
     assert(logs.back().text.ends_with("1 1 1 0 ")); // Distinguish water from a dry-land height fault.
 }
@@ -413,9 +517,15 @@ void stuckTests() {
     assert(same(state.goal,{100,0,0}) && same(state.endpoint,{40,0,0}));
     wait(3); assert(queries.empty());
     // A new command to the same goal must not restart the no-progress clock.
+    state.owner=std::make_shared<int>(1);
     action.TrackGroundMovement(100,0,0,false,false);
+    assert(!state.owner); // But it must revoke the previous caller's lease.
+    auto owner=std::make_shared<int>(2); state.owner=owner;
+    int const clearsBeforeRecovery=motion.cleared;
     replies={Route{},Route{},Route{}}; wait(1);
     assert(state.attempts==1 && state.recovering && queries.size()==3);
+    assert(state.owner==owner); // Watchdog recovery retains the issued command's owner.
+    assert(motion.cleared==clearsBeforeRecovery); // Replace only the active slot.
     assert(same(queries.back().to,{100,0,0}) && queries[1].to.y==-24);
     assert(hasLog("warn","stuck-detected") && hasLog("info","stuck-recovery-started"));
     assert(same(action.last.destination,{100,0,0}));
@@ -425,7 +535,7 @@ void stuckTests() {
     assert(!state.active && hasLog("info","stuck-goal-reached"));
 
     // Forced-control states and casts reset, rather than accumulate, idle time.
-    for (int flag : {UNIT_STATE_ROOT,UNIT_STATE_STUNNED}) {
+    for (int flag : {UNIT_STATE_ROOT,UNIT_STATE_STUNNED,UNIT_STATE_LOST_CONTROL}) {
         start(); wait(3); bot.state=flag; wait(20); bot.state=0; wait(3);
         assert(queries.empty() && state.active);
     }
@@ -449,25 +559,29 @@ void stuckTests() {
     start(); motion.type=CHASE_MOTION_TYPE; wait(1); assert(!state.active);
     start(); ++bot.instance; wait(1); assert(!state.active); --bot.instance;
     start(); ++bot.map; wait(1); assert(!state.active); --bot.map;
-    for (bool* excluded : {&bot.transport,&bot.vehicle,&bot.flying,&bot.water,&bot.teleport}) {
+    for (bool* excluded : {&bot.transport,&bot.vehicle,&bot.flying,&bot.teleport}) {
         start(); *excluded=true; wait(5); *excluded=false; assert(!state.active && queries.empty());
     }
     start(); bot.alive=false; wait(5); bot.alive=true; assert(!state.active && queries.empty());
 
     // Three bounded recovery attempts use different waypoint families, then stop.
     start(); replies=std::deque<Route>(9,Route{});
+    int const clearsBeforeExhaustion=motion.cleared, expiresBeforeExhaustion=motion.expired;
     wait(4); assert(state.attempts==1);
     wait(4); assert(state.attempts==2);
     wait(4); assert(state.attempts==3);
     assert(queries[1].to.y==-24 && queries[4].to.y==48 && queries[7].to.y==-64);
     wait(4); assert(state.exhausted && !state.active && bot.stopped);
+    assert(motion.cleared==clearsBeforeExhaustion && motion.expired==expiresBeforeExhaustion+1);
     assert(hasLog("warn","stuck-recovery-exhausted") && queries.size()==9);
     assert(!action.CanStartGroundMovement(100,0,0));
     assert(action.CanStartGroundMovement(200,0,0));
     bot.position={3,0,0}; assert(action.CanStartGroundMovement(100,0,0) && !state.exhausted);
 
     // Even failed first legs must not reuse waypoint candidates on later attempts.
-    start(); replies=std::deque<Route>(30,bad()); wait(12);
+    start(); replies=std::deque<Route>(30,bad()); wait(4);
+    assert(state.recovering && state.attempts==1 && !state.exhausted);
+    wait(8);
     assert(state.exhausted);
     std::vector<G3D::Vector3> waypoints;
     for (auto const& query : queries) {
@@ -490,7 +604,46 @@ void stuckTests() {
     assert(!state.exhausted && state.attempts==0 && same(state.goal,{200,0,0}));
     assert(hasLog("debug","ground-movement-started"));
 }
-int main() { searchTests(); logTests(); executionTests(); stuckTests(); }
+void swimObservationTests() {
+    reset(); Unit bot; MotionMaster motion{&bot}; bot.motion=&motion;
+    MovementAction action{&bot};
+    // Even without an active point route, water-mode changes refresh native
+    // chase speed exactly once; observation must not replace that movement.
+    motion.type=CHASE_MOTION_TYPE;
+    motion.movement=std::make_unique<MovementGenerator>();
+    auto const* chase=motion.top();
+    bot.water=true; action.CheckStuck(1000); action.CheckStuck(1000);
+    assert(bot.swimming && motion.speedChanges==1 && motion.top()==chase && !motion.cleared);
+    bot.water=false; action.CheckStuck(1000);
+    assert(!bot.swimming && motion.speedChanges==2 && motion.top()==chase);
+
+    // Owned swimming splines are tracked (water is no longer an exclusion).
+    motion.type=POINT_MOTION_TYPE; bot.stopped=false; bot.water=true;
+    bot.spline.points={{0,0,0},{40,0,0}};
+    action.TrackGroundMovement(100,0,0,false,false);
+    action.CheckStuck(1000);
+    assert(action.last.groundMovement.active && bot.lastSpeedMode==MOVE_SWIM);
+    action.last.groundMovement.backwards=true; action.CheckStuck(1000);
+    assert(bot.lastSpeedMode==MOVE_SWIM_BACK);
+    bot.swimSpeed=0; action.CheckStuck(1000);
+    assert(action.last.groundMovement.idleMs==0 && queries.empty());
+    bot.swimSpeed=0.1f;
+    for (int i=0;i<30;++i) { bot.position.x+=0.1f; action.CheckStuck(1000); }
+    assert(action.last.groundMovement.active && queries.empty());
+
+    // Switching to a different generator relinquishes tracking without
+    // clearing, stopping or replanning the foreign command.
+    motion.movement=std::make_unique<MovementGenerator>();
+    auto const* foreign=motion.top();
+    action.CheckStuck(1000);
+    assert(!action.last.groundMovement.active && motion.top()==foreign);
+    assert(!motion.cleared && !bot.stopped && queries.empty());
+}
+
+int main() {
+    connectionTests(); waterAndProjectionTests(); searchTests();
+    logTests(); executionTests(); stuckTests(); swimObservationTests();
+}
 """
 
 with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory:

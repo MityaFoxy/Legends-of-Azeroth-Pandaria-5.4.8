@@ -17,6 +17,7 @@ module = (root / "modules/mod_botlife/src/mod_botlife.cpp").read_text()
 header = (root / "modules/mod_botlife/src/BotLife.h").read_text()
 implementation = (root / "modules/mod_botlife/src/BotLife.cpp").read_text()
 activity = (root / "modules/mod_botlife/src/BotLifeActivity.cpp").read_text()
+travel_test = (root / "modules/mod_botlife/src/BotLifeTravelTest.cpp").read_text()
 
 assert 'option(BOTLIFE          "Build optional BotLife layer for playerbots"                 0)' in options
 assert 'list(REMOVE_ITEM VALID_MODULES "mod_botlife")' in modules_cmake
@@ -26,6 +27,15 @@ assert "execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different" not in mo
 assert "[botlife]" in config
 assert "AiPlayerbot.BotLife.Enabled = 0" in config
 assert "AiPlayerbot.BotLife.BotGuids =" in config
+assert "AiPlayerbot.BotLife.TravelTest.Enabled = 0" in config
+assert "IsOnlyEligibleBot(botGuid)" in travel_test
+assert "handler->GetSession()" in travel_test
+assert "sPlayerbotAIConfig->randomBotAutologin" in travel_test
+assert "IsInRandomAccountList" in travel_test
+assert "_singleRunConsumed" in implementation
+for forbidden in ("TeleportTo(", "SetInCombatWith(", "CombatStart(", "Attack(",
+                  "AttackStart(", "KilledMonsterCredit(", "SummonCreature(", "CompleteQuest("):
+    assert forbidden not in travel_test, f"Travel test bypasses native mechanics: {forbidden}"
 assert 'GetBoolDefault("AiPlayerbot.BotLife.Enabled", false)' in implementation
 assert 'GetStringDefault("AiPlayerbot.BotLife.BotGuids", "")' in implementation
 assert "BotLife" not in config_cpp

@@ -71,8 +71,13 @@ void LoadConfig()
         TC_LOG_WARN("server.loading", "BotLife is enabled but AiPlayerbot.BotLife.BotGuids is empty; no bots are eligible");
 }
 
-ActivityContext::ActivityContext(ExecutorFactory factory)
-    : _factory(factory), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
+bool IsOnlyEligibleBot(uint32_t guid)
+{
+    return config.enabled && config.botGuids.size() == 1 && config.botGuids.count(guid);
+}
+
+ActivityContext::ActivityContext(ExecutorFactory factory, SingleRunFactory singleRun)
+    : _factory(factory), _singleRun(singleRun), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
 
 ActivityContext::~ActivityContext() = default;
 
@@ -166,12 +171,25 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
     }
 
     if (!_active)
+    {
+        if (_singleRun && _singleRunConsumed)
+            return PlayerbotAIExtensionResult::ContinueBaseAI;
         Start(botAI, _activity, "enabled");
+        if (!_active)
+            return PlayerbotAIExtensionResult::ContinueBaseAI;
+    }
 
     uint32_t const available = std::numeric_limits<uint32_t>::max() - _elapsed;
     _elapsed += std::min(elapsed, available);
 
     ActivityResult const result = _executor->Update(botAI, elapsed);
+    if (_singleRun && (result == ActivityResult::Completed || result == ActivityResult::Failed))
+    {
+        _executor->Finish(botAI, result);
+        _executor.reset();
+        _active = false;
+        return PlayerbotAIExtensionResult::ContinueBaseAI;
+    }
     switch (result)
     {
         case ActivityResult::Running:
@@ -185,7 +203,9 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
             break;
     }
 
-    return PlayerbotAIExtensionResult::ContinueBaseAI;
+    return _executor && _executor->ControlsMovement()
+        ? PlayerbotAIExtensionResult::SuppressBaseNonCombatAction
+        : PlayerbotAIExtensionResult::ContinueBaseAI;
 }
 
 void ActivityContext::Reset(PlayerbotAI& botAI)
@@ -217,7 +237,11 @@ void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char cons
 {
     _activity = activity;
     _elapsed = 0;
-    _executor = _factory(activity, config.stubActivityDuration);
+    _executor = _singleRun ? _singleRun(botAI) : _factory(activity, config.stubActivityDuration);
+    _singleRunConsumed = true;
+    if (!_executor)
+        return;
+    _activity = _executor->GetType();
     _executor->Start(botAI);
     _active = true;
     _paused = false;
@@ -227,7 +251,7 @@ void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char cons
     _instanceId = bot->GetInstanceId();
     _phaseMask = bot->GetPhaseMask();
     TC_LOG_INFO("playerbots.botlife", "BotLife bot={} guid={} activity={} event=start reason={}",
-        bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(activity), reason);
+        bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(_activity), reason);
 }
 
 void ActivityContext::Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason)

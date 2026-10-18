@@ -55,6 +55,8 @@ public:
     virtual bool Resume(PlayerbotAI& botAI) = 0;
     virtual void Interrupt(PlayerbotAI& botAI, InterruptReason reason) = 0;
     virtual void Finish(PlayerbotAI& botAI, ActivityResult result) = 0;
+    // True only while the executor still owns its non-combat movement.
+    virtual bool ControlsMovement() const { return false; }
 };
 
 char const* ToString(ActivityType activity);
@@ -66,7 +68,8 @@ class ActivityContext final : public PlayerbotAIExtension
 {
 public:
     using ExecutorFactory = std::unique_ptr<ActivityExecutor> (*)(ActivityType, uint32_t);
-    explicit ActivityContext(ExecutorFactory factory = &CreateExecutor);
+    using SingleRunFactory = std::unique_ptr<ActivityExecutor> (*)(PlayerbotAI&);
+    explicit ActivityContext(ExecutorFactory factory = &CreateExecutor, SingleRunFactory singleRun = nullptr);
     ~ActivityContext() override;
 
     void Observe(PlayerbotAI& botAI) override;
@@ -85,6 +88,8 @@ private:
 
     std::unique_ptr<ActivityExecutor> _executor;
     ExecutorFactory _factory;
+    SingleRunFactory _singleRun;
+    bool _singleRunConsumed = false;
     ActivityType _activity;
     uint32_t _elapsed;
     bool _active;
@@ -95,6 +100,7 @@ private:
 };
 
 void LoadConfig();
+bool IsOnlyEligibleBot(uint32_t guid);
 }
 
 #endif

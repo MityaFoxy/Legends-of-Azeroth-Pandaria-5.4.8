@@ -29,6 +29,8 @@ add_test(NAME gameobject_owner_regression COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(gameobject_owner_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME soak_controller_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/soak_controller_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME botlife_soak_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_soak_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME bot_behavior_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/bot_behavior_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(bot_behavior_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
@@ -76,6 +78,10 @@ add_test(NAME configuration_contract_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME botlife_scaffold_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/botlife_scaffold_regression.py ${LOA_SOURCE_DIR})
+add_test(NAME botlife_travel_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_travel_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_travel_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 
 add_executable(botlife_lifecycle_regression botlife_lifecycle_regression.cpp
   ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLife.cpp
@@ -89,4 +95,18 @@ target_compile_options(botlife_lifecycle_regression PRIVATE
 target_link_options(botlife_lifecycle_regression PRIVATE -fsanitize=address,undefined)
 add_test(NAME botlife_lifecycle_regression COMMAND botlife_lifecycle_regression)
 set_tests_properties(botlife_lifecycle_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+
+add_executable(botlife_quest_plan_regression botlife_quest_plan_regression.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeQuestPlan.cpp)
+target_include_directories(botlife_quest_plan_regression PRIVATE ${LOA_SOURCE_DIR}/modules/mod_botlife/src)
+target_compile_options(botlife_quest_plan_regression PRIVATE
+  -fsanitize=address,undefined -fno-omit-frame-pointer -UNDEBUG)
+target_link_options(botlife_quest_plan_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME botlife_quest_plan_regression COMMAND botlife_quest_plan_regression)
+set_tests_properties(botlife_quest_plan_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_quest_native_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_native_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_quest_native_regression PROPERTIES
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

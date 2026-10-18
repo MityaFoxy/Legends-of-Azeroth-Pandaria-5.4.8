@@ -1,4 +1,6 @@
 #include "BotLife.h"
+#include "BotLifeTravelTest.h"
+#include "BotLifeQuestDiagnostic.h"
 
 #include <boost/filesystem.hpp>
 #include <memory>
@@ -17,7 +19,9 @@ namespace
 {
 std::unique_ptr<PlayerbotAIExtension> CreateBotLifeExtension()
 {
-    return std::make_unique<BotLife::ActivityContext>();
+    return std::make_unique<BotLife::ActivityContext>(&BotLife::CreateExecutor,
+        BotLife::IsTravelTestEnabled() ? &BotLife::CreateTravelTestExecutor :
+        BotLife::IsQuestPlanEnabled() ? &BotLife::CreateQuestPlanExecutor : nullptr);
 }
 
 class BotLifeWorldScript final : public WorldScript
@@ -39,7 +43,12 @@ public:
         }
 
         BotLife::LoadConfig();
+        BotLife::LoadTravelTestConfig();
+        if (!reloaded)
+            BotLife::LoadQuestPlanConfig();
     }
+
+    void OnStartup() override { BotLife::InitializeQuestPlanData(); }
 };
 }
 
@@ -47,4 +56,5 @@ void AddSC_mod_botlife()
 {
     sPlayerbotAIExtensionRegistry->Register(&CreateBotLifeExtension);
     new BotLifeWorldScript();
+    BotLife::RegisterTravelTestCommand();
 }

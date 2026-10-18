@@ -334,7 +334,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     // Underwater movement to another underwater point is genuinely 3D. When
     // the destination is on land, use the mixed ground/water navmesh instead
     // of drawing one long spline through the river bank or terrain.
-    bool generatePath = battlegroundGroundMovement
+    bool generatePath = normal_only || battlegroundGroundMovement
         || (!bot->IsFlying() && (!sourceInWater || !destinationInWater));
     if (Vehicle* vehicle = bot->GetVehicle())
     {
@@ -348,6 +348,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         if (distance > 0.01f)
         {
             MotionMaster& mm = *vehicleBase->GetMotionMaster();  // need to move vehicle, not bot
+            AI_VALUE(LastMovement&, "last movement").groundMovement.owner.reset();
             mm.Clear();
             if (!backwards)
             {
@@ -378,6 +379,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
 
             MotionMaster& mm = *bot->GetMotionMaster();
+            AI_VALUE(LastMovement&, "last movement").groundMovement.owner.reset();
             mm.Clear();
             if (!backwards)
             {
@@ -760,6 +762,7 @@ void MovementAction::TrackGroundMovement(float x, float y, float z, bool normalO
     bool const continuing = state.Matches(bot->GetMapId(), bot->GetInstanceId(), {x, y, z});
     if (!continuing)
         state = {};
+    state.owner.reset();
     if (!state.active)
     {
         state.anchor = {bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()};
@@ -870,11 +873,18 @@ void MovementAction::CheckStuck(uint32 elapsed)
     if (state.idleMs < sPlayerbotAIConfig->stuckTimeout)
         return;
     LogStuckResult("stuck-detected", state.attempts);
+    // Recovery includes waiting after a failed route query, not only a newly
+    // launched spline. Callers may observe this without running another watchdog.
+    if (!state.recovering)
+    {
+        state.recovering = true;
+        state.recoveryStart = position;
+    }
     auto exhaust = [&]()
     {
         LogStuckResult("stuck-recovery-exhausted", state.attempts);
         bot->StopMoving();
-        mm.Clear();
+        mm.MovementExpired(); // Only the tracked top; preserve underlying motion.
         state.active = state.recovering = false;
         state.exhausted = true;
         state.anchor = position;
@@ -898,7 +908,8 @@ void MovementAction::CheckStuck(uint32 elapsed)
             exhaust();
         return;
     }
-    mm.Clear();
+    // MovePointPath replaces its active slot itself; clearing the whole stack
+    // here would discard unrelated lower-priority movement.
     if (!mm.MovePointPath(0, path))
     {
         exhaust();
