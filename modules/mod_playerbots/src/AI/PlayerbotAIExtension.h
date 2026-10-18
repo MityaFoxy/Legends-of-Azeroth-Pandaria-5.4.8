@@ -18,6 +18,9 @@ class PlayerbotAIExtension
 public:
     virtual ~PlayerbotAIExtension() = default;
 
+    // Observe lifecycle even when the normal action tick is throttled/casting.
+    // May pause/cancel existing work, but must not start gameplay actions.
+    virtual void Observe(PlayerbotAI&) { }
     virtual PlayerbotAIExtensionResult Update(PlayerbotAI& botAI, uint32_t elapsed) = 0;
     virtual void Reset(PlayerbotAI& botAI) = 0;
 };

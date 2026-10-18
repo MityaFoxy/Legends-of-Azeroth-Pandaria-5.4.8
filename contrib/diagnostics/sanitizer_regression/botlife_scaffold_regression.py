@@ -16,6 +16,7 @@ extension = (root / "modules/mod_playerbots/src/AI/PlayerbotAIExtension.h").read
 module = (root / "modules/mod_botlife/src/mod_botlife.cpp").read_text()
 header = (root / "modules/mod_botlife/src/BotLife.h").read_text()
 implementation = (root / "modules/mod_botlife/src/BotLife.cpp").read_text()
+activity = (root / "modules/mod_botlife/src/BotLifeActivity.cpp").read_text()
 
 assert 'option(BOTLIFE          "Build optional BotLife layer for playerbots"                 0)' in options
 assert 'list(REMOVE_ITEM VALID_MODULES "mod_botlife")' in modules_cmake
@@ -39,13 +40,18 @@ for activity in ("Free", "Quest", "Town", "Rest"):
     assert activity in header, activity
 for result in ("Running", "Completed", "TemporarilyBlocked", "Failed"):
     assert result in header, result
-for operation in ("Start", "Update", "Interrupt", "Finish"):
+for operation in ("Start", "Update", "Pause", "Resume", "Interrupt", "Finish", "Observe"):
     assert f" {operation}(" in header, operation
 
 update = ai[ai.index("void PlayerbotAI::UpdateAIInternal"):ai.index("bool PlayerbotAI::DoSpecificAction")]
 assert update.index("extension->Update(*this, elapsed)") < update.index("DoNextAction(minimal)")
 assert "if (runBaseAI)" in update
 assert "_currentState == BOT_STATE_NON_COMBAT" in update
+assert "bot->IsAlive() && !bot->IsInCombat()" in update
+early_update = ai[ai.index("void PlayerbotAI::UpdateAI("):ai.index("void PlayerbotAI::UpdateAIInternal")]
+assert early_update.index("extension->Observe(*this)") < early_update.index("if (nextAICheckDelay")
+teleport = ai[ai.index("void PlayerbotAI::HandleTeleportAck()"):ai.index("void PlayerbotAI::HandleBotOutgoingPacket")]
+assert teleport.index("extension->Observe(*this)") < teleport.index("bot->GetMotionMaster()->Clear")
 reset = ai[ai.index("void PlayerbotAI::Reset(bool full)"):ai.index("void PlayerbotAI::ResetStrategies")]
 assert "extension->Reset(*this)" in reset
 destructor = ai[ai.index("PlayerbotAI::~PlayerbotAI()") : ai.index("uint32 PlayerbotAI::GetReactDelay")]
@@ -64,7 +70,7 @@ for forbidden in (
     "RewardQuest(",
     "Attack(",
 ):
-    assert forbidden not in implementation, f"stage-1 BotLife became invasive: {forbidden}"
+    assert forbidden not in implementation + activity, f"BotLife lifecycle scaffold became invasive: {forbidden}"
 
 assert len(implementation.splitlines()) < 300, "BotLife.cpp is becoming a monolith; split the next executor"
 

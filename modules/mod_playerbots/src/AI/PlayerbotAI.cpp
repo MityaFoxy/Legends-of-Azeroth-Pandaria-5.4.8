@@ -234,6 +234,9 @@ uint32 PlayerbotAI::GetReactDelay()
 
 void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 {
+    for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
+        extension->Observe(*this);
+
     // Handle the AI check delay
     if (nextAICheckDelay > elapsed)
         nextAICheckDelay -= elapsed;
@@ -370,7 +373,7 @@ void PlayerbotAI::UpdateAIInternal([[maybe_unused]] uint32 elapsed, bool minimal
     for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
     {
         if (extension->Update(*this, elapsed) == PlayerbotAIExtensionResult::SuppressBaseNonCombatAction &&
-            _currentState == BOT_STATE_NON_COMBAT)
+            _currentState == BOT_STATE_NON_COMBAT && bot->IsAlive() && !bot->IsInCombat())
             runBaseAI = false;
     }
 
@@ -1037,6 +1040,10 @@ void PlayerbotAI::HandleTeleportAck()
 {
     if (IsRealPlayer())
         return;
+
+    // A near teleport can finish between two regular AI ticks.
+    for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
+        extension->Observe(*this);
 
     bot->GetMotionMaster()->Clear(true);
     bot->StopMoving();

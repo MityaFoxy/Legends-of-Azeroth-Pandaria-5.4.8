@@ -76,3 +76,17 @@ add_test(NAME configuration_contract_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/configuration_contract_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME botlife_scaffold_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/botlife_scaffold_regression.py ${LOA_SOURCE_DIR})
+
+add_executable(botlife_lifecycle_regression botlife_lifecycle_regression.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLife.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeActivity.cpp)
+target_include_directories(botlife_lifecycle_regression PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_test_support
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src
+  ${LOA_SOURCE_DIR}/modules/mod_playerbots/src/AI)
+target_compile_options(botlife_lifecycle_regression PRIVATE
+  -fsanitize=address,undefined -fno-omit-frame-pointer -UNDEBUG)
+target_link_options(botlife_lifecycle_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME botlife_lifecycle_regression COMMAND botlife_lifecycle_regression)
+set_tests_properties(botlife_lifecycle_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

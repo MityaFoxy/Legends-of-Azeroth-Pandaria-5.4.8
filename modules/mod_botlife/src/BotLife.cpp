@@ -12,6 +12,7 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Util.h"
+#include "WorldSession.h"
 
 namespace BotLife
 {
@@ -25,57 +26,6 @@ struct BotLifeConfig
 };
 
 BotLifeConfig config;
-
-char const* ToString(ActivityType activity)
-{
-    switch (activity)
-    {
-        case ActivityType::Free:
-            return "FREE";
-        case ActivityType::Quest:
-            return "QUEST";
-        case ActivityType::Town:
-            return "TOWN";
-        case ActivityType::Rest:
-            return "REST";
-    }
-
-    return "UNKNOWN";
-}
-
-char const* ToString(ActivityResult result)
-{
-    switch (result)
-    {
-        case ActivityResult::Running:
-            return "running";
-        case ActivityResult::Completed:
-            return "completed";
-        case ActivityResult::TemporarilyBlocked:
-            return "temporarily-blocked";
-        case ActivityResult::Failed:
-            return "failed";
-    }
-
-    return "unknown";
-}
-
-char const* ToString(InterruptReason reason)
-{
-    switch (reason)
-    {
-        case InterruptReason::Disabled:
-            return "disabled";
-        case InterruptReason::NotAllowed:
-            return "not-allowed";
-        case InterruptReason::PlayerControl:
-            return "player-control";
-        case InterruptReason::Reset:
-            return "reset";
-    }
-
-    return "unknown";
-}
 
 ActivityType NextActivity(ActivityType activity)
 {
@@ -97,48 +47,6 @@ ActivityType NextActivity(ActivityType activity)
 bool IsEligible(Player* bot)
 {
     return config.enabled && bot && config.botGuids.find(bot->GetGUID().GetCounter()) != config.botGuids.end();
-}
-
-class TimedStubExecutor final : public ActivityExecutor
-{
-public:
-    explicit TimedStubExecutor(ActivityType type) : _type(type), _elapsed(0) { }
-
-    ActivityType GetType() const override { return _type; }
-
-    void Start(PlayerbotAI&) override
-    {
-        _elapsed = 0;
-    }
-
-    ActivityResult Update(PlayerbotAI&, uint32_t elapsed) override
-    {
-        uint32_t const available = std::numeric_limits<uint32_t>::max() - _elapsed;
-        _elapsed += std::min(elapsed, available);
-        if (_elapsed >= config.stubActivityDuration)
-            return ActivityResult::Completed;
-
-        return ActivityResult::Running;
-    }
-
-    void Interrupt(PlayerbotAI&, InterruptReason) override
-    {
-        _elapsed = 0;
-    }
-
-    void Finish(PlayerbotAI&, ActivityResult) override
-    {
-        _elapsed = 0;
-    }
-
-private:
-    ActivityType _type;
-    uint32_t _elapsed;
-};
-
-std::unique_ptr<ActivityExecutor> CreateExecutor(ActivityType activity)
-{
-    return std::make_unique<TimedStubExecutor>(activity);
 }
 }
 
@@ -163,35 +71,99 @@ void LoadConfig()
         TC_LOG_WARN("server.loading", "BotLife is enabled but AiPlayerbot.BotLife.BotGuids is empty; no bots are eligible");
 }
 
-ActivityContext::ActivityContext() : _activity(ActivityType::Free), _elapsed(0), _active(false) { }
+ActivityContext::ActivityContext(ExecutorFactory factory)
+    : _factory(factory), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
 
 ActivityContext::~ActivityContext() = default;
 
-PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t elapsed)
+void ActivityContext::Observe(PlayerbotAI& botAI)
+{
+    CheckLifecycle(botAI);
+}
+
+bool ActivityContext::CheckLifecycle(PlayerbotAI& botAI)
 {
     Player* bot = botAI.GetBot();
     if (!config.enabled)
     {
         Stop(botAI, InterruptReason::Disabled);
-        return PlayerbotAIExtensionResult::ContinueBaseAI;
+        return false;
     }
 
     if (!IsEligible(bot))
     {
         Stop(botAI, InterruptReason::NotAllowed);
-        return PlayerbotAIExtensionResult::ContinueBaseAI;
+        return false;
     }
 
     if (botAI.HasRealPlayerMaster())
     {
         Stop(botAI, InterruptReason::PlayerControl);
-        return PlayerbotAIExtensionResult::ContinueBaseAI;
+        return false;
     }
 
-    // The diagnostic slice observes the existing AI but owns no movement or
-    // combat. Its timer pauses while the native combat/death engines are active.
-    if (!bot->IsAlive() || bot->IsInCombat())
+    if (!bot->GetSession() || bot->GetSession()->isLogingOut())
+    {
+        Stop(botAI, InterruptReason::Logout);
+        return false;
+    }
+    if (bot->IsBeingTeleported())
+    {
+        Stop(botAI, InterruptReason::Teleport);
+        return false;
+    }
+    if (!bot->IsInWorld() || bot->IsDuringRemoveFromWorld())
+    {
+        Stop(botAI, InterruptReason::OutOfWorld);
+        return false;
+    }
+    if (!bot->IsAlive())
+    {
+        Stop(botAI, InterruptReason::Death);
+        return false;
+    }
+    if (_active && (_mapId != bot->GetMapId() || _instanceId != bot->GetInstanceId() ||
+        _phaseMask != bot->GetPhaseMask()))
+    {
+        Stop(botAI, InterruptReason::WorldChanged);
+        return false;
+    }
+    if (bot->IsInCombat())
+    {
+        if (_active && !_paused)
+        {
+            _executor->Pause(botAI);
+            _paused = true;
+            TC_LOG_INFO("playerbots.botlife",
+                "BotLife bot={} guid={} activity={} event=pause reason=combat duration_ms={}",
+                bot->GetName(), bot->GetGUID().ToString(), ToString(_activity), _elapsed);
+        }
+        return false;
+    }
+    return true;
+}
+
+PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t elapsed)
+{
+    // Packet handling may have changed lifecycle state after Observe().
+    if (!CheckLifecycle(botAI))
         return PlayerbotAIExtensionResult::ContinueBaseAI;
+
+    if (_paused)
+    {
+        if (!_executor->Resume(botAI))
+        {
+            Stop(botAI, InterruptReason::InvalidTarget);
+            return PlayerbotAIExtensionResult::ContinueBaseAI;
+        }
+        _paused = false;
+        Player* bot = botAI.GetBot();
+        TC_LOG_INFO("playerbots.botlife",
+            "BotLife bot={} guid={} activity={} event=resume reason=combat-ended duration_ms={}",
+            bot->GetName(), bot->GetGUID().ToString(), ToString(_activity), _elapsed);
+        // The interval supplied by the caller may include the paused time.
+        return PlayerbotAIExtensionResult::ContinueBaseAI;
+    }
 
     if (!_active)
         Start(botAI, _activity, "enabled");
@@ -238,17 +210,22 @@ void ActivityContext::Stop(PlayerbotAI& botAI, InterruptReason reason)
     _activity = ActivityType::Free;
     _elapsed = 0;
     _active = false;
+    _paused = false;
 }
 
 void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char const* reason)
 {
     _activity = activity;
     _elapsed = 0;
-    _executor = CreateExecutor(activity);
+    _executor = _factory(activity, config.stubActivityDuration);
     _executor->Start(botAI);
     _active = true;
+    _paused = false;
 
     Player* bot = botAI.GetBot();
+    _mapId = bot->GetMapId();
+    _instanceId = bot->GetInstanceId();
+    _phaseMask = bot->GetPhaseMask();
     TC_LOG_INFO("playerbots.botlife", "BotLife bot={} guid={} activity={} event=start reason={}",
         bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(activity), reason);
 }
