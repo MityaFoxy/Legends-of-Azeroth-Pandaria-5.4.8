@@ -128,7 +128,7 @@ public:
     void HandleMasterOutgoingPacket(WorldPacket const& packet);
     void HandleTeleportAck();
     
-    void Reset(bool full = false);
+    void Reset(bool full = false, PlayerbotAIResetReason reason = PlayerbotAIResetReason::General);
     void ChangeEngine(BotState type);
     void ReInitCurrentEngine();
     virtual bool DoSpecificAction(std::string const name, Event event = Event(), bool silent = false, std::string const qualifier = "");

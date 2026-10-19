@@ -1,5 +1,8 @@
 #include "BotLifeTravelTest.h"
 #include "BotLifeMovement.h"
+#include "BotLifeQuestAcquire.h"
+#include "BotLifeQuestDiagnostic.h"
+#include "BotLifeQuestRun.h"
 
 #include <algorithm>
 #include <sstream>
@@ -13,6 +16,7 @@
 #include "PlayerbotAIConfig.h"
 #include "RandomPlayerbotMgr.h"
 #include "ScriptMgr.h"
+#include "Timer.h"
 
 namespace BotLife
 {
@@ -46,10 +50,11 @@ public:
         if (_sample >= 5000 || status != _lastStatus)
         {
             Player* bot = ai.GetBot();
-            TC_LOG_INFO("playerbots.botlife", "BotLife travel-test guid={} event=sample status={} failure={} attempts={} owned={} motion={} pos=({},{},{}) distance={} health={}",
+            TC_LOG_INFO("playerbots.botlife", "BotLife travel-test guid={} event=sample status={} failure={} attempts={} owned={} motion={} pos=({},{},{}) distance={} health={} failed_attempts={} progress_segments={}",
                 botGuid, ToString(status), ToString(_travel.GetFailure()), _travel.GetAttempts(), _travel.ControlsMovement(),
                 uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()), bot->GetPositionX(), bot->GetPositionY(),
-                bot->GetPositionZ(), bot->GetExactDist(_target.x, _target.y, _target.z), bot->GetHealth());
+                bot->GetPositionZ(), bot->GetExactDist(_target.x, _target.y, _target.z), bot->GetHealth(),
+                _travel.GetFailedAttempts(), _travel.GetProgressSegments());
             _sample = 0;
             _lastStatus = status;
         }
@@ -83,8 +88,9 @@ public:
     }
     void Finish(PlayerbotAI&, ActivityResult result) override
     {
-        TC_LOG_INFO("playerbots.botlife", "BotLife travel-test guid={} event=finish result={} failure={} moved={} pauses={} resumes={} attempts={}",
-            botGuid, ToString(result), ToString(_travel.GetFailure()), _moved, _pauses, _resumes, _travel.GetAttempts());
+        TC_LOG_INFO("playerbots.botlife", "BotLife travel-test guid={} event=finish result={} failure={} moved={} pauses={} resumes={} attempts={} failed_attempts={} progress_segments={}",
+            botGuid, ToString(result), ToString(_travel.GetFailure()), _moved, _pauses, _resumes, _travel.GetAttempts(),
+            _travel.GetFailedAttempts(), _travel.GetProgressSegments());
         _travel.Cancel();
     }
     bool ControlsMovement() const override { return _travel.ControlsMovement(); }
@@ -109,19 +115,39 @@ public:
     }
     static bool Login(ChatHandler* handler, char const* args)
     {
-        if (handler->GetSession() || (args && *args) || !enabled || !IsOnlyEligibleBot(botGuid) ||
+        // World-thread console only. Each configured QuestRun bot is requested once;
+        // stable per-bot spacing avoids a synchronized five-login burst.
+        static size_t nextQuestBot = 0;
+        static uint32 lastQuestLogin = 0;
+        std::vector<uint32_t> const questBots = GetQuestRunBotGuids();
+        bool const questRun = IsQuestRunEnabled();
+        uint32 const loginGuid = enabled ? botGuid :
+            questRun ? (nextQuestBot < questBots.size() ? questBots[nextQuestBot] : 0) :
+            IsQuestAcquireEnabled() ? GetQuestAcquireBotGuid() : GetQuestPlanBotGuid();
+        if (handler->GetSession() || (args && *args) || !loginGuid ||
+            !(questRun ? IsEligibleBot(loginGuid) : IsOnlyEligibleBot(loginGuid)) ||
             !sPlayerbotAIConfig->enabled || sPlayerbotAIConfig->randomBotAutologin)
         {
-            handler->SendSysMessage("Requires console, valid single-bot TravelTest config and RandomBotAutologin=0.");
+            handler->SendSysMessage("Requires console, an unrequested configured test bot and RandomBotAutologin=0.");
             return false;
         }
-        ObjectGuid const guid = ObjectGuid::Create<HighGuid::Player>(botGuid);
+        if (questRun && nextQuestBot && GetMSTimeDiffToNow(lastQuestLogin) < 20000 + loginGuid % 7 * 1000)
+        {
+            handler->SendSysMessage("QuestRun login spacing: wait up to 26 seconds before requesting the next bot.");
+            return false;
+        }
+        ObjectGuid const guid = ObjectGuid::Create<HighGuid::Player>(loginGuid);
         if (!sPlayerbotAIConfig->IsInRandomAccountList(sCharacterCache->GetCharacterAccountIdByGuid(guid)))
         {
             handler->SendSysMessage("Configured character is not on a random-bot account.");
             return false;
         }
         sRandomPlayerbotMgr->AddPlayerBot(guid, 0);
+        if (questRun)
+        {
+            ++nextQuestBot;
+            lastQuestLogin = getMSTime();
+        }
         handler->SendSysMessage("Requested login of the configured BotLife test bot; see playerbots.botlife log.");
         return true;
     }
@@ -139,7 +165,8 @@ void LoadTravelTestConfig()
     bool const parsed = bool(input >> destination.mapId >> destination.x >> destination.y >> destination.z);
     input >> std::ws;
     if (!botGuid || !IsOnlyEligibleBot(botGuid) || !parsed || !input.eof() ||
-        !Trinity::IsValidMapCoord(destination.x, destination.y, destination.z))
+        !Trinity::IsValidMapCoord(destination.x, destination.y, destination.z) ||
+        sConfigMgr->GetBoolDefault("AiPlayerbot.BotLife.QuestRun.Enabled", false))
     {
         TC_LOG_ERROR("server.loading", "BotLife TravelTest rejected: require exactly one matching allowlisted GUID and destination 'map x y z'");
         return;

@@ -10,7 +10,8 @@
 
 namespace BotLife
 {
-NativeTravelMovement::NativeTravelMovement(PlayerbotAI& ai) : MovementAction(&ai, "botlife travel") { }
+NativeTravelMovement::NativeTravelMovement(PlayerbotAI& ai, std::function<bool()> routeAllowed)
+    : MovementAction(&ai, "botlife travel"), _routeAllowed(std::move(routeAllowed)) { }
 
 bool NativeTravelMovement::IsValid(TravelTarget const& target) const
 {
@@ -66,10 +67,25 @@ TravelMoveResult NativeTravelMovement::Move(TravelTarget const& target)
     _endX = state.endpoint.x;
     _endY = state.endpoint.y;
     _endZ = state.endpoint.z;
+    _startX = bot->GetPositionX();
+    _startY = bot->GetPositionY();
+    _startZ = bot->GetPositionZ();
+    if (_routeAllowed && !_routeAllowed())
+    {
+        Release(); // Native spline exists, but has not advanced on the map yet.
+        return TravelMoveResult::UnsafeRoute;
+    }
     TC_LOG_DEBUG("playerbots.botlife", "BotLife bot={} phase=travel event=issued distance={} spline={} target=({},{},{})",
         bot->GetGUID().GetCounter(), bot->GetExactDist(target.x, target.y, target.z), state.splineId,
         target.x, target.y, target.z);
     return TravelMoveResult::Started;
+}
+
+bool NativeTravelMovement::HasProgressed() const
+{
+    // Segment-level progress only. The native watchdog still handles immobility
+    // while moving. Loops/detours have a separate finite total dispatch budget.
+    return _owner && IsValid(_target) && bot->GetExactDist(_startX, _startY, _startZ) >= 1.0f;
 }
 
 bool NativeTravelMovement::OwnsMovement() const

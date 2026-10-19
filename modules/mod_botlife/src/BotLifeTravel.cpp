@@ -18,7 +18,9 @@ void TravelExecutor::Start(TravelTarget const& target, TravelLimits limits)
     _limits.timeoutMs = std::clamp<uint32_t>(limits.timeoutMs, 1000, 1800000);
     _limits.retryMs = std::clamp<uint32_t>(limits.retryMs, 250, 30000);
     _limits.maxAttempts = std::clamp<uint32_t>(limits.maxAttempts, 1, 64);
+    _limits.maxDispatches = std::clamp<uint32_t>(limits.maxDispatches, 1, 256);
     _elapsed = _retry = _attempts = 0;
+    _failedAttempts = _progressSegments = 0;
     _issued = false;
     _skipElapsed = true;
     _failure = TravelFailure::None;
@@ -59,6 +61,8 @@ TravelStatus TravelExecutor::Update(uint32_t elapsed)
     }
     if (_movement.HasArrived(_target))
     {
+        if (_issued && _movement.HasProgressed())
+            ++_progressSegments;
         _movement.Release();
         _issued = false;
         return _status = TravelStatus::Arrived;
@@ -78,6 +82,10 @@ TravelStatus TravelExecutor::Update(uint32_t elapsed)
             case TravelMotion::RecoveryExhausted:
                 return Fail(TravelFailure::RecoveryExhausted);
             case TravelMotion::Finished:
+                if (_movement.HasProgressed())
+                    ++_progressSegments;
+                else
+                    ++_failedAttempts;
                 _movement.Release();
                 _issued = false;
                 _retry = _limits.retryMs;
@@ -87,13 +95,19 @@ TravelStatus TravelExecutor::Update(uint32_t elapsed)
     _retry -= std::min(elapsed, _retry);
     if (_retry)
         return _status = TravelStatus::TemporarilyBlocked;
-    if (_attempts >= _limits.maxAttempts)
+    if (_failedAttempts >= _limits.maxAttempts)
         return Fail(TravelFailure::AttemptLimit);
+    if (_attempts >= _limits.maxDispatches)
+        return Fail(TravelFailure::DispatchLimit);
     TravelMoveResult const result = _movement.Move(_target);
     if (result != TravelMoveResult::Blocked)
         ++_attempts;
+    if (result == TravelMoveResult::NoRoute)
+        ++_failedAttempts;
     if (result == TravelMoveResult::RecoveryExhausted)
         return Fail(TravelFailure::RecoveryExhausted);
+    if (result == TravelMoveResult::UnsafeRoute)
+        return Fail(TravelFailure::UnsafeRoute); // Activity must select a different approach, not retry this spline.
     if (result == TravelMoveResult::Started)
     {
         _issued = true;
@@ -159,6 +173,8 @@ char const* ToString(TravelFailure failure)
         case TravelFailure::AttemptLimit: return "AttemptLimit";
         case TravelFailure::RecoveryExhausted: return "RecoveryExhausted";
         case TravelFailure::MovementLost: return "MovementLost";
+        case TravelFailure::DispatchLimit: return "DispatchLimit";
+        case TravelFailure::UnsafeRoute: return "UnsafeRoute";
     }
     return "Unknown";
 }

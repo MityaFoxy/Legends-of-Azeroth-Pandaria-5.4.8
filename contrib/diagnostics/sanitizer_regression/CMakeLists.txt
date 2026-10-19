@@ -85,6 +85,7 @@ set_tests_properties(botlife_travel_regression PROPERTIES
 
 add_executable(botlife_lifecycle_regression botlife_lifecycle_regression.cpp
   ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLife.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeDeathRecovery.cpp
   ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeActivity.cpp)
 target_include_directories(botlife_lifecycle_regression PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/botlife_test_support
@@ -109,4 +110,22 @@ set_tests_properties(botlife_quest_plan_regression PROPERTIES
 add_test(NAME botlife_quest_native_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_native_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(botlife_quest_native_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_quest_acquire_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_acquire_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_quest_acquire_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_quest_run_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_run_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_quest_run_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_quest_group_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_group_regression.py ${LOA_SOURCE_DIR})
+add_test(NAME botlife_preparation_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_preparation_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_preparation_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_provisioning_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_provisioning_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_provisioning_regression PROPERTIES
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

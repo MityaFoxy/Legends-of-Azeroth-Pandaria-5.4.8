@@ -596,7 +596,8 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
     if (!botAI)
         return;
 
-    if (bot->isDead())
+    bool const recoveringFromDeath = bot->isDead();
+    if (recoveringFromDeath)
     {
         bot->ResurrectPlayer(1.0f);
         bot->SpawnCorpseBones();
@@ -612,7 +613,9 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
     TC_LOG_INFO("playerbots", "Refreshing bot #{} <{}>", bot->GetGUID().GetCounter(), bot->GetName().c_str());
     PerformanceMonitorOperation* pmo = sPerformanceMonitor->start(PERF_MON_RNDBOT, "Refresh");
 
-    botAI->Reset();
+    // Preserve the source across native resurrection; ordinary refreshes still cancel work.
+    botAI->Reset(false, recoveringFromDeath && bot->IsAlive()
+        ? PlayerbotAIResetReason::DeathRecoveryRefresh : PlayerbotAIResetReason::General);
     bot->DurabilityRepairAll(false, 1.0f, false);
     bot->SetFullHealth();
     //bot->SetPvP(true);

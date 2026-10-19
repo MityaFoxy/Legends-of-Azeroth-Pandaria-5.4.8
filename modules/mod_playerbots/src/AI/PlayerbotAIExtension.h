@@ -7,6 +7,12 @@
 
 class PlayerbotAI;
 
+enum class PlayerbotAIResetReason : uint8_t
+{
+    General,
+    DeathRecoveryRefresh
+};
+
 enum class PlayerbotAIExtensionResult : uint8_t
 {
     ContinueBaseAI,
@@ -23,6 +29,8 @@ public:
     virtual void Observe(PlayerbotAI&) { }
     virtual PlayerbotAIExtensionResult Update(PlayerbotAI& botAI, uint32_t elapsed) = 0;
     virtual void Reset(PlayerbotAI& botAI) = 0;
+    // Existing extensions remain cancel-on-reset unless they explicitly opt in.
+    virtual void Reset(PlayerbotAI& botAI, PlayerbotAIResetReason) { Reset(botAI); }
 };
 
 class PlayerbotAIExtensionRegistry

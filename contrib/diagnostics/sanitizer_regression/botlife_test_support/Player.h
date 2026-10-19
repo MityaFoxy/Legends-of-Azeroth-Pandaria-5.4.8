@@ -6,6 +6,7 @@
 #include "WorldSession.h"
 
 using uint32 = uint32_t;
+constexpr uint32 PLAYER_FLAGS_GHOST = 16;
 
 struct TestGuid
 {
@@ -21,6 +22,8 @@ public:
     WorldSession session;
     bool hasSession = true;
     bool teleport = false;
+    bool nearTeleport = true, ghost = false, corpse = false;
+    float health = 100;
     bool inWorld = true;
     bool removing = false;
     bool alive = true;
@@ -31,6 +34,10 @@ public:
     std::string GetName() const { return "LifecycleTestBot"; }
     WorldSession* GetSession() { return hasSession ? &session : nullptr; }
     bool IsBeingTeleported() const { return teleport; }
+    bool IsBeingTeleportedNear() const { return teleport && nearTeleport; }
+    bool HasPlayerFlag(uint32) const { return ghost; }
+    Player* GetCorpse() { return corpse ? this : nullptr; }
+    float GetHealthPct() const { return health; }
     bool IsInWorld() const { return inWorld; }
     bool IsDuringRemoveFromWorld() const { return removing; }
     bool IsAlive() const { return alive; }

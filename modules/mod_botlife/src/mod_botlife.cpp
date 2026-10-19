@@ -1,6 +1,9 @@
 #include "BotLife.h"
 #include "BotLifeTravelTest.h"
 #include "BotLifeQuestDiagnostic.h"
+#include "BotLifeQuestAcquire.h"
+#include "BotLifeQuestRun.h"
+#include "BotLifeProvisioning.h"
 
 #include <boost/filesystem.hpp>
 #include <memory>
@@ -21,6 +24,8 @@ std::unique_ptr<PlayerbotAIExtension> CreateBotLifeExtension()
 {
     return std::make_unique<BotLife::ActivityContext>(&BotLife::CreateExecutor,
         BotLife::IsTravelTestEnabled() ? &BotLife::CreateTravelTestExecutor :
+        BotLife::IsQuestRunEnabled() ? &BotLife::CreateQuestRunExecutor :
+        BotLife::IsQuestAcquireEnabled() ? &BotLife::CreateQuestAcquireExecutor :
         BotLife::IsQuestPlanEnabled() ? &BotLife::CreateQuestPlanExecutor : nullptr);
 }
 
@@ -45,10 +50,20 @@ public:
         BotLife::LoadConfig();
         BotLife::LoadTravelTestConfig();
         if (!reloaded)
+        {
             BotLife::LoadQuestPlanConfig();
+            BotLife::LoadQuestAcquireConfig();
+            BotLife::LoadQuestRunConfig();
+            BotLife::LoadProvisioningConfig();
+        }
     }
 
-    void OnStartup() override { BotLife::InitializeQuestPlanData(); }
+    void OnStartup() override
+    {
+        BotLife::InitializeQuestPlanData();
+        BotLife::InitializeQuestAcquireData();
+        BotLife::InitializeQuestRunData();
+    }
 };
 }
 

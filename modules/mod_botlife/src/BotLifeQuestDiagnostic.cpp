@@ -65,7 +65,8 @@ void LoadQuestPlanConfig()
         return;
     int32 const configuredBot = sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.QuestPlan.BotGuid", 0);
     int32 const configuredQuest = sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.QuestPlan.QuestId", 0);
-    if (configuredBot <= 0 || configuredQuest <= 0 || !IsOnlyEligibleBot(uint32(configuredBot)) || IsTravelTestEnabled())
+    if (configuredBot <= 0 || configuredQuest <= 0 || !IsOnlyEligibleBot(uint32(configuredBot)) || IsTravelTestEnabled() ||
+        sConfigMgr->GetBoolDefault("AiPlayerbot.BotLife.QuestRun.Enabled", false))
     {
         TC_LOG_ERROR("server.loading", "BotLife QuestPlan rejected: require one matching allowlisted bot, positive QuestId and TravelTest disabled");
         return;
@@ -85,6 +86,7 @@ void InitializeQuestPlanData()
 }
 
 bool IsQuestPlanEnabled() { return enabled; }
+uint32_t GetQuestPlanBotGuid() { return enabled ? botGuid : 0; }
 
 std::unique_ptr<ActivityExecutor> CreateQuestPlanExecutor(PlayerbotAI& ai)
 {

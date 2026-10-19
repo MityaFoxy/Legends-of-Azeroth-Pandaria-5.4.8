@@ -34,6 +34,7 @@ enum class InterruptReason : uint8_t
     Reset,
     Combat,
     Death,
+    RecoveryTimeout,
     Teleport,
     OutOfWorld,
     Logout,
@@ -53,10 +54,16 @@ public:
     virtual void Pause(PlayerbotAI& botAI) = 0;
     // Revalidate the plan before resuming. False cancels it safely.
     virtual bool Resume(PlayerbotAI& botAI) = 0;
+    // Opt-in: retain the plan while native AI releases spirit and recovers the corpse.
+    virtual bool SuspendForDeath(PlayerbotAI&) { return false; }
+    virtual bool IsDeathRecoveryExpired() const { return false; }
     virtual void Interrupt(PlayerbotAI& botAI, InterruptReason reason) = 0;
     virtual void Finish(PlayerbotAI& botAI, ActivityResult result) = 0;
     // True only while the executor still owns its non-combat movement.
     virtual bool ControlsMovement() const { return false; }
+    // A deliberate service wait may yield non-combat actions without owning a
+    // spline. Never suppress native combat, lifecycle observation or death AI.
+    virtual bool HoldsNonCombat() const { return false; }
 };
 
 char const* ToString(ActivityType activity);
@@ -75,6 +82,7 @@ public:
     void Observe(PlayerbotAI& botAI) override;
     PlayerbotAIExtensionResult Update(PlayerbotAI& botAI, uint32_t elapsed) override;
     void Reset(PlayerbotAI& botAI) override;
+    void Reset(PlayerbotAI& botAI, PlayerbotAIResetReason reason) override;
 
     ActivityType GetActivity() const { return _activity; }
     bool IsActive() const { return _active; }
@@ -82,6 +90,7 @@ public:
 
 private:
     bool CheckLifecycle(PlayerbotAI& botAI);
+    bool CheckDeathRecovery(PlayerbotAI& botAI);
     void Stop(PlayerbotAI& botAI, InterruptReason reason);
     void Start(PlayerbotAI& botAI, ActivityType activity, char const* reason);
     void Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason);
@@ -94,6 +103,7 @@ private:
     uint32_t _elapsed;
     bool _active;
     bool _paused = false;
+    bool _recoveringFromDeath = false;
     uint32_t _mapId = 0;
     uint32_t _instanceId = 0;
     uint32_t _phaseMask = 0;
@@ -101,6 +111,8 @@ private:
 
 void LoadConfig();
 bool IsOnlyEligibleBot(uint32_t guid);
+bool IsEligibleBot(uint32_t guid);
+uint32_t EligibleBotCount();
 }
 
 #endif

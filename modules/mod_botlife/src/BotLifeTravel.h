@@ -17,8 +17,8 @@ struct TravelTarget
 };
 
 enum class TravelStatus { Idle, Running, TemporarilyBlocked, Paused, Arrived, Failed, Cancelled, Recovering };
-enum class TravelFailure { None, InvalidTarget, Timeout, AttemptLimit, RecoveryExhausted, MovementLost };
-enum class TravelMoveResult { Started, Blocked, NoRoute, RecoveryExhausted };
+enum class TravelFailure { None, InvalidTarget, Timeout, AttemptLimit, RecoveryExhausted, MovementLost, DispatchLimit, UnsafeRoute };
+enum class TravelMoveResult { Started, Blocked, NoRoute, RecoveryExhausted, UnsafeRoute };
 enum class TravelMotion { Moving, Finished, Lost, RecoveryExhausted, Recovering };
 
 char const* ToString(TravelStatus status);
@@ -28,7 +28,8 @@ struct TravelLimits
 {
     uint32_t timeoutMs = 120000;
     uint32_t retryMs = 1000;
-    uint32_t maxAttempts = 8;
+    uint32_t maxAttempts = 8; // Cumulative NoRoute or completed segments without displacement.
+    uint32_t maxDispatches = 64; // Includes successful segments and combat resumptions.
 };
 
 class TravelMovement
@@ -40,6 +41,9 @@ public:
     virtual bool HasArrived(TravelTarget const& target) const = 0;
     virtual TravelMoveResult Move(TravelTarget const& target) = 0;
     virtual TravelMotion Poll() const = 0;
+    // Actual displacement since the owned dispatch, not a planned endpoint or
+    // necessarily decreasing goal distance (valid routes can detour).
+    virtual bool HasProgressed() const = 0;
     virtual bool OwnsMovement() const = 0;
     virtual void Release() = 0; // Must never stop replacement/foreign motion.
 };
@@ -60,6 +64,8 @@ public:
     TravelStatus GetStatus() const { return _status; }
     TravelFailure GetFailure() const { return _failure; }
     uint32_t GetAttempts() const { return _attempts; }
+    uint32_t GetFailedAttempts() const { return _failedAttempts; }
+    uint32_t GetProgressSegments() const { return _progressSegments; }
     bool ControlsMovement() const
     {
         return (_status == TravelStatus::Running || _status == TravelStatus::Recovering) && _movement.OwnsMovement();
@@ -74,6 +80,7 @@ private:
     TravelStatus _status = TravelStatus::Idle;
     TravelFailure _failure = TravelFailure::None;
     uint32_t _elapsed = 0, _retry = 0, _attempts = 0;
+    uint32_t _failedAttempts = 0, _progressSegments = 0;
     bool _issued = false;
     bool _skipElapsed = false;
 };

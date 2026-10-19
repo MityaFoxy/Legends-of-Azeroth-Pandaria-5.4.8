@@ -715,10 +715,10 @@ bool PlayerbotAI::AllowActivity(ActivityType activityType, bool checkNow)
     return allowed;
 }
 
-void PlayerbotAI::Reset(bool full)
+void PlayerbotAI::Reset(bool full, PlayerbotAIResetReason reason)
 {
     for (std::unique_ptr<PlayerbotAIExtension> const& extension : _extensions)
-        extension->Reset(*this);
+        extension->Reset(*this, reason);
 
     if (bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
         return;

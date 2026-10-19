@@ -32,6 +32,7 @@ source = r'''
 #include <sstream>
 #include <string>
 #include <vector>
+#include <functional>
 using uint8 = uint8_t;
 using uint32 = uint32_t;
 namespace G3D {
@@ -81,6 +82,9 @@ struct Player {
     bool IsInCombat() const { return combat; } bool HasUnitState(uint32 mask) const { return state&mask; }
     bool IsNonMeleeSpellCasted(bool) const { return casting; }
     float GetExactDist(float a,float b,float c) const { return G3D::Vector3{x-a,y-b,z-c}.length(); }
+    float GetPositionX() const { return x; }
+    float GetPositionY() const { return y; }
+    float GetPositionZ() const { return z; }
     bool IsWithinLOS(float,float,float) const { return los; }
     MotionMaster* GetMotionMaster() { return &motion; } Guid GetGUID() const { return {}; }
     void StopMoving() { ++stopped; spline.finalized=true; ++spline.id; }
@@ -136,7 +140,7 @@ bool onlyEligible=true;
 bool IsOnlyEligibleBot(uint32 guid) { return onlyEligible && guid==6; }
 struct TestConfig {
     bool enable=false; int guid=6; std::string target="1 -8218.48 -4293.23 13.6594";
-    bool GetBoolDefault(char const*,bool) { return enable; }
+    bool GetBoolDefault(std::string const& key,bool) { return key.find("QuestRun") == key.npos && enable; }
     int GetIntDefault(char const*,int) { return guid; }
     std::string GetStringDefault(char const*,char const*) { return target; }
 } testConfig;
@@ -164,6 +168,18 @@ struct Scene {
         ++bot.spline.id; bot.spline.finalized=false; ai.last.delay=777; }
 };
 int main() {
+    // A rejected native route is cancelled while it is still ours, before
+    // world movement; the default adapter remains unchanged for other users.
+    { Player bot; PlayerbotAI ai{&bot};
+      NativeTravelMovement movement(ai, [] { return false; });
+      assert(movement.Move({0,0,1,10,0,0,1})==TravelMoveResult::UnsafeRoute);
+      assert(!movement.OwnsMovement() && bot.stopped==1 && bot.motion.expired==1); }
+    { Player bot; PlayerbotAI ai{&bot}; NativeTravelMovement movement(ai, [] { return false; });
+      TravelExecutor travel(movement); travel.Start({0,0,1,10,0,0,1});
+      assert(travel.Update(0)==TravelStatus::Failed && travel.GetFailure()==TravelFailure::UnsafeRoute);
+      assert(travel.GetAttempts()==1 && travel.GetFailedAttempts()==0);
+      for(int i=0;i<10;++i) assert(travel.Update(1000)==TravelStatus::Failed);
+      assert(ai.moveCalls==1 && !movement.OwnsMovement() && bot.stopped==1); }
     configTests();
     { Scene s; s.start(); assert(s.travel.ControlsMovement() && s.ai.moveCalls==1);
       for(int i=0;i<10;++i) assert(s.travel.Update(100)==TravelStatus::Running);
@@ -279,11 +295,76 @@ int main() {
       assert(s.travel.Update(1)==TravelStatus::TemporarilyBlocked && s.bot.stopped==1); }
     { Scene s; s.start(); s.foreign(); s.bot.combat=true; s.travel.Pause();
       assert(!s.bot.stopped && !s.bot.motion.expired && s.ai.last.delay==777); }
-    // Useful partial endpoints still share a finite overall dispatch budget.
-    { Scene s; s.ai.partialEnd=40; s.start({10000,250,2}); s.finish(40);
-      s.travel.Update(1); s.travel.Update(250); assert(s.ai.moveCalls==2); s.finish(40);
-      s.travel.Update(1); assert(s.travel.Update(250)==TravelStatus::Failed);
-      assert(s.travel.GetFailure()==TravelFailure::AttemptLimit && s.ai.moveCalls==2); }
+    // Long useful partial routes exceed eight dispatches, including two combat
+    // resumptions. Completed physical segments, not planned endpoints, count.
+    { Scene s; s.ai.partialEnd=5; s.start();
+      for(int i=1;i<=19;++i) {
+        s.finish(float(i*5));
+        assert(s.travel.Update(1)==TravelStatus::TemporarilyBlocked);
+        if(i==4 || i==9) {
+          s.travel.Pause(); s.bot.combat=true;
+          assert(s.travel.Update(UINT32_MAX)==TravelStatus::Paused);
+          s.bot.combat=false; assert(s.travel.Resume()); s.travel.Update(0);
+        }
+        s.ai.partialEnd=float((i+1)*5);
+        assert(s.travel.Update(1000)==TravelStatus::Running);
+        if(i==5 || i==10) {
+          s.travel.Pause(); assert(s.travel.Resume());
+          assert(s.travel.Update(UINT32_MAX)==TravelStatus::Running);
+        }
+      }
+      s.finish(100); assert(s.travel.Update(1)==TravelStatus::Arrived);
+      assert(s.travel.GetAttempts()==22 && s.travel.GetFailedAttempts()==0);
+      assert(s.travel.GetProgressSegments()==20); }
+    // No-route and finished-without-progress share a cumulative failure budget;
+    // a useful segment and pause/resume cannot erase preceding failures.
+    { Scene s; s.ai.outcome=1; s.travel.Start(target,{10000,250,2});
+      s.travel.Update(0); assert(s.travel.GetFailedAttempts()==1);
+      s.ai.outcome=0; s.ai.partialEnd=40; s.travel.Update(250); s.finish(40);
+      s.travel.Update(1); assert(s.travel.GetProgressSegments()==1);
+      s.travel.Pause(); assert(s.travel.Resume()); s.travel.Update(0);
+      s.travel.Update(250); s.finish(40); s.travel.Update(1);
+      assert(s.travel.Update(250)==TravelStatus::Failed);
+      assert(s.travel.GetFailure()==TravelFailure::AttemptLimit && s.ai.moveCalls==3);
+      assert(s.travel.GetFailedAttempts()==2); }
+    // A planned far endpoint is no evidence of actual progress. Even a finished
+    // owned spline with sub-metre drift must consume the no-progress budget.
+    for(float drift : {0.0f,0.1f,0.99f}) {
+      Scene s; s.start({10000,250,2});
+      for(int i=1;i<=2;++i) {
+        s.bot.x=i*drift; s.bot.spline.finalized=true;
+        s.travel.Update(1); s.travel.Update(250);
+      }
+      assert(s.travel.GetFailure()==TravelFailure::AttemptLimit && s.ai.moveCalls==2);
+      assert(s.travel.GetProgressSegments()==0 && s.travel.GetFailedAttempts()==2);
+    }
+    // Detours can increase goal distance. Backtracking still cannot reset the
+    // total dispatch budget, so oscillating endpoints terminate deterministically.
+    { Scene s; s.ai.partialEnd=-10; s.start({10000,250,8,3});
+      for(float x : {-10.0f,-20.0f,-10.0f}) {
+        s.finish(x); s.travel.Update(1); s.ai.partialEnd=x==-10 ? -20 : -10;
+        s.travel.Update(250);
+      }
+      assert(s.travel.GetFailure()==TravelFailure::DispatchLimit && s.ai.moveCalls==3);
+      assert(s.travel.GetProgressSegments()==3 && s.travel.GetFailedAttempts()==0); }
+    // Repeated combat interruption alone is not a route failure, but is bounded.
+    { Scene s; s.start({10000,250,8,3});
+      for(int i=0;i<3;++i) { s.travel.Pause(); assert(s.travel.Resume()); s.travel.Update(0); }
+      assert(s.travel.GetFailure()==TravelFailure::DispatchLimit && s.ai.moveCalls==3);
+      assert(s.travel.GetFailedAttempts()==0); }
+    // Progress never resets the cumulative active-time deadline.
+    { Scene s; s.ai.partialEnd=20; s.start({1000,250,8}); s.finish(20);
+      s.travel.Update(400); s.travel.Update(250); s.finish(40);
+      assert(s.travel.Update(350)==TravelStatus::Failed);
+      assert(s.travel.GetFailure()==TravelFailure::Timeout); }
+    // Start is the only reset boundary; arrival on the last allowed dispatch wins.
+    { Scene s; s.start({10000,250,8,1}); s.finish(100);
+      assert(s.travel.Update(1)==TravelStatus::Arrived);
+      s.bot.x=0; s.ai.outcome=1; s.travel.Start(target,{10000,250,1}); s.travel.Update(0);
+      s.travel.Update(250); assert(s.travel.GetFailedAttempts()==1);
+      s.ai.outcome=0; s.travel.Start(target); s.travel.Update(0);
+      assert(s.travel.GetAttempts()==1 && s.travel.GetFailedAttempts()==0 && s.travel.GetProgressSegments()==0);
+      s.travel.Cancel(); }
     for(float invalid : {0.0f,6.0f,std::numeric_limits<float>::quiet_NaN()}) {
       Scene s; auto t=target; t.tolerance=invalid; s.travel.Start(t);
       assert(s.travel.GetStatus()==TravelStatus::Failed && !s.ai.moveCalls); }

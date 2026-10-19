@@ -76,6 +76,16 @@ bool IsOnlyEligibleBot(uint32_t guid)
     return config.enabled && config.botGuids.size() == 1 && config.botGuids.count(guid);
 }
 
+bool IsEligibleBot(uint32_t guid)
+{
+    return config.enabled && config.botGuids.count(guid);
+}
+
+uint32_t EligibleBotCount()
+{
+    return config.enabled ? uint32_t(config.botGuids.size()) : 0;
+}
+
 ActivityContext::ActivityContext(ExecutorFactory factory, SingleRunFactory singleRun)
     : _factory(factory), _singleRun(singleRun), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
 
@@ -112,19 +122,9 @@ bool ActivityContext::CheckLifecycle(PlayerbotAI& botAI)
         Stop(botAI, InterruptReason::Logout);
         return false;
     }
-    if (bot->IsBeingTeleported())
-    {
-        Stop(botAI, InterruptReason::Teleport);
-        return false;
-    }
     if (!bot->IsInWorld() || bot->IsDuringRemoveFromWorld())
     {
         Stop(botAI, InterruptReason::OutOfWorld);
-        return false;
-    }
-    if (!bot->IsAlive())
-    {
-        Stop(botAI, InterruptReason::Death);
         return false;
     }
     if (_active && (_mapId != bot->GetMapId() || _instanceId != bot->GetInstanceId() ||
@@ -133,6 +133,8 @@ bool ActivityContext::CheckLifecycle(PlayerbotAI& botAI)
         Stop(botAI, InterruptReason::WorldChanged);
         return false;
     }
+    if (!CheckDeathRecovery(botAI))
+        return false;
     if (bot->IsInCombat())
     {
         if (_active && !_paused)
@@ -164,8 +166,10 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
         _paused = false;
         Player* bot = botAI.GetBot();
         TC_LOG_INFO("playerbots.botlife",
-            "BotLife bot={} guid={} activity={} event=resume reason=combat-ended duration_ms={}",
-            bot->GetName(), bot->GetGUID().ToString(), ToString(_activity), _elapsed);
+            "BotLife bot={} guid={} activity={} event=resume reason={} duration_ms={}",
+            bot->GetName(), bot->GetGUID().ToString(), ToString(_activity),
+            _recoveringFromDeath ? "resurrected" : "combat-ended", _elapsed);
+        _recoveringFromDeath = false;
         // The interval supplied by the caller may include the paused time.
         return PlayerbotAIExtensionResult::ContinueBaseAI;
     }
@@ -203,7 +207,7 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
             break;
     }
 
-    return _executor && _executor->ControlsMovement()
+    return _executor && (_executor->ControlsMovement() || _executor->HoldsNonCombat())
         ? PlayerbotAIExtensionResult::SuppressBaseNonCombatAction
         : PlayerbotAIExtensionResult::ContinueBaseAI;
 }
@@ -231,6 +235,7 @@ void ActivityContext::Stop(PlayerbotAI& botAI, InterruptReason reason)
     _elapsed = 0;
     _active = false;
     _paused = false;
+    _recoveringFromDeath = false;
 }
 
 void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char const* reason)
@@ -245,6 +250,7 @@ void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char cons
     _executor->Start(botAI);
     _active = true;
     _paused = false;
+    _recoveringFromDeath = false;
 
     Player* bot = botAI.GetBot();
     _mapId = bot->GetMapId();

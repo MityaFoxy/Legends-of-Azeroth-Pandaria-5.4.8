@@ -123,7 +123,7 @@ struct Config
 {
     bool enable = false;
     int bot = 6, quest = 42;
-    bool GetBoolDefault(char const*, bool) { return enable; }
+    bool GetBoolDefault(std::string const& key, bool) { return key.find("QuestRun") == key.npos && enable; }
     int GetIntDefault(std::string const& key, int) { return key.ends_with("BotGuid") ? bot : quest; }
 } config;
 Config* sConfigMgr = &config;
@@ -225,9 +225,11 @@ int main()
 
     LoadQuestPlanConfig();
     assert(!enabled);
+    assert(GetQuestPlanBotGuid() == 0);
     config.enable = true;
     LoadQuestPlanConfig();
     assert(enabled && botGuid == 6 && questId == 42);
+    assert(GetQuestPlanBotGuid() == 6);
     for (int invalid : {0, -1})
     {
         config.quest = invalid;
@@ -246,13 +248,15 @@ int main()
     travel = true;
     LoadQuestPlanConfig();
     assert(!enabled);
+    assert(GetQuestPlanBotGuid() == 0);
 }
 '''
 with tempfile.TemporaryDirectory(prefix="botlife-quest-native-") as temp:
     cpp = pathlib.Path(temp) / "test.cpp"
     exe = pathlib.Path(temp) / "test"
     cpp.write_text(prefix + enums + objective + mocks + definition(native, "bool Supported(") +
-                   reader + definition(diagnostic, "void LoadQuestPlanConfig()") + tests)
+                   reader + definition(diagnostic, "void LoadQuestPlanConfig()") +
+                   definition(diagnostic, "uint32_t GetQuestPlanBotGuid()") + tests)
     subprocess.run([compiler, "-std=c++20", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                     "-UNDEBUG", "-I", str(source_dir), str(cpp), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)

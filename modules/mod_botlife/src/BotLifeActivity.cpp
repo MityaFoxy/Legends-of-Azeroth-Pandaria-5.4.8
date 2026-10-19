@@ -55,6 +55,8 @@ char const* ToString(InterruptReason reason)
             return "combat";
         case InterruptReason::Death:
             return "death";
+        case InterruptReason::RecoveryTimeout:
+            return "death-recovery-timeout";
         case InterruptReason::Teleport:
             return "teleport";
         case InterruptReason::OutOfWorld:

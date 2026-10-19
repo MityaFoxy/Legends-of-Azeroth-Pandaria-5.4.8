@@ -8,6 +8,7 @@ namespace BotLife
 void LoadQuestPlanConfig();
 void InitializeQuestPlanData();
 bool IsQuestPlanEnabled();
+uint32_t GetQuestPlanBotGuid();
 std::unique_ptr<ActivityExecutor> CreateQuestPlanExecutor(PlayerbotAI& ai);
 }
 #endif

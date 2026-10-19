@@ -4,10 +4,14 @@
 
 [botlife]
 
+# Explicit administrator/test bootstrap, one GUID and RandomBotAutologin=0 only.
+# Grants gear into EMPTY slots only; never ordinary gameplay/repair. Off by default.
+AiPlayerbot.BotLife.QuestRun.PrepareCharacter = 0
+
 # Requires a build configured with PLAYERBOTS=1 and BOTLIFE=1.
 # Enable BotLife only for the comma-separated character GUID counters listed below.
 # Normal mode cycles FREE/QUEST/TOWN/REST stubs without gameplay actions.
-# The explicit one-bot TravelTest below is the only movement-enabled scenario.
+# Only explicit TravelTest/QuestAcquire/QuestRun scenarios issue movement.
 AiPlayerbot.BotLife.Enabled = 0
 AiPlayerbot.BotLife.BotGuids =
 AiPlayerbot.BotLife.StubActivityDuration = 10000
@@ -33,9 +37,51 @@ AiPlayerbot.BotLife.TravelTest.Destination = ""
 # Requires Enabled=1 and BotGuids containing ONLY the matching QuestPlan.BotGuid.
 # QuestId is an explicit allowlist of ONE ordinary, non-repeatable kill quest.
 # On the bot's next login: logs Acquire/Hunt/AwaitCompletion/TurnIn/Done or rejection.
+# Explicit console login is available with RandomBotAutologin=0: botlife-test-login.
 # Candidates are same-map phaseMask spawns, NOT proven paths or live interactions.
 # PhaseID/groups, instances, pools/events, GO givers, items and scripted objectives
 # are unsupported in this slice. No accepting, credit, rewards or movement.
 AiPlayerbot.BotLife.QuestPlan.Enabled = 0
 AiPlayerbot.BotLife.QuestPlan.BotGuid = 0
 AiPlayerbot.BotLife.QuestPlan.QuestId = 0
+
+# ONE-SHOT acquisition of ONE explicitly configured supported kill quest.
+# Selects a same-map starter through QuestPlan, travels to its cached spawn and
+# rechecks the live NPC, phase/visibility, range/LOS, quest log and eligibility.
+# Uses native acceptance/hooks; does NOT execute objectives, turn in or give rewards.
+# Missing/dead/moved/hostile givers fail safely; no forced grid loading or teleport.
+# Groups, party-accept and broken-quest auto-completion are excluded.
+# Requires exactly the matching BotGuids entry, TravelTest=0 and QuestPlan=0.
+# Restart required. Console login: RandomBotAutologin=0, then botlife-test-login.
+# Travel budget: 120 seconds excluding combat pause, 8 cumulative failures
+# (NoRoute or completed segments moving less than 1 m), 64 total dispatch attempts.
+# Useful segments and combat resumptions consume only the total dispatch budget.
+# Completion/failure/cancellation consumes this run; no automatic quest retry.
+AiPlayerbot.BotLife.QuestAcquire.Enabled = 0
+AiPlayerbot.BotLife.QuestAcquire.BotGuid = 0
+AiPlayerbot.BotLife.QuestAcquire.QuestId = 0
+
+# ONE-SHOT full cycle of ONE supported ordinary kill quest per configured bot.
+# Legacy BotGuid/QuestId: exactly one matching BotGuids entry.
+# Assignments: 1..5 explicit GUID:QuestId pairs, comma-separated without spaces;
+# BotGuid and QuestId must both be 0. BotGuids must match the roster exactly.
+# ALL other single-run modes must be OFF. No autonomous next-quest selection.
+# Native combat/credit only; no force-complete, quest reset, teleport or item deletion.
+# Native turn-in after Complete and live ender revalidation. No choice/package rewards yet.
+# Already rewarded / removed / failed quests terminate without reacquisition.
+# Quest work: 20 minutes excluding death recovery, with an absolute 30-minute cap.
+# Hunt: 180 seconds without actual objective progress;
+# at most 128 candidate visits, each spawn tried once; travel retains its own budgets.
+# Death suspends the SAME quest while native AI recovers; no forced revival/teleport.
+# Resume after resurrection out of combat with >=50% health and validated context.
+# Recovery (including post-revival rest) is capped at 10 minutes per death;
+# resume grants a fresh 180-second progress window, without changing counters.
+# A native Refresh reset after resurrection preserves an already death-paused run;
+# it never extends recovery budgets or resumes actions inside Reset.
+# Control/map change/general reset still cancels. Quest/progress stay intact; no auto retry.
+# Restart required. RandomBotAutologin=0; each botlife-test-login requests the next
+# configured GUID in ascending order once. Minimum spacing 20 + next GUID % 7 seconds.
+AiPlayerbot.BotLife.QuestRun.Enabled = 0
+AiPlayerbot.BotLife.QuestRun.BotGuid = 0
+AiPlayerbot.BotLife.QuestRun.QuestId = 0
+AiPlayerbot.BotLife.QuestRun.Assignments = ""
