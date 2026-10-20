@@ -7,6 +7,30 @@
 
 #include "Playerbots.h"
 #include "Totem.h"
+#include "ShamanWeaponImbue.h"
+
+Item* CastShamanWeaponImbueAction::GetWeapon()
+{
+    return GetShamanImbueWeapon(*bot, enhancementOffhand &&
+        bot->GetTalentSpecialization() == SPEC_SHAMAN_ENHANCEMENT ? OFF_ATTACK : BASE_ATTACK);
+}
+
+bool CastShamanWeaponImbueAction::isUseful()
+{
+    return !botAI->IsInVehicle() && GetWeapon();
+}
+
+bool CastShamanWeaponImbueAction::isPossible()
+{
+    Item* weapon = GetWeapon();
+    return weapon && !botAI->IsInVehicle() && botAI->CanCastSpell(spell, bot, weapon);
+}
+
+bool CastShamanWeaponImbueAction::Execute(Event)
+{
+    Item* weapon = GetWeapon(); // Equipment/enchantment may have changed since the trigger.
+    return weapon && !botAI->IsInVehicle() && botAI->CastSpell(spell, bot, weapon);
+}
 
 bool CastTotemAction::isUseful()
 {

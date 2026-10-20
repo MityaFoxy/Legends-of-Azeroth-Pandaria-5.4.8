@@ -90,34 +90,48 @@ public:
     CastLightningShieldAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "lightning shield") {}
 };
 
-class CastEarthlivingWeaponAction : public CastEnchantItemAction
+class CastShamanWeaponImbueAction : public CastSpellAction
 {
 public:
-    CastEarthlivingWeaponAction(PlayerbotAI* botAI) : CastEnchantItemAction(botAI, "earthliving weapon") {}
+    CastShamanWeaponImbueAction(PlayerbotAI* ai, std::string spell, bool enhancementOffhand = false)
+        : CastSpellAction(ai, spell), enhancementOffhand(enhancementOffhand) { }
+    bool isPossible() override;
+    bool isUseful() override;
+    bool Execute(Event event) override;
+    std::string const GetTargetName() override { return "self target"; }
+private:
+    Item* GetWeapon();
+    bool enhancementOffhand;
 };
 
-class CastRockbiterWeaponAction : public CastEnchantItemAction
+class CastEarthlivingWeaponAction : public CastShamanWeaponImbueAction
 {
 public:
-    CastRockbiterWeaponAction(PlayerbotAI* botAI) : CastEnchantItemAction(botAI, "rockbiter weapon") {}
+    CastEarthlivingWeaponAction(PlayerbotAI* botAI) : CastShamanWeaponImbueAction(botAI, "earthliving weapon") {}
 };
 
-class CastFlametongueWeaponAction : public CastEnchantItemAction
+class CastRockbiterWeaponAction : public CastShamanWeaponImbueAction
 {
 public:
-    CastFlametongueWeaponAction(PlayerbotAI* botAI) : CastEnchantItemAction(botAI, "flametongue weapon") {}
+    CastRockbiterWeaponAction(PlayerbotAI* botAI) : CastShamanWeaponImbueAction(botAI, "rockbiter weapon") {}
 };
 
-class CastFrostbrandWeaponAction : public CastEnchantItemAction
+class CastFlametongueWeaponAction : public CastShamanWeaponImbueAction
 {
 public:
-    CastFrostbrandWeaponAction(PlayerbotAI* botAI) : CastEnchantItemAction(botAI, "frostbrand weapon") {}
+    CastFlametongueWeaponAction(PlayerbotAI* botAI) : CastShamanWeaponImbueAction(botAI, "flametongue weapon", true) {}
 };
 
-class CastWindfuryWeaponAction : public CastEnchantItemAction
+class CastFrostbrandWeaponAction : public CastShamanWeaponImbueAction
 {
 public:
-    CastWindfuryWeaponAction(PlayerbotAI* botAI) : CastEnchantItemAction(botAI, "windfury weapon") {}
+    CastFrostbrandWeaponAction(PlayerbotAI* botAI) : CastShamanWeaponImbueAction(botAI, "frostbrand weapon") {}
+};
+
+class CastWindfuryWeaponAction : public CastShamanWeaponImbueAction
+{
+public:
+    CastWindfuryWeaponAction(PlayerbotAI* botAI) : CastShamanWeaponImbueAction(botAI, "windfury weapon") {}
 };
 
 class CastTotemAction : public CastBuffSpellAction

@@ -15,7 +15,9 @@ public:
     explicit QuestHunt(PlayerbotAI& ai) : AttackAction(&ai, "botlife quest hunt"), _safety(*bot) { }
     QuestSafety& Safety() { return _safety; }
     std::optional<QuestSpawn> Choose(QuestPlanData const& data, QuestPlayerSnapshot const& player,
-        std::unordered_set<uint32_t> const& visited) const;
+        std::unordered_set<uint32_t> const& visited, std::optional<QuestSpawn>* obstructed = nullptr,
+        uint32_t* blocker = nullptr) const;
+    std::optional<QuestSpawn> RouteObstacle(uint32_t spawn, bool allowDistant = false) const;
     bool CanEngage(QuestSpawn const& target) const;
     bool Engage(QuestSpawn const& target);
     bool IsAlive(QuestSpawn const& target) const;

@@ -8,7 +8,26 @@
 
 #include "GenericTriggers.h"
 #include "SharedDefines.h"
+#include "Unit.h"
 
 class PlayerbotAI;
+
+class ShamanWeaponImbueTrigger : public Trigger
+{
+public:
+    ShamanWeaponImbueTrigger(PlayerbotAI* ai, std::string name, WeaponAttackType hand, uint32 spellId)
+        : Trigger(ai, name), hand(hand), spellId(spellId) { }
+    bool IsActive() override;
+private:
+    WeaponAttackType hand;
+    uint32 spellId;
+};
+
+class MaelstromWeaponTrigger : public Trigger
+{
+public:
+    MaelstromWeaponTrigger(PlayerbotAI* ai) : Trigger(ai, "maelstrom weapon 4") { }
+    bool IsActive() override;
+};
 
 #endif

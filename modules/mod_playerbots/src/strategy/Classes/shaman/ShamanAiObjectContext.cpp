@@ -74,9 +74,21 @@ class ShamanATriggerFactoryInternal : public NamedObjectContext<Trigger>
 public:
     ShamanATriggerFactoryInternal()
     {
+        creators["main hand weapon no imbue"] = &main_hand_imbue;
+        creators["off hand weapon no imbue"] = &off_hand_imbue;
+        creators["maelstrom weapon 4"] = &maelstrom_weapon;
     }
 
 private:
+    static Trigger* main_hand_imbue(PlayerbotAI* ai)
+    {
+        return new ShamanWeaponImbueTrigger(ai, "main hand weapon no imbue", BASE_ATTACK, 8232);
+    }
+    static Trigger* off_hand_imbue(PlayerbotAI* ai)
+    {
+        return new ShamanWeaponImbueTrigger(ai, "off hand weapon no imbue", OFF_ATTACK, 8024);
+    }
+    static Trigger* maelstrom_weapon(PlayerbotAI* ai) { return new MaelstromWeaponTrigger(ai); }
 };
 
 class ShamanAiObjectContextInternal : public NamedObjectContext<Action>

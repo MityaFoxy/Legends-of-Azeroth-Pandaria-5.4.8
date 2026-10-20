@@ -6,11 +6,15 @@
 #include "BotLifeQuestTurnIn.h"
 #include "BotLifePreparation.h"
 #include "BotLifeProvisioning.h"
+#include "BotLifeRouteClearance.h"
+#include "BotLifeAbilities.h"
 
 #include "Log.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Timer.h"
+#include <algorithm>
+#include <cstring>
 
 namespace BotLife
 {
@@ -21,7 +25,7 @@ class QuestExecutor final : public ActivityExecutor
 public:
     QuestExecutor(PlayerbotAI& ai, QuestPlanData const& data)
         : _data(data), _hunt(ai), _movement(ai, [this] { return _hunt.Safety().RouteSafe(); }),
-          _travel(_movement), _preparation(ai, _hunt.Safety()) { }
+          _travel(_movement), _preparation(ai, _hunt.Safety()), _clearance(ai, _hunt) { }
     ActivityType GetType() const override { return ActivityType::Quest; }
     void Start(PlayerbotAI& ai) override
     {
@@ -47,6 +51,8 @@ public:
         }
         TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=start resumed={} result={}",
             _guid, _data.questId, _hadQuest, ToString(_result));
+        if (_result == ActivityResult::Running)
+            LogEnhancementAbilities(ai); // One diagnostic snapshot, never on the update hot path.
     }
     ActivityResult Update(PlayerbotAI& ai, uint32_t elapsed) override
     {
@@ -95,10 +101,25 @@ public:
                 return Fail("native-completion-timeout");
             return ActivityResult::Running;
         }
+        if (_clearance.Active())
+        {
+            if (_stage == QuestPlanStage::Hunt && GetMSTimeDiffToNow(_progressAt) >= 180000)
+                return Fail("quest-no-progress");
+            // Clearance time is real quest work; no synthetic progress or timer reset.
+            ClearanceResult const result = _clearance.Update(elapsed);
+            if (result == ClearanceResult::Failed)
+                DeferTarget();
+            if (result != ClearanceResult::Running)
+                _preparation.RequireRecovery();
+            return ActivityResult::Running; // Next tick rechecks readiness before resuming the preserved route.
+        }
         if (!_engaged && !_hunt.IsFighting())
         {
             if (_preparation.NeedsService())
-                ClearTarget();
+            {
+                _travel.Cancel();
+                _travelling = false; // Keep the destination while recovering between sequential fights.
+            }
             PreparationResult const preparation = _preparation.Update(elapsed);
             if (preparation == PreparationResult::Failed)
                 return Fail(_preparation.Reason());
@@ -110,6 +131,11 @@ public:
             }
         }
         bool const wasWaitingSafety = _waitingSafety;
+        if (_stage == QuestPlanStage::Hunt && GetMSTimeDiffToNow(_progressAt) >= 180000)
+            return Fail("quest-no-progress");
+        if (_safetyCooldown && GetMSTimeDiffToNow(_safetyAt) < _safetyDelay)
+            return ActivityResult::Running;
+        _safetyCooldown = false;
         _waitingSafety = false;
         if (_stage == QuestPlanStage::Hunt)
         {
@@ -145,16 +171,24 @@ public:
                         excluded.insert(it->first);
                         ++it;
                     }
-                _target = _hunt.Choose(_data, player, excluded);
+                std::optional<QuestSpawn> obstructed;
+                uint32 blocker = 0;
+                _target = _hunt.Choose(_data, player, excluded, &obstructed, &blocker);
+                if (!_target && obstructed)
+                {
+                    _target = obstructed;
+                    if (TryClearRoute(blocker))
+                        return ActivityResult::Running;
+                    _target.reset();
+                }
                 if (!_target)
                 {
                     if (!wasWaitingSafety)
                         TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=wait reason=no-safe-quest-target",
                             _guid, _data.questId);
-                    _waitingSafety = true;
+                    WaitForSafety();
                     return ActivityResult::Running;
                 }
-                ++_visits;
             }
             if (_hunt.CanEngage(*_target))
             {
@@ -162,6 +196,7 @@ public:
                 _travelling = false;
                 if (_hunt.Engage(*_target))
                 {
+                    CountVisit();
                     _engaged = true;
                     _engagedAt = getMSTime();
                     TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=engage spawn={} entry={}",
@@ -180,13 +215,17 @@ public:
         _hunt.Safety().SetTarget(_stage == QuestPlanStage::Hunt ? _target->guid : 0);
         if (!_hunt.Safety().CanApproach(*_target) || (_travel.ControlsMovement() && !_hunt.Safety().RouteSafe()))
         {
+            if (std::strcmp(_hunt.Safety().Reason(), "hostile-on-route") == 0 && TryClearRoute(_hunt.Safety().Blocker()))
+                return ActivityResult::Running;
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=unsafe-route spawn={}",
                 _guid, _data.questId, _target->guid);
             if (_stage == QuestPlanStage::Hunt)
                 DeferTarget();
             else
+            {
                 ClearTarget();
-            _waitingSafety = true;
+                WaitForSafety();
+            }
             return ActivityResult::Running;
         }
         if (!_travelling)
@@ -199,24 +238,36 @@ public:
                 _guid, _data.questId, ToString(_stage), _target->guid, _target->entry);
         }
         TravelStatus const travel = _travel.Update(elapsed);
+        if (_stage == QuestPlanStage::Hunt && _travel.ControlsMovement())
+            CountVisit(); // A rejected spline is not a visit; successful dispatch is.
         if (travel == TravelStatus::Failed || travel == TravelStatus::Cancelled)
         {
+            if (_travel.GetFailure() == TravelFailure::UnsafeRoute &&
+                std::strcmp(_hunt.Safety().Reason(), "hostile-on-route") == 0 && TryClearRoute(_hunt.Safety().Blocker()))
+                return ActivityResult::Running;
+            if (_travel.GetFailure() == TravelFailure::UnsafeRoute)
+            {
+                TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=skip spawn={} reason={}",
+                    _guid, _data.questId, _target->guid, ToString(_travel.GetFailure()));
+                DeferTarget(); // Also wait/reassess on return, without losing the completed quest.
+                return ActivityResult::Running;
+            }
             if (_stage != QuestPlanStage::Hunt || _travel.GetFailure() == TravelFailure::MovementLost ||
                 _travel.GetFailure() == TravelFailure::InvalidTarget || _travel.GetFailure() == TravelFailure::RecoveryExhausted)
                 return Fail(ToString(_travel.GetFailure()));
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=skip spawn={} reason={}",
                 _guid, _data.questId, _target->guid, ToString(_travel.GetFailure()));
-            if (_travel.GetFailure() == TravelFailure::UnsafeRoute)
-                DeferTarget();
-            else
-                RetireTarget();
+            RetireTarget();
         }
         else if (travel == TravelStatus::Arrived)
         {
             _travel.Cancel();
             _travelling = false;
             if (_stage == QuestPlanStage::Hunt)
+            {
+                CountVisit(); // Includes inspecting a spawn location already underfoot.
                 RetireTarget(); // No live eligible target at the cached location; try another spawn.
+            }
             else if (_stage == QuestPlanStage::Acquire)
             {
                 if (!TryAcceptQuest(bot, _data, *_target, _reason))
@@ -239,6 +290,7 @@ public:
     }
     void Pause(PlayerbotAI&) override
     {
+        _clearance.Pause();
         _preparation.Pause();
         if (_travelling)
             _travel.Pause();
@@ -301,14 +353,47 @@ public:
         ClearTarget();
         _preparation.Pause();
     }
-    bool ControlsMovement() const override { return (_travelling && _travel.ControlsMovement()) || _preparation.ControlsMovement(); }
-    bool HoldsNonCombat() const override { return _waitingSafety || _preparation.HoldsNonCombat(); }
+    bool ControlsMovement() const override { return (_travelling && _travel.ControlsMovement()) || _preparation.ControlsMovement() || _clearance.ControlsMovement(); }
+    bool HoldsNonCombat() const override { return _waitingSafety || _preparation.HoldsNonCombat() || _clearance.HoldsNonCombat(); }
 
 private:
+    void CountVisit()
+    {
+        if (!_visitCounted)
+        {
+            ++_visits;
+            _visitCounted = true;
+        }
+    }
+    void WaitForSafety()
+    {
+        _waitingSafety = _safetyCooldown = true;
+        _safetyAt = getMSTime();
+        _safetyDelay = 5000;
+        // Wake when the nearest deferred spawn becomes eligible, not one
+        // full polling interval later. uint32 subtraction remains wrap-safe.
+        for (auto const& entry : _deferred)
+        {
+            uint32 const age = GetMSTimeDiffToNow(entry.second);
+            if (age < 45000)
+                _safetyDelay = std::min(_safetyDelay, 45000u - age);
+        }
+    }
+    bool TryClearRoute(uint32 blocker)
+    {
+        _preparation.RequireRecovery();
+        if (!_clearance.Start(blocker))
+            return false;
+        _travel.Cancel();
+        _travelling = false;
+        _waitingSafety = false;
+        return true;
+    }
     void ClearTarget()
     {
+        _clearance.Cancel();
         _travel.Cancel();
-        _travelling = _engaged = false;
+        _travelling = _engaged = _visitCounted = false;
         _target.reset();
         _hunt.Safety().SetTarget(0);
     }
@@ -323,7 +408,7 @@ private:
         if (_target)
             _deferred[_target->guid] = getMSTime();
         ClearTarget();
-        _waitingSafety = true;
+        WaitForSafety();
     }
     ActivityResult Fail(char const* reason)
     {
@@ -337,6 +422,7 @@ private:
     NativeTravelMovement _movement;
     TravelExecutor _travel;
     QuestPreparation _preparation;
+    RouteClearance _clearance;
     TravelTarget _context;
     std::optional<QuestSpawn> _target;
     std::unordered_set<uint32_t> _visited;
@@ -346,7 +432,9 @@ private:
     ActivityResult _result = ActivityResult::Failed;
     uint32 _guid = 0, _startedAt = 0, _progressAt = 0, _engagedAt = 0, _visits = 0;
     uint32 _wallStartedAt = 0, _deathAt = 0, _deaths = 0;
+    uint32 _safetyAt = 0, _safetyDelay = 5000;
     bool _recovering = false;
+    bool _visitCounted = false, _safetyCooldown = false;
     bool _waitingSafety = false;
     bool _travelling = false, _engaged = false, _hadQuest = false, _rewarded = false;
     char const* _reason = "running";

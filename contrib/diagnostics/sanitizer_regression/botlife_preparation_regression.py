@@ -16,6 +16,7 @@ def body(name):
 mocks = r'''
 #include "BotLifeReadiness.h"
 #include "BotLifeSafety.h"
+#include "BotLifeCombatAssessment.h"
 #include "BotLifeTravel.h"
 #include <cassert>
 #include <algorithm>
@@ -152,6 +153,10 @@ template<class Search> void VisitAllObjects(Player* bot,Search& search,float) {
 }
 }
 namespace BotLife {
+bool opponentAllowed=true;
+CombatAssessment AssessRouteOpponent(Player&, Creature&, bool) {
+    return {opponentAllowed, opponentAllowed?"manageable":"insufficient-health-reserve"};
+}
 class NativeTravelMovement final : public TravelMovement {
     Player& bot;
 public:
@@ -173,9 +178,12 @@ tests = r'''
 using namespace BotLife;
 struct Scene {
     Player bot; PlayerbotAI ai{&bot}; QuestSafety safety{bot}; QuestPreparation prep{ai,safety}; Creature vendor;
-    Scene() { clockMs=1; NativeTravelMovement::owns=false; NativeTravelMovement::valid=true; bot.map.creatures[1]=&vendor; }
+    Scene() { opponentAllowed=true; clockMs=1; NativeTravelMovement::owns=false; NativeTravelMovement::valid=true; bot.map.creatures[1]=&vendor; }
 };
 int main() {
+    { Scene s; s.bot.health=80; assert(s.prep.Update(1)==PreparationResult::Ready);
+      s.prep.RequireRecovery(); assert(s.prep.Update(1)==PreparationResult::Waiting);
+      s.bot.health=90; assert(s.prep.Update(1)==PreparationResult::Ready); }
     { Scene s; auto r=ReadCombatReadiness(s.bot); assert(EvaluateReadiness(r,false).state==Preparation::Ready);
       s.bot.items.clear(); assert(s.prep.Update(1)==PreparationResult::Failed && !s.bot.repairs); }
     { Scene s; s.bot.items.erase(16); assert(EvaluateReadiness(ReadCombatReadiness(s.bot),false).state==Preparation::Unprepared); }
@@ -219,6 +227,27 @@ int main() {
       assert(s.prep.Update(1)==PreparationResult::Waiting && s.prep.ControlsMovement());
       s.prep.Pause(); assert(!s.prep.ControlsMovement()); }
     // Local adds, elites, changing patrols, real curved route, death-area expiry.
+    { std::vector<LocalThreat> threats{{8,{80,0,0},15,true},{4,{40,0,0},10,true}};
+      LocalThreat const* blocker=nullptr;
+      assert(!SafeThreatSegment(threats,{0,0,0},{100,0,0},0,&blocker) && blocker->spawn==4);
+      std::reverse(threats.begin(),threats.end());
+      assert(!SafeThreatSegment(threats,{0,0,0},{100,0,0},0,&blocker) && blocker->spawn==4);
+      assert(!SafeThreatSegment(threats,{0,0,0},{100,0,0},4,&blocker) && blocker->spawn==8);
+      threats={{4,{40,0,0},10,true},{8,{60,0,0},35,true}};
+      assert(!SafeThreatSegment(threats,{0,0,0},{100,0,0},0,&blocker) && blocker->spawn==8); // Boundary, not centre.
+      threats[1].aggressive=false;
+      assert(!SafeThreatSegment(threats,{0,0,0},{100,0,0},0,&blocker) && blocker->spawn==4);
+      assert(SafeThreatSegment(threats,{0,0,0},{10,0,0},0,&blocker) && !blocker);
+      threats={{8,{0,0,0},10,true},{4,{0,0,0},10,true}};
+      assert(!SafeThreatSegment(threats,{0,0,0},{0,0,0},0,&blocker) && blocker->spawn==4); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=70; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; s.safety.SetTarget(0);
+      assert(s.safety.CanApproach({0,0,1,1,20,0,0})); // 50m standoff, no exemption.
+      assert(!s.safety.CanApproach({0,0,1,1,70,0,0}));
+      s.bot.spline.finalized=false; s.bot.spline.path={{0,0,0},{70,0,0},{20,0,0}};
+      assert(!s.safety.RouteSafe()); // Safe endpoint cannot excuse unsafe native detour.
+      s.bot.spline.finalized=true; mob.x=40; clockMs+=500;
+      assert(!s.safety.CanApproach({0,0,1,1,20,0,0})); } // Patrol invalidates staging.
     { Scene s; Creature mob; mob.guid=2; mob.x=25; mob.hostile=mob.attackable=true; mob.attackDistance=20;
       s.bot.map.creatures[2]=&mob;
       assert(mob.GetAggroRange(&s.bot)==0 && !s.safety.CanRest()); // Must not use pet-only radius.
@@ -230,8 +259,10 @@ int main() {
       QuestSpawn target{2,10,1,1,40,0,0}; assert(s.safety.CanApproach(target));
       Creature add=mob; add.guid=3; add.y=10; s.bot.map.creatures[3]=&add; clockMs+=500;
       assert(!s.safety.CanApproach(target)); add.y=100; clockMs+=500;
-      assert(s.safety.CanApproach(target) && !s.safety.Blocker()); mob.elite=true; clockMs+=500; assert(!s.safety.CanApproach(target));
-      assert(!strcmp(s.safety.Reason(),"hostile-on-route") || !strcmp(s.safety.Reason(),"strong-target"));
+      assert(s.safety.CanApproach(target) && !s.safety.Blocker()); mob.elite=true; mob.level=60; clockMs+=500;
+      assert(s.safety.CanApproach(target)); // Rank/level alone never veto an assessed target.
+      opponentAllowed=false; assert(!s.safety.CanApproach(target));
+      assert(!strcmp(s.safety.Reason(),"insufficient-health-reserve"));
       assert(s.safety.Blocker()==2); }
     { Scene s; Creature add; add.guid=2; add.x=30; add.y=40; add.hostile=add.attackable=true;
       s.bot.map.creatures[2]=&add; s.bot.spline.finalized=false;

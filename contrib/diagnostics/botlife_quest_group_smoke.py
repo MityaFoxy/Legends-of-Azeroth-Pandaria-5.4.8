@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Isolated, staggered 1–5 bot QuestRun; native saves only, no resets or teleport."""
+"""Isolated, staggered 1–10 bot QuestRun; native saves only, no resets or teleport."""
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -11,12 +13,12 @@ import time
 from pathlib import Path
 
 from botlife_sanitizer_soak import ConsoleEvents, write_json
-from sanitizer_soak import SanitizerMonitor, memory, optional_overlay, setting, stamp
+from sanitizer_soak import SanitizerMonitor, memory, optional_overlay, rss, setting, stamp
 
 
 def parse_assignments(text):
-    if not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*(,[1-9][0-9]*:[1-9][0-9]*){0,4}", text):
-        raise ValueError("Require 1–5 GUID:QuestId pairs without spaces")
+    if len(text) > 219 or not re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*(,[1-9][0-9]*:[1-9][0-9]*){0,9}", text):
+        raise ValueError("Require 1–10 GUID:QuestId pairs without spaces")
     pairs = [tuple(map(int, token.split(":"))) for token in text.split(",")]
     if len({guid for guid, _ in pairs}) != len(pairs) or any(value > 0xFFFFFFFF for pair in pairs for value in pair):
         raise ValueError("Require unique uint32 GUIDs and uint32 quest IDs")
@@ -51,15 +53,23 @@ def observe(line, roster, evidence):
     elif event in ("finish", "cancel"):
         row["recovering"] = False
         row["terminal"] = line
-        row["success"] = (event == "finish" and row["started"] and bool(row["progress"]) and row["turn_in"]
+        row["success"] = (event == "finish" and row["started"] and (row["turn_in_only"] or bool(row["progress"])) and row["turn_in"]
                           and "result=completed rewarded=true reason=rewarded" in line)
     return guid, event
 
 
-def new_evidence(roster):
+def new_evidence(roster, turn_in_only=False):
     return {guid: dict(quest=quest, started=False, progress=[], turn_in=False, terminal=None, success=False,
+                       turn_in_only=turn_in_only,
                        recovering=False, deaths=0, resurrections=0, progress_after_resurrection=[])
             for guid, quest in roster.items()}
+
+
+def quest_preflight_error(snapshot, turn_in_only=False):
+    statuses = ("1",) if turn_in_only else ("", "3")
+    if not snapshot["character"] or snapshot["rewarded"] != "0" or snapshot["active"] not in statuses:
+        return "require COMPLETE, non-rewarded quest" if turn_in_only else "require untaken or INCOMPLETE, non-rewarded quest"
+    return None
 
 
 def observation_error(roster, evidence, seen_online):
@@ -82,12 +92,33 @@ def preparation_error(snapshot):
     return None
 
 
+def stop_server(child, event, grace_seconds=180):
+    """Bound shutdown of this owned child only; a forced stop is never a pass."""
+    if child.poll() is not None:
+        return False
+    event("shutdown_requested", pid=child.pid)
+    child.send_signal(signal.SIGTERM)
+    try:
+        child.wait(timeout=grace_seconds)
+        return False
+    except subprocess.TimeoutExpired:
+        event("shutdown_forced", pid=child.pid, reason="Graceful shutdown exceeded deadline; saves may be incomplete")
+        child.kill()
+        child.wait(timeout=30)
+        return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--config-dir", type=Path, required=True)
     parser.add_argument("--assignments", required=True)
     parser.add_argument("--duration-seconds", type=int, default=1500)
+    parser.add_argument("--post-terminal-seconds", type=int, default=0,
+                        help="Observe native AI after all one-shot quests terminate; never restart them")
+    parser.add_argument("--full-logging", action="store_true")
+    parser.add_argument("--turn-in-only", action="store_true",
+                        help="One-bot return test: require a persisted COMPLETE quest; do not require new kill credit")
     parser.add_argument("--observe-only", action="store_true",
                         help="A clean bounded observation may end with unfinished quests")
     parser.add_argument("--prepare-character", action="store_true",
@@ -103,17 +134,22 @@ def main():
         parser.error("Require a fresh absolute run directory")
     if args.prepare_character and (len(roster) != 1 or not args.expected_character_db):
         parser.error("Preparation requires exactly one bot and --expected-character-db")
-    if not 180 <= args.duration_seconds <= 1500:
-        parser.error("Duration must be between 180 and 1500 seconds")
+    if args.turn_in_only and (len(roster) != 1 or args.prepare_character or args.observe_only):
+        parser.error("Turn-in-only requires exactly one bot, no preparation and strict reward verification")
+    if not 180 <= args.duration_seconds <= 7200 or not 0 <= args.post_terminal_seconds <= 600:
+        parser.error("Duration must be 180..7200 seconds, post-terminal observation 0..600 seconds")
+    if not args.expected_character_db:
+        parser.error("Require --expected-character-db to assert the isolated character database")
     os.umask(0o077)
     args.run.mkdir(parents=True, exist_ok=False)
     logs = args.run / "Logs"
     (logs / "gm").mkdir(parents=True)
     events = (args.run / "events.jsonl").open("a", buffering=1)
-    evidence = new_evidence(roster)
+    evidence = new_evidence(roster, args.turn_in_only)
     child = None
     error = None
     stop = False
+    lock = None
     monitor = SanitizerMonitor(logs)
     base = (args.config_dir / "worldserver.conf").read_text()
     h, port, user, password, db = setting(base, "CharacterDatabaseInfo").split(";")
@@ -156,6 +192,8 @@ def main():
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
     try:
+        lock = (args.run.parent / ".botlife-quest-run.lock").open("a")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         for proc in Path("/proc").iterdir():
             if proc.name.isdecimal():
                 try:
@@ -170,8 +208,8 @@ def main():
         before = {guid: snapshot(guid, quest) for guid, quest in roster.items()}
         write_json(args.run / "preflight.json", before)
         for guid, row in before.items():
-            if not row["character"] or row["rewarded"] != "0" or row["active"] not in ("", "3"):
-                raise RuntimeError(f"Bot {guid}: require untaken or INCOMPLETE, non-rewarded quest")
+            if reason := quest_preflight_error(row, args.turn_in_only):
+                raise RuntimeError(f"Bot {guid}: {reason}")
             if not args.prepare_character and (reason := preparation_error(row)):
                 raise RuntimeError(f"Bot {guid}: {reason}")
         source = Path(__file__).resolve().parents[2]
@@ -185,6 +223,10 @@ def main():
                 shutil.copy2(source / name, target)
         write_json(args.run / "manifest.json", dict(time=stamp(), assignments=roster, before=before,
                    binary=str(args.binary), login_interval_seconds=30, deadline_seconds=args.duration_seconds,
+                   deadline_origin="world-ready", startup_timeout_seconds=1200,
+                   post_terminal_seconds=args.post_terminal_seconds, full_logging=args.full_logging,
+                   turn_in_only=args.turn_in_only,
+                   binary_sha256=hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
                    observe_only=args.observe_only,
                    prepare_character=args.prepare_character, character_database=db,
                    backup="No database dump requested; native character saves persist"))
@@ -195,6 +237,17 @@ def main():
             "Appender.BotLife": "2,2,7,BotLife.log,a,67108864", "Appender.Navigation": "2,2,7,Navigation.log,a,67108864",
             "Logger.playerbots.botlife": "2,BotLife", "Logger.playerbots.navigation": "2,Navigation",
         })
+        if args.full_logging:
+            # Dedicated files retain all emitted task diagnostics. No rotation
+            # of the two event-reader files: preserve exact one-shot evidence.
+            full = {"Appender.BotLife": "2,1,7,BotLife.log,a,0", "Logger.playerbots.botlife": "1,BotLife",
+                    "Appender.Navigation": "2,1,7,Navigation.log,a,67108864", "Logger.playerbots.navigation": "1,Navigation"}
+            for name, category in (("Playerbots", "playerbots"), ("Behavior", "playerbots.behavior"),
+                                   ("MeleeMovement", "movement.melee"), ("Combat", "entities.unit"),
+                                   ("Spells", "spells"), ("Quest", "entities.player.quest"), ("Network", "network")):
+                full[f"Appender.{name}"] = f"2,1,7,{name}.log,a,67108864"
+                full[f"Logger.{category}"] = f"1,{name}"
+            world = optional_overlay(world, full)
         bots = optional_overlay((args.config_dir / "playerbots.conf").read_text(), {
             "AiPlayerbot.Enabled": "1", "AiPlayerbot.RandomBotAutologin": "0", "AiPlayerbot.RandomBotLoginAtStartup": "0",
             "AiPlayerbot.MinRandomBots": str(len(roster)), "AiPlayerbot.MaxRandomBots": str(len(roster)),
@@ -222,19 +275,26 @@ def main():
         requested = []
         seen_online = set()
         next_login = sample_at = 0
-        deadline = time.monotonic() + args.duration_seconds
+        all_terminal_at = None
+        deadline = time.monotonic() + 1200
         while time.monotonic() < deadline:
             if stop:
                 raise RuntimeError("Stop requested")
             if memory()["MemAvailable"] < 2 * 1024**3 or shutil.disk_usage(args.run).free < 10 * 1024**3:
                 raise RuntimeError("Resource guard: RAM <2 GiB or disk <10 GiB")
-            if sum(f.stat().st_size for f in logs.iterdir() if f.is_file()) > 1024**3:
-                raise RuntimeError("Run logs exceeded 1 GiB")
+            log_bytes = sum(f.stat().st_size for f in logs.rglob("*") if f.is_file())
+            if log_bytes > (4 if args.full_logging else 1) * 1024**3:
+                raise RuntimeError("Run logs exceeded safety budget")
             monitor.check()
             if child.poll() is not None:
                 raise RuntimeError(f"Early server exit {child.returncode}")
-            ready = ready or "World initialized in " in reader.read_lines(logs / "console.log")
             now = time.monotonic()
+            console_text = reader.read_lines(logs / "console.log")
+            if not ready and "World initialized in " in console_text:
+                ready = True
+                deadline = now + args.duration_seconds
+                event("world_ready", observation_seconds=args.duration_seconds,
+                      deadline_epoch=time.time() + args.duration_seconds)
             if ready and len(requested) < len(roster) and now >= next_login:
                 guid = list(roster)[len(requested)]
                 child.stdin.write("botlife-test-login\n")
@@ -251,9 +311,18 @@ def main():
                 if population - set(requested):
                     raise RuntimeError("Unexpected online character")
                 seen_online |= population
-                event("sample", online=sorted(population), seen_online=sorted(seen_online))
+                event("sample", online=sorted(population), seen_online=sorted(seen_online),
+                      rss_bytes=rss(child.pid), available_bytes=memory()["MemAvailable"],
+                      disk_free_bytes=shutil.disk_usage(args.run).free, log_bytes=log_bytes)
                 sample_at = now + 15
             if len(requested) == len(roster) and all(row["terminal"] for row in evidence.values()):
+                if all_terminal_at is None:
+                    all_terminal_at = now
+                    event("all_quests_terminal", post_terminal_seconds=args.post_terminal_seconds,
+                          all_quests_completed=all(row["success"] for row in evidence.values()))
+                if now < all_terminal_at + args.post_terminal_seconds:
+                    time.sleep(1)
+                    continue
                 failure = observation_error(roster, evidence, seen_online)
                 if failure:
                     raise RuntimeError(failure)
@@ -263,6 +332,8 @@ def main():
                 raise RuntimeError("One or more configured bots did not start QuestRun")
             time.sleep(1)
         else:
+            if not ready:
+                raise RuntimeError("World startup exceeded 1200 seconds")
             if not args.observe_only:
                 raise RuntimeError("Quest group scenario timeout")
             failure = observation_error(roster, evidence, seen_online)
@@ -274,13 +345,11 @@ def main():
         event("failure", reason=error)
     finally:
         if child and child.poll() is None:
-            event("shutdown_requested", pid=child.pid)
-            child.send_signal(signal.SIGTERM)
-            while child.poll() is None:
-                try:
-                    child.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    event("shutdown_waiting", pid=child.pid)
+            try:
+                if stop_server(child, event):
+                    error = error or "Forced shutdown; native saves may be incomplete"
+            except Exception as exc:
+                error = error or "Shutdown failed: " + str(exc)
         if child:
             try:
                 monitor.check(drain=True)

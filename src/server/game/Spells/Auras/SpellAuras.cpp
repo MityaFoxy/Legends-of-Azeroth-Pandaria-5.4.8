@@ -1397,7 +1397,8 @@ bool Aura::CanBeSaved() const
     // Check if aura is single target, not only spell info
     if (GetCasterGUID() != GetOwner()->GetGUID())
     {
-        for (SpellEffectInfo const& spellEffectInfo : GetSpellInfo()->GetEffects())
+        // SpellInfo's constructor populates Effects in this fork, not _effects.
+        for (SpellEffectInfo const& spellEffectInfo : GetSpellInfo()->Effects)
         {
             if (!spellEffectInfo.IsEffect())
                 continue;

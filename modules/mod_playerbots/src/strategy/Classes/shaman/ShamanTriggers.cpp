@@ -6,3 +6,23 @@
 #include "ShamanTriggers.h"
 
 #include "Playerbots.h"
+#include "ShamanWeaponImbue.h"
+#include "SpellAuras.h"
+
+bool ShamanWeaponImbueTrigger::IsActive()
+{
+    return bot->GetTalentSpecialization() == SPEC_SHAMAN_ENHANCEMENT &&
+        bot->HasSpell(spellId) && GetShamanImbueWeapon(*bot, hand);
+}
+
+bool MaelstromWeaponTrigger::IsActive()
+{
+    if (!bot->IsAlive() || bot->GetTalentSpecialization() != SPEC_SHAMAN_ENHANCEMENT ||
+        !bot->HasSpell(403))
+        return false;
+    // Read the actual proc aura, not the passive talent with the same name.
+    // Keep the existing strategy's four-stack threshold; native casting owns
+    // movement, cast time, cost, consumption and target validation.
+    Aura const* aura = bot->GetAura(53817);
+    return aura && aura->GetStackAmount() >= 4;
+}

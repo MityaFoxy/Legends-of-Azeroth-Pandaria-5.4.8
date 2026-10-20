@@ -63,7 +63,7 @@ AiPlayerbot.BotLife.QuestAcquire.QuestId = 0
 
 # ONE-SHOT full cycle of ONE supported ordinary kill quest per configured bot.
 # Legacy BotGuid/QuestId: exactly one matching BotGuids entry.
-# Assignments: 1..5 explicit GUID:QuestId pairs, comma-separated without spaces;
+# Assignments: 1..10 explicit GUID:QuestId pairs, comma-separated without spaces;
 # BotGuid and QuestId must both be 0. BotGuids must match the roster exactly.
 # ALL other single-run modes must be OFF. No autonomous next-quest selection.
 # Native combat/credit only; no force-complete, quest reset, teleport or item deletion.

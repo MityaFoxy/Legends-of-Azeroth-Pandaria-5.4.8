@@ -1,4 +1,5 @@
 #include "BotLifeSafety.h"
+#include "BotLifeCombatAssessment.h"
 #include "CellImpl.h"
 #include "Creature.h"
 #include "GridNotifiers.h"
@@ -42,8 +43,7 @@ void QuestSafety::Refresh()
         float const attackRadius = npc->GetAttackDistance(&_bot) + npc->m_CombatDistance +
             npc->GetObjectSize() + _bot.GetObjectSize();
         _threats.push_back({npc->GetSpawnId(), {npc->GetPositionX(), npc->GetPositionY(), npc->GetPositionZ()},
-            std::max(8.0f, attackRadius + 8.0f), npc->IsHostileTo(&_bot),
-            npc->isElite() || npc->GetLevel() > _bot.GetLevel() + 1});
+            std::max(8.0f, attackRadius + 8.0f), npc->IsHostileTo(&_bot)});
     }
     while (!_deaths.empty() && GetMSTimeDiffToNow(_deaths.front().at) >= 300000)
         _deaths.pop_front();
@@ -92,7 +92,22 @@ bool QuestSafety::CanApproach(QuestSpawn const& target)
     SafetyPoint goal{target.x, target.y, target.z};
     if (Creature* npc = _bot.GetMap()->GetCreatureBySpawnId(target.guid))
         if (npc->GetEntry() == target.entry && (npc->GetPhaseMask() & _bot.GetPhaseMask()))
+        {
             goal = {npc->GetPositionX(), npc->GetPositionY(), npc->GetPositionZ()};
+            if (_target == target.guid && _bot.IsValidAttackTarget(npc))
+            {
+                CombatAssessment const assessment = AssessRouteOpponent(_bot, *npc, false);
+                if (!assessment.allowed)
+                {
+                    if (!_reported || GetMSTimeDiffToNow(_reportedAt) >= 5000)
+                        TC_LOG_INFO("playerbots.botlife", "BotLife assessment guid={} spawn={} allowed=false reason={} model={} mainhand={} offhand={} outgoingDps={} incomingDps={} seconds={} incoming={}",
+                            _bot.GetGUID().GetCounter(), target.guid, assessment.reason, assessment.model,
+                            assessment.mainhandDps, assessment.offhandDps, assessment.outgoingDps, assessment.incomingDps,
+                            assessment.seconds, assessment.incomingDamage);
+                    return Reject(assessment.reason, target.guid, goal, 0, Position(_bot), goal);
+                }
+            }
+        }
     // Local visibility is not proof that the rest of a long route is safe.
     // Recheck while moving and after each issued native spline.
     if (!SafeSegment(Position(_bot), goal))
@@ -103,11 +118,7 @@ bool QuestSafety::CanApproach(QuestSpawn const& target)
     for (LocalThreat const& threat : _threats)
     {
         if (_target && threat.spawn == _target)
-        {
-            if (threat.strong)
-                return Reject("strong-target", threat.spawn, threat.position, threat.radius, Position(_bot), goal);
             continue;
-        }
         // Include neutral attackable neighbours: assistance can pull them in.
         if (SegmentDistanceSquared(threat.position, goal, goal) <= 30*30)
             return Reject("target-neighbour", threat.spawn, threat.position, 30, Position(_bot), goal);

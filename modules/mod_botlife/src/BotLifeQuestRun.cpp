@@ -38,7 +38,7 @@ void LoadQuestRunConfig()
         sConfigMgr->GetBoolDefault("AiPlayerbot.BotLife.QuestAcquire.Enabled", false))
     {
         roster.clear();
-        TC_LOG_ERROR("server.loading", "BotLife QuestRun rejected: require 1..5 explicit assignments matching the exact allowlist, no mixed legacy IDs and all other single-run modes disabled");
+        TC_LOG_ERROR("server.loading", "BotLife QuestRun rejected: require 1..10 explicit assignments matching the exact allowlist, no mixed legacy IDs and all other single-run modes disabled");
         return;
     }
     enabled = true;

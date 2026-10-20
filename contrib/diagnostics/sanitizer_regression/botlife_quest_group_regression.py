@@ -8,10 +8,30 @@ import unittest
 
 root = pathlib.Path(sys.argv.pop(1))
 sys.path.insert(0, str(root / "contrib/diagnostics"))
-from botlife_quest_group_smoke import new_evidence, observe, observation_error, parse_assignments, preparation_error
+from unittest.mock import Mock
+import signal
+import subprocess
+from botlife_quest_group_smoke import new_evidence, observe, observation_error, parse_assignments, preparation_error, quest_preflight_error, stop_server
 
 
 class GroupObserverTests(unittest.TestCase):
+    def test_turn_in_only_is_explicit_and_requires_persisted_complete(self):
+        row = dict(character="1071", rewarded="0", active="1")
+        self.assertIsNone(quest_preflight_error(row, True))
+        self.assertIsNotNone(quest_preflight_error(row))
+        for status in ("", "3", "5"):
+            self.assertIsNotNone(quest_preflight_error(dict(row, active=status), True))
+        self.assertIsNotNone(quest_preflight_error(dict(row, rewarded="1"), True))
+        self.rows = new_evidence(self.roster, True)
+        self.emit(11, "event=start resumed=true")
+        self.emit(11, "event=stage stage=TurnIn")
+        self.emit(11, "event=finish result=completed rewarded=true reason=rewarded visits=0")
+        self.assertTrue(self.rows[11]["success"])
+        self.assertEqual(self.rows[11]["progress"], [])
+        self.emit(22, "event=start resumed=true")
+        self.emit(22, "event=finish result=failed rewarded=false reason=quest-timeout")
+        self.assertFalse(self.rows[22]["success"])
+
     def test_preflight_rejects_naked_character_without_mutating_it(self):
         self.assertIsNotNone(preparation_error(dict(level="56", equipment_slots="")))
         self.assertIsNotNone(preparation_error(dict(level="56", equipment_slots="15")))
@@ -85,10 +105,23 @@ class GroupObserverTests(unittest.TestCase):
         self.assertEqual(parse_assignments("11:8320"), {11: 8320})
         self.assertEqual(len(parse_assignments("11:8320,185:8320,584:8320")), 3)
         for value in ("", "11:1,11:2", "11:1,11:2,22:3,33:4,44:5", "0:1,2:1,3:1,4:1,5:1",
-                      "1:1,2:1,3:1,4:1,5:1,6:1", "1:1,2:1,3:1,4:1,5:1,",
+                      ",".join(f"{i}:1" for i in range(1,12)), "1:1,2:1,3:1,4:1,5:1,",
                       "1:1,2:1,3:1,4:1,4294967296:1", "1:1, 2:1,3:1,4:1,5:1"):
             with self.assertRaises(ValueError):
                 parse_assignments(value)
+        self.assertEqual(len(parse_assignments(",".join(f"{i}:1" for i in range(1,11)))), 10)
+        self.assertEqual(len(parse_assignments(",".join(f"{4294967295-i}:4294967295" for i in range(10)))), 10)
+
+    def test_owned_server_shutdown_is_bounded_and_forced_stop_is_distinct(self):
+        child, event = Mock(), Mock()
+        child.poll.return_value = None
+        self.assertFalse(stop_server(child,event,1))
+        child.send_signal.assert_called_once_with(signal.SIGTERM)
+        child.kill.assert_not_called()
+        child.wait.side_effect = [subprocess.TimeoutExpired("worldserver",1),0]
+        self.assertTrue(stop_server(child,event,1))
+        child.kill.assert_called_once()
+        self.assertTrue(any(call.args[0]=="shutdown_forced" for call in event.call_args_list))
 
     def test_death_is_nonterminal_and_does_not_count_as_progress(self):
         self.emit(11, "event=start")

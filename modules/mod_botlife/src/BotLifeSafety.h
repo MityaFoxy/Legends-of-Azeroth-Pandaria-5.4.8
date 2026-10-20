@@ -15,7 +15,7 @@ struct LocalThreat
     uint32_t spawn;
     SafetyPoint position;
     float radius;
-    bool aggressive, strong;
+    bool aggressive;
 };
 float SegmentDistanceSquared(SafetyPoint p, SafetyPoint from, SafetyPoint to);
 bool SafeThreatSegment(std::vector<LocalThreat> const& threats, SafetyPoint from, SafetyPoint to,

@@ -2310,17 +2310,17 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     Spell* spell = new Spell(bot, spellInfo, TRIGGERED_NONE);
     spell->m_cast_count += 1;
     SpellCastTargets targets;
-    if (spellInfo->Targets & TARGET_FLAG_ITEM)
+    if (itemTarget || (spellInfo->Targets & TARGET_FLAG_ITEM))
     {
-        //spell->m_CastItem = itemTarget ? itemTarget : aiObjectContext->GetValue<Item*>("item for spell", spellId)->Get();
-        targets.SetItemTarget(spell->m_CastItem);
-
-        if (bot->GetTradeData())
+        // An enchanted weapon is the target, NOT the item casting the spell.
+        // Do not claim success for an unsupported trade enchant or a missing item.
+        if (!itemTarget || itemTarget->GetOwnerGUID() != bot->GetGUID() || bot->GetTradeData())
         {
-            //bot->GetTradeData()->SetSpell(spellId);
             delete spell;
-            return true;
+            bot->SetSelection(oldSel);
+            return false;
         }
+        targets.SetItemTarget(itemTarget);
     }
     else if (spellInfo->Targets & TARGET_FLAG_DEST_LOCATION)
     {

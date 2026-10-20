@@ -17,6 +17,7 @@ public:
     QuestPreparation(PlayerbotAI& ai, QuestSafety& safety);
     PreparationResult Update(uint32_t elapsed);
     bool NeedsService() const;
+    void RequireRecovery() { _resting = true; }
     void Pause();
     bool ControlsMovement() const { return _travel.ControlsMovement(); }
     bool HoldsNonCombat() const { return _holding; }

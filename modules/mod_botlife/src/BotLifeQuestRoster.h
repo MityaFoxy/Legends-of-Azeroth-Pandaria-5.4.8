@@ -19,7 +19,7 @@ inline std::map<uint32_t, uint32_t> ParseQuestRoster(std::string_view input)
         auto const parsed = std::from_chars(text.data(), text.data() + text.size(), value);
         return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() && value;
     };
-    if (input.size() > 128)
+    if (input.size() > 219) // Ten maximal uint32:uint32 pairs, including separators.
         return {};
     while (!input.empty())
     {
@@ -28,7 +28,7 @@ inline std::map<uint32_t, uint32_t> ParseQuestRoster(std::string_view input)
         size_t const colon = pair.find(':');
         uint32_t guid = 0, quest = 0;
         if (colon == pair.npos || !number(pair.substr(0, colon), guid) ||
-            !number(pair.substr(colon + 1), quest) || !result.emplace(guid, quest).second || result.size() > 5)
+            !number(pair.substr(colon + 1), quest) || !result.emplace(guid, quest).second || result.size() > 10)
             return {};
         if (comma == input.npos)
             break;
