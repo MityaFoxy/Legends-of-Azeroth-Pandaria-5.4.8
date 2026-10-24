@@ -1227,31 +1227,32 @@ void RandomPlayerbotMgr::RandomTeleportForLevel(Player* bot)
     }
 }
 
-const RandomPlayerbotMgr::city* RandomPlayerbotMgr::GetCityForPlayer(Player* player)
+const RandomPlayerbotMgr::city* RandomPlayerbotMgr::GetCityForPlayer(Player* player) const
 {
-    if (_city_cache_data.empty()) return nullptr;
+    if (!player) return nullptr;
 
-    std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-    std::shuffle(_city_cache_data.begin(), _city_cache_data.end(), gen);
-
+    // Reservoir sampling keeps equal chances without reordering shared data
+    // or changing the objects referenced by another caller's returned pointer.
+    city const* selected = nullptr;
+    uint32 eligible = 0;
     for (const auto& city_data : _city_cache_data)
     {
         if (player->GetLevel() < city_data.min_level || player->GetLevel() > city_data.max_level || city_data.team_disabled == player->GetTeam())
             continue;
-        return &city_data;
+        if (urand(1, ++eligible) == 1)
+            selected = &city_data;
     }
 
-    return nullptr;
+    return selected;
 }
 
-const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Player* player)
+const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Player* player) const
 {
-    if (_farm_cache_data.empty()) return nullptr;
+    if (!player || _farm_cache_data.empty()) return nullptr;
 
-    std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-    std::shuffle(_farm_cache_data.begin(), _farm_cache_data.end(), gen);
-
-    for (auto& zone : _farm_cache_data)
+    farm_spot const* selected = nullptr;
+    uint32 eligibleZones = 0;
+    for (auto const& zone : _farm_cache_data)
     {
         if (player->GetLevel() < zone.min_level || player->GetLevel() > zone.max_level || zone.team_disabled == player->GetTeam())
             continue;
@@ -1282,17 +1283,27 @@ const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Pl
             }
         }
 
-        auto& spots = zone.spots;
-        std::shuffle(spots.begin(), spots.end(), gen);
-        for (auto& spot : spots)
+        farm_spot const* candidate = nullptr;
+        uint32 eligibleSpots = 0;
+        for (auto const& spot : zone.spots)
         {
             if (player->GetLevel() >= spot.min_level && player->GetLevel() <= spot.max_level)
             {
-                // -- 
-                TC_LOG_DEBUG("playerbots", "Farm spot found for : {} - level: {}", player->GetName().c_str(), player->GetLevel());
-                return &spot;
+                if (urand(1, ++eligibleSpots) == 1)
+                    candidate = &spot;
             }
         }
+
+        // Choose zones uniformly, then spots within each zone, as before.
+        // Sampling all spots together would favor zones with more entries.
+        if (candidate && urand(1, ++eligibleZones) == 1)
+            selected = candidate;
+    }
+
+    if (selected)
+    {
+        TC_LOG_DEBUG("playerbots", "Farm spot found for : {} - level: {}", player->GetName().c_str(), player->GetLevel());
+        return selected;
     }
 
     TC_LOG_WARN("playerbots", "No valid zone farm found for {} level: {}", player->GetName().c_str(), player->GetLevel());

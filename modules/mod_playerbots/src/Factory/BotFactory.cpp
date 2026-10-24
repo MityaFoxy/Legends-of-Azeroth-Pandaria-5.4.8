@@ -317,7 +317,20 @@ void BotFactory::InitTalentsTree(bool reset)
         // -- Select spec
         if (bot->GetLevel() >= 10)
         {
-            uint32 tab = std::rand() % 3;
+            auto const specializations = dbc::GetClassSpecializations(bot->GetClass());
+            std::vector<uint32> tabs;
+            for (uint32 tab = 0; tab < specializations.size(); ++tab)
+                if (specializations[tab] != Specializations::SPEC_NONE)
+                    tabs.push_back(tab);
+
+            if (tabs.empty())
+            {
+                TC_LOG_ERROR("playerbots", "No specializations found for bot {} (class {})",
+                    bot->GetName(), uint32(bot->GetClass()));
+                return;
+            }
+
+            uint32 tab = tabs[urand(0, uint32(tabs.size()) - 1)];
             WorldPacket p(CMSG_SET_PRIMARY_TALENT_TREE);
             p << tab;
             bot->GetSession()->HandeSetTalentSpecialization(p);

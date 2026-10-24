@@ -132,8 +132,8 @@ private:
     uint32 AddRandomBots();
     bool ProcessBot(uint32 bot);
     void ScheduleRandomize(uint32 bot, uint32 time);
-    const farm_spot* GetFarmZoneForPlayer(Player* player);
-    const city* GetCityForPlayer(Player* player);
+    const farm_spot* GetFarmZoneForPlayer(Player* player) const;
+    const city* GetCityForPlayer(Player* player) const;
     uint32 GetEventValue(uint32 bot, std::string const event);
     std::string const GetEventData(uint32 bot, std::string const event);
     uint32 SetEventValue(uint32 bot, std::string const event, uint32 value, uint32 validIn, std::string const data = "");
@@ -153,6 +153,7 @@ private:
     // -- lists
     std::map<uint32, std::map<std::string, CachedEvent>> _eventCache;
     std::map<uint8, std::vector<ObjectGuid>> _addclassCache;
+    // Built by PrepareTeleportCache during initialization; selection is read-only.
     std::vector<city> _city_cache_data;
     std::vector<farm_zone> _farm_cache_data;
 

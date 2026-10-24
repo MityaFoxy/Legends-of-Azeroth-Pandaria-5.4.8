@@ -323,9 +323,9 @@ Player* RandomPlayerbotFactory::CreateRandomBot(WorldSession* session, Classes c
     std::vector<uint8> skinColors, facialHairTypes;
     std::vector<std::pair<uint8, uint8>> faces, hairs;
 
-    for (uint32 index = 0; index < sChrSectionStore.GetNumRows(); ++index)
+    for (uint32 index = 0; index < sCharSectionsStore.GetNumRows(); ++index)
     {
-        const CharSectionsEntry* charSection = sChrSectionStore.LookupEntry(index);
+        const CharSectionsEntry* charSection = sCharSectionsStore.LookupEntry(index);
 
         if (!charSection) continue;
         if (charSection->RaceID != race || charSection->SexID != gender) continue;
