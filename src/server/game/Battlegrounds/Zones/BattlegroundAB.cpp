@@ -33,7 +33,8 @@ enum
 {
     WORLD_STATE_ARATHI_BASIN_PERFECTION = 5716,
     WORLD_STATE_TERRITORIAL_DOMINANCE   = 5717,
-    WORLD_STATE_RESILIENT_VICTORY       = 5809,
+    WORLD_STATE_RESILIENT_VICTORY_H     = 5809,
+    WORLD_STATE_RESILIENT_VICTORY_A     = 5810,
     WORLD_STATE_WE_HAD_IT_ALL_ALONG     = 9317,
 
     AB_EVENT_START_BATTLE               = 9158, // 159 - Let's Get This Done
@@ -165,9 +166,14 @@ void BattlegroundAB::PostUpdateImpl(uint32 diff)
             GetBgMap()->SetWorldState(WORLD_STATE_TERRITORIAL_DOMINANCE, points == 5 ? 1 : 0);
         }
 
+        // Remember the trailing team, not the absolute margin at the end of the match.
+        // Evaluate after both teams' resource ticks to avoid an intermediate-score bias.
+        for (uint8 team = 0; team < BG_TEAMS_COUNT; ++team)
+            if (m_TeamScores[1 - team] - m_TeamScores[team] >= 500)
+                m_TeamHadDisadvantage[team] = true;
+
         int32 scoreDiff = std::abs(m_TeamScores[TEAM_ALLIANCE] - m_TeamScores[TEAM_HORDE]);
         GetBgMap()->SetWorldState(WORLD_STATE_WE_HAD_IT_ALL_ALONG,      scoreDiff <= 50   ? 1 : 0);
-        GetBgMap()->SetWorldState(WORLD_STATE_RESILIENT_VICTORY,        scoreDiff > 500   ? 1 : 0);
         GetBgMap()->SetWorldState(WORLD_STATE_ARATHI_BASIN_PERFECTION,  scoreDiff == 1600 ? 1 : 0);
 
         // Test win condition
@@ -623,6 +629,14 @@ void BattlegroundAB::Reset()
     m_ReputationScoreTics[TEAM_ALLIANCE] = 0;
     m_ReputationScoreTics[TEAM_HORDE]    = 0;
     m_IsInformedNearVictory                 = false;
+    m_TeamHadDisadvantage[TEAM_ALLIANCE] = false;
+    m_TeamHadDisadvantage[TEAM_HORDE] = false;
+    // Templates can be reset without a map; live instances must not retain old credit.
+    if (BattlegroundMap* map = FindBgMap())
+    {
+        map->SetWorldState(WORLD_STATE_RESILIENT_VICTORY_H, 0);
+        map->SetWorldState(WORLD_STATE_RESILIENT_VICTORY_A, 0);
+    }
     bool isBGWeekend = sBattlegroundMgr->IsBGWeekend(GetTypeID());
     m_HonorTics = (isBGWeekend) ? BG_AB_ABBGWeekendHonorTicks : BG_AB_NotABBGWeekendHonorTicks;
     m_ReputationTics = (isBGWeekend) ? BG_AB_ABBGWeekendReputationTicks : BG_AB_NotABBGWeekendReputationTicks;
@@ -638,6 +652,33 @@ void BattlegroundAB::Reset()
     for (uint8 i = 0; i < BG_AB_ALL_NODES_COUNT + 5; ++i)//+5 for aura triggers
         if (BgCreatures[i])
             DelCreature(i);
+}
+
+void BattlegroundAB::FinalizeAchievementWorldStates(uint32 winner)
+{
+    // Criteria 3804/14966 use these two DBC branches. Publish only the winner's
+    // comeback: the loser may also have trailed, and not every DB binds both scripts.
+    if (BattlegroundMap* map = FindBgMap())
+    {
+        map->SetWorldState(WORLD_STATE_RESILIENT_VICTORY_H,
+            winner == HORDE && m_TeamHadDisadvantage[TEAM_HORDE] ? 1 : 0);
+        map->SetWorldState(WORLD_STATE_RESILIENT_VICTORY_A,
+            winner == ALLIANCE && m_TeamHadDisadvantage[TEAM_ALLIANCE] ? 1 : 0);
+    }
+}
+
+bool BattlegroundAB::CheckAchievementCriteriaMeet(uint32 criteriaId, Player const* source, Unit const* target, uint32 miscValue)
+{
+    if (criteriaId == BG_CRITERIA_CHECK_RESILIENT_VICTORY)
+    {
+        if (!source || source->GetBattleground() != this || GetStatus() != STATUS_WAIT_LEAVE)
+            return false;
+
+        TeamId team = source->GetBGTeamId();
+        return GetWinner() == team && m_TeamHadDisadvantage[team];
+    }
+
+    return Battleground::CheckAchievementCriteriaMeet(criteriaId, source, target, miscValue);
 }
 
 void BattlegroundAB::EndBattleground(uint32 winner)

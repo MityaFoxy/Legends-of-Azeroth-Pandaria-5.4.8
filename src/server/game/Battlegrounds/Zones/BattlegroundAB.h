@@ -268,6 +268,7 @@ class BattlegroundAB : public Battleground
 
         /* achievement req. */
         bool IsAllNodesControlledByTeam(uint32 team) const override;
+        bool CheckAchievementCriteriaMeet(uint32 criteriaId, Player const* source, Unit const* target, uint32 miscValue = 0) override;
 
         uint32 GetPrematureWinner() override;
 
@@ -275,6 +276,7 @@ class BattlegroundAB : public Battleground
 
     private:
         void PostUpdateImpl(uint32 diff) override;
+        void FinalizeAchievementWorldStates(uint32 winner) override;
         /* Gameobject spawning/despawning */
         void _CreateBanner(uint8 node, uint8 type, uint8 teamIndex, bool delay);
         void _DelBanner(uint8 node, uint8 type, uint8 teamIndex);
@@ -301,6 +303,7 @@ class BattlegroundAB : public Battleground
         uint32              m_HonorScoreTics[BG_TEAMS_COUNT];
         uint32              m_ReputationScoreTics[BG_TEAMS_COUNT];
         bool                m_IsInformedNearVictory;
+        bool                m_TeamHadDisadvantage[BG_TEAMS_COUNT] = { };
         uint32              m_HonorTics;
         uint32              m_ReputationTics;
 };

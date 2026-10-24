@@ -966,6 +966,7 @@ void Battleground::EndBattleground(uint32 winner)
 
     BattlegroundStatus oldstatus = GetStatus();
     SetStatus(STATUS_WAIT_LEAVE);
+    FinalizeAchievementWorldStates(winner);
 
     //we must set it this way, because end time is sent in packet!
     SetRemainingTime(TIME_AUTOCLOSE_BATTLEGROUND);
