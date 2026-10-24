@@ -14,7 +14,29 @@
 #include "Playerbots.h"
 #include "ServerFacade.h"
 #include "Corpse.h"
+#include "InstanceScript.h"
 #include "WorldPosition.h"
+
+namespace
+{
+bool CanReleaseDungeonSpirit(Player* bot)
+{
+    // Native release only: never use a wipe to bypass a running encounter.
+    if (InstanceScript* instance = bot->GetInstanceScript())
+        if (instance->IsEncounterInProgress())
+            return false;
+
+    if (Group* group = bot->GetGroup())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member->IsInWorld() && member->IsAlive() &&
+                member->GetMap() == bot->GetMap() && member->IsInCombat())
+                return false;
+        }
+    return true;
+}
+}
 
 bool ReleaseSpiritAction::Execute(Event event)
 {
@@ -85,23 +107,36 @@ bool ReleaseSpiritAction::Execute(Event event)
 
 bool AutoReleaseSpiritAction::Execute(Event event)
 {
-    // Death Count to prevent skeleton piles
-    Player* master = GetMaster();
-    if (!master || (master && GET_PLAYERBOT_AI(master)))
+    if (bot->IsAlive() || bot->InArena())
+        return false;
+    if (!bot->InBattleground() && bot->GetMap() && bot->GetMap()->IsDungeon() &&
+        !CanReleaseDungeonSpirit(bot))
+        return false;
+    if (!bot->InBattleground() && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+        return false;
+
+    // Ghosts in BG still need the spirit-guide queue path below, but must not
+    // send another release request or increment death count on every tick.
+    if (!bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
     {
-        uint32 dCount = AI_VALUE(uint32, "death count");
-        context->GetValue<uint32>("death count")->Set(dCount + 1);
+        // Death Count to prevent skeleton piles
+        Player* master = GetMaster();
+        if (!master || (master && GET_PLAYERBOT_AI(master)))
+        {
+            uint32 dCount = AI_VALUE(uint32, "death count");
+            context->GetValue<uint32>("death count")->Set(dCount + 1);
+        }
+
+        TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> auto released", bot->GetGUID().ToString().c_str(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
+
+        WorldPacket packet(CMSG_REPOP_REQUEST);
+        packet << uint8(0);
+        bot->GetSession()->HandleRepopRequestOpcode(packet);
+
+        TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> releases spirit", bot->GetGUID().ToString().c_str(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
     }
-
-    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> auto released", bot->GetGUID().ToString().c_str(),
-              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
-
-    WorldPacket packet(CMSG_REPOP_REQUEST);
-    packet << uint8(0);
-    bot->GetSession()->HandleRepopRequestOpcode(packet);
-
-    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> releases spirit", bot->GetGUID().ToString().c_str(),
-              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     if (bot->InBattleground() && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)
         && !bot->HasAura(SPELL_WAITING_FOR_RESURRECT))
@@ -155,6 +190,10 @@ bool AutoReleaseSpiritAction::isUseful()
 
     if (bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
         return false;
+
+    // The master may already be alive at the entrance after a wipe.
+    if (bot->GetMap() && bot->GetMap()->IsDungeon())
+        return CanReleaseDungeonSpirit(bot);
 
     if (!bot->GetGroup())
         return true;

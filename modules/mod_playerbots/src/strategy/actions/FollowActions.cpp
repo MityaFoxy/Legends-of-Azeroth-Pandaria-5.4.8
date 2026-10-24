@@ -1,18 +1,91 @@
 #include "FollowActions.h"
 
 #include <cstddef>
+#include <cmath>
 
 #include "Event.h"
 #include "Formations.h"
+#include "GroupFollowFormation.h"
+#include "PlayerbotSpec.h"
 #include "LastMovementValue.h"
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 
+bool FollowAction::UseGroupFollowFormation()
+{
+    Player* master = GetMaster();
+    Formation* formation = AI_VALUE(Formation*, "formation");
+    // Replace only default wandering follow; explicit player formations retain
+    // their own targets and layout. Combat and BG keep their existing movement.
+    return formation && formation->getName() == "chaos" && master && master != bot &&
+        bot->GetGroup() && master->GetGroup() == bot->GetGroup() &&
+        master->IsInWorld() && bot->IsInWorld() && master->GetMap() == bot->GetMap() &&
+        master->InSamePhase(bot) && master->IsAlive() && bot->IsAlive() &&
+        !bot->InBattleground() && !master->IsInCombat() && !bot->IsInCombat() &&
+        botAI->GetState() == BOT_STATE_NON_COMBAT;
+}
+
+bool FollowAction::CanMoveInGroupFormation()
+{
+    Player* master = GetMaster();
+    return master && !master->HasUnitState(UNIT_STATE_IN_FLIGHT) &&
+        !bot->HasUnitState(UNIT_STATE_IN_FLIGHT) && !bot->GetVehicle() && !master->GetVehicle() &&
+        !bot->GetTransport() && !master->GetTransport() &&
+        !bot->IsNonMeleeSpellCasted(true, false, true) &&
+        !botAI->HasStrategy("move from group", BOT_STATE_COMBAT) &&
+        !botAI->HasStrategy("move from group", BOT_STATE_NON_COMBAT);
+}
+
+WorldLocation FollowAction::GetGroupFollowLocation()
+{
+    Player* master = GetMaster();
+    bool const tank = PlayerBotSpec::IsTank(bot, true);
+    std::size_t slot = 0;
+    for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (member && member != master && member->IsInWorld() && member->IsAlive() &&
+            member->GetMap() == bot->GetMap() && member->InSamePhase(bot) &&
+            PlayerBotSpec::IsTank(member, true) == tank && member->GetGUID() < bot->GetGUID())
+            ++slot;
+    }
+
+    auto const offset = GroupFollowFormation::GetOffset(tank, slot);
+    float const orientation = master->GetOrientation();
+    for (float scale : {1.0f, 0.5f, 0.25f})
+    {
+        float x = master->GetPositionX() + scale *
+            (std::cos(orientation) * offset.forward - std::sin(orientation) * offset.sideways);
+        float y = master->GetPositionY() + scale *
+            (std::sin(orientation) * offset.forward + std::cos(orientation) * offset.sideways);
+        float z = master->GetPositionZ();
+        if (master->GetMap()->CheckCollisionAndGetValidCoords(master,
+            master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), x, y, z))
+            return WorldLocation(master->GetMapId(), x, y, z);
+    }
+    // No unchecked fallback to the master's exact position (which piles up bots).
+    return Formation::NullLocation;
+}
+
 bool FollowAction::Execute(Event event)
 {
+    if (UseGroupFollowFormation())
+    {
+        if (!CanMoveInGroupFormation())
+            return false;
+        WorldLocation const loc = GetGroupFollowLocation();
+        if (Formation::IsNullLocation(loc) ||
+            bot->GetDistance(loc.GetPositionX(), loc.GetPositionY(), loc.GetPositionZ()) <= 1.0f)
+            return false;
+        return MoveTo(loc.GetMapId(), loc.GetPositionX(), loc.GetPositionY(), loc.GetPositionZ(),
+            false, false, true, false, MovementPriority::MOVEMENT_NORMAL, true);
+    }
+
     Formation* formation = AI_VALUE(Formation*, "formation");
+    if (!formation)
+        return false;
     std::string const target = formation->GetTargetName();
 
     bool moved = false;
@@ -41,6 +114,15 @@ bool FollowAction::Execute(Event event)
 
 bool FollowAction::isUseful()
 {
+    if (UseGroupFollowFormation())
+    {
+        if (!CanMoveInGroupFormation())
+            return false;
+        WorldLocation const loc = GetGroupFollowLocation();
+        return !Formation::IsNullLocation(loc) &&
+            bot->GetDistance(loc.GetPositionX(), loc.GetPositionY(), loc.GetPositionZ()) > 1.0f;
+    }
+
     // move from group takes priority over follow as it's added and removed automatically
     // (without removing/adding follow)
     if (botAI->HasStrategy("move from group", BOT_STATE_COMBAT) ||

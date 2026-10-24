@@ -14,6 +14,8 @@ set_tests_properties(sanitizer_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_party_backport_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME playerbot_factory_cache_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_factory_cache_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(playerbot_factory_cache_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
