@@ -67,6 +67,10 @@ set_tests_properties(navigation_recovery_regression PROPERTIES ENVIRONMENT "UBSA
 add_test(NAME battleground_test_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_test_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_test_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME bg_resurrection_telemetry_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_resurrection_telemetry_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME bg_graveyard_recovery_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_graveyard_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME combat_removal_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/combat_removal_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(combat_removal_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
@@ -79,7 +83,7 @@ set_tests_properties(battleground_starting_area_regression PROPERTIES ENVIRONMEN
 add_test(NAME playerbot_bg_bracket_distribution_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_bg_bracket_distribution_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME battleground_resurrection_regression COMMAND ${Python3_EXECUTABLE}
-  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(battleground_resurrection_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME ab_resilient_victory_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/ab_resilient_victory_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)

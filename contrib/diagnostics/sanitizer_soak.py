@@ -695,6 +695,7 @@ def main():
                     stage_world = optional_overlay(stage_world, {
                         "Appender.PlayerbotBG": "2,3,7,PlayerbotBG.log,a,67108864",
                         "Logger.playerbots.bgtest": "3,PlayerbotBG",
+                        "Logger.bg.resurrection": "3,PlayerbotBG",
                     })
                     stage_bot = optional_overlay(stage_bot, {"AiPlayerbot.BattlegroundTest": "1"})
                 stage_world = navigation_diagnostics_overlay(stage_world, args.navigation_debug_log)

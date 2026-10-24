@@ -40,6 +40,8 @@ namespace
         uint32 instance = 0;
         uint32 matches = 0;
         uint32 completed = 0;
+        uint32 resurrectionInstance = 0;
+        bool observedDead = false;
         uint32 lastLog = 0;
         uint32 lastRequest = 0;
         uint32 lastReadinessLog = 0;
@@ -237,6 +239,28 @@ namespace
         state.logged = true;
     }
 
+    void LogResurrection(Player* bot, State& state, uint32 now)
+    {
+        Battleground* bg = bot->GetBattleground();
+        // Only an observed death -> alive transition inside the same active AB
+        // counts. Leaving, preparation and transfers must not manufacture a wave.
+        if (!bg || bg->GetTypeID() != BATTLEGROUND_AB || bg->IsRated()
+            || !HasActiveBattlegroundMap(bot, bg) || bg->GetStatus() != STATUS_IN_PROGRESS)
+        {
+            state.resurrectionInstance = 0;
+            state.observedDead = false;
+            return;
+        }
+
+        bool alive = bot->IsAlive();
+        bool resurrected = state.resurrectionInstance == bg->GetInstanceID()
+            && state.observedDead && alive;
+        state.resurrectionInstance = bg->GetInstanceID();
+        state.observedDead = !alive;
+        if (resurrected)
+            LogState(bot, state, "resurrected", now);
+    }
+
     void Join(Player* bot)
     {
         WorldPacket packet(CMSG_BATTLEMASTER_JOIN);
@@ -323,6 +347,7 @@ void BattlegroundTest::Update(uint32 diff)
 
         online.insert(bot->GetGUID());
         State& state = states[bot->GetGUID()];
+        LogResurrection(bot, state, now);
         if (!bot->IsInWorld() || bot->IsBeingTeleported())
         {
             LogState(bot, state, "transferring", now);

@@ -43,6 +43,8 @@
 #include "BattlegroundTOK.h"
 #include "Realm.h"
 
+#include <set>
+
 namespace Trinity
 {
     class BattlegroundChatBuilder
@@ -1917,23 +1919,40 @@ void Battleground::RemovePlayerFromResurrectQueue(ObjectGuid player_guid)
 void Battleground::RelocateDeadPlayers(ObjectGuid queueIndex)
 {
     // Those who are waiting to resurrect at this node are taken to the closest own node's graveyard
-    std::vector<ObjectGuid>& ghostList = m_ReviveQueue[queueIndex];
-    if (!ghostList.empty())
+    auto queue = m_ReviveQueue.find(queueIndex);
+    if (queue == m_ReviveQueue.end())
+        return;
+
+    // Aura 2584 removal calls RemovePlayerFromResurrectQueue. Detach the whole
+    // list first so callbacks cannot invalidate this iteration or erase new work.
+    std::vector<ObjectGuid> ghosts;
+    ghosts.swap(queue->second);
+    m_ReviveQueue.erase(queue);
+
+    WorldSafeLocsEntry const* closestGrave = nullptr;
+    std::set<ObjectGuid> relocated;
+    for (ObjectGuid guid : ghosts)
     {
-        WorldSafeLocsEntry const* closestGrave = NULL;
-        for (std::vector<ObjectGuid>::const_iterator itr = ghostList.begin(); itr != ghostList.end(); ++itr)
-        {
-            Player* player = ObjectAccessor::FindPlayer(*itr);
-            if (!player)
-                continue;
+        // Duplicate requests must not cancel a fresh registration after transfer.
+        if (!relocated.insert(guid).second)
+            continue;
+        Player* player = ObjectAccessor::FindPlayer(guid);
+        if (!player || player->GetBattleground() != this)
+            continue;
 
-            if (!closestGrave)
-                closestGrave = GetClosestGraveYard(player);
+        // The old registration is gone. Let the player/bot register normally at
+        // the new spirit guide instead of keeping a stale waiting aura forever.
+        player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
+        if (player->IsAlive())
+            continue;
 
-            if (closestGrave)
-                player->TeleportTo(GetMapId(), closestGrave->x, closestGrave->y, closestGrave->z, player->GetOrientation());
-        }
-        ghostList.clear();
+        if (!closestGrave)
+            closestGrave = GetClosestGraveYard(player);
+
+        bool transferred = closestGrave && player->TeleportTo(GetMapId(), closestGrave->x, closestGrave->y, closestGrave->z, player->GetOrientation());
+        TC_LOG_INFO("bg.resurrection", "BG relocation GUID={} map={} instance={} old_guide={} grave_found={} transferred={} waiting_resurrect={}",
+            guid.GetCounter(), GetMapId(), GetInstanceID(), queueIndex.GetCounter(),
+            closestGrave != nullptr, transferred, player->HasAura(SPELL_WAITING_FOR_RESURRECT));
     }
 }
 
