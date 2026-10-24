@@ -39,6 +39,9 @@ assert "GetMeleeRepositionPoint" in reach_combat
 assert "% 16U" in reach_combat
 assert "GetMeleeRepositionPoint" in reach_useful
 assert "!other->ToCreature()" not in melee_reposition
+action_header = (root / "modules/mod_playerbots/src/strategy/actions/MovementActions.h").read_text()
+failure_fields = action_header[action_header.index("    enum class MoveFailure"):
+                               action_header.index("    void UpdateMovementState();")]
 
 source = r"""
 #include <algorithm>
@@ -169,14 +172,15 @@ struct MovementAction {
     LastMovement last;
     Movement::PointsArray path = {{0,0,0}, {30,0,4}};
     float height = 4;
-    bool allowed = true, duplicate = false, waiting = false;
+    bool allowed = true, duplicate = false, waiting = false, recoveryAllowed = true;
     bool lastGeneratePath = false, lastNormalOnly = false;
+""" + failure_fields + r"""
     bool MoveTo(uint32,float,float,float,bool,bool,bool,bool,MovementPriority,bool,bool);
     void UpdateMovementState() {}
     bool IsMovingAllowed(uint32,float,float,float) const { return allowed; }
     bool IsDuplicateMove(uint32,float,float,float) const { return duplicate; }
     bool IsWaitingForLastMove(MovementPriority) const { return waiting; }
-    bool CanStartGroundMovement(float,float,float) const { return true; }
+    bool CanStartGroundMovement(float,float,float) const { return recoveryAllowed; }
     void TrackGroundMovement(float,float,float,bool,bool) {}
     float MoveDelay(float distance, bool) const { return distance / 10; }
     Movement::PointsArray SearchForBestPath(float,float,float,bool& generate,bool normal) {
@@ -218,7 +222,9 @@ void movementTests() {
     for (bool backward : {false,true}) {
         Unit bot;
         MovementAction action{&bot};
+        action.lastMoveFailure = MovementAction::MoveFailure::Route;
         assert(moveBot(action,backward));
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::None);
         assert(same(bot.motion.destination,action.path.back()));
         assert(same(action.last.destination,action.path.back()));
         assert(bot.motion.generated);
@@ -231,6 +237,8 @@ void movementTests() {
         Unit bot;
         MovementAction action{&bot}; action.path = path;
         assert(!moveBot(action));
+        assert(action.lastMoveFailure == (path.size() < 2 ? MovementAction::MoveFailure::Route
+            : MovementAction::MoveFailure::None));
         assert(!bot.motion.cleared && !bot.motion.moves && !action.last.map);
     }
     // Full routes, timing clamps and existing movement gates stay intact.
@@ -251,7 +259,16 @@ void movementTests() {
         Unit bot;
         MovementAction action{&bot};
         action.allowed = gate != 0; action.duplicate = gate == 1; action.waiting = gate == 2;
+        action.lastMoveFailure = MovementAction::MoveFailure::Route;
         assert(!moveBot(action) && !bot.motion.cleared && !action.last.map);
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::None);
+    }
+    {
+        Unit bot;
+        MovementAction action{&bot}; action.recoveryAllowed = false;
+        assert(!moveBot(action));
+        assert(action.lastMoveFailure == MovementAction::MoveFailure::RecoveryExhausted);
+        assert(!bot.motion.cleared && !bot.motion.moves && !action.last.map);
     }
     // Explicit, flying, fully submerged and configured point branches retain destinations.
     for (int mode = 0; mode < 4; ++mode) {

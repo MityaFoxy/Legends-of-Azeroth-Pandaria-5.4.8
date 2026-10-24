@@ -2,7 +2,10 @@
 """Exercise actual route selection, logging and point-path execution with doubles.
 
 The scripted queries test policy, not real mmap topology or client movement.
+Water/ground connector bodies are real; terrain, liquids and LOS are doubles.
+Use --verify-mutations to verify rejection of disabled safety/recovery guards.
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -32,6 +35,7 @@ def method(path, signature):
 action_path = "modules/mod_playerbots/src/strategy/actions/MovementActions.cpp"
 point_path = "src/server/game/Movement/MovementGenerators/PointMovementGenerator.cpp"
 methods = [method(action_path, signature) for signature in (
+    "bool MovementAction::ValidateWaterConnection(", "bool MovementAction::ValidateGroundConnection(",
     "void MovementAction::LogNavigationResult(", "Movement::PointsArray MovementAction::SearchForBestPath(",
     "bool MovementAction::CanStartGroundMovement(", "void MovementAction::TrackGroundMovement(",
     "void MovementAction::LogStuckResult(", "void MovementAction::CheckStuck(")]
@@ -68,7 +72,11 @@ constexpr float INVALID_HEIGHT=-100000;
 constexpr int UNIT_STATE_ROOT=1, UNIT_STATE_STUNNED=2, UNIT_STATE_ROAMING=4, UNIT_STATE_ROAMING_MOVE=8;
 constexpr int TYPEID_UNIT=0, TYPEID_PLAYER=1, EVENT_CHARGE_PREPATH=99;
 constexpr int POINT_MOTION_TYPE=1, CHASE_MOTION_TYPE=2, MOVE_RUN=0, MOVE_RUN_BACK=1, MOVEMENTFLAG_SWIMMING=8;
+constexpr int MOVE_SWIM=2, MOVE_SWIM_BACK=3;
 constexpr int MAP_ALL_LIQUIDS=15, MAP_LIQUID_STATUS_IN_CONTACT=14;
+constexpr int LIQUID_MAP_NO_WATER=0, LIQUID_MAP_UNDER_WATER=8;
+namespace VMAP { enum class ModelIgnoreFlags { Nothing }; }
+struct LiquidData { float level=0, depth_level=0; };
 using MovementSlot = int;
 constexpr MovementSlot MOTION_SLOT_ACTIVE=1;
 uint32 tick=100;
@@ -95,8 +103,18 @@ struct Formation { Creature* GetLeader() const { return nullptr; } void LeaderSt
 struct Creature { Formation* GetFormation() const { return nullptr; } };
 struct Guid { uint32 GetCounter() const { return 7; } };
 struct Map {
-    bool collision=true, liquid=false;
-    int GetLiquidStatus(uint32,float,float,float,int,void*,float) const { return liquid ? MAP_LIQUID_STATUS_IN_CONTACT : 0; }
+    bool collision=true, liquid=false, los=true;
+    float liquidLevel=2, liquidBottom=-2, dryAt=std::numeric_limits<float>::infinity();
+    mutable int liquidSamples=0, losChecks=0;
+    int GetLiquidStatus(uint32,float x,float,float,int,LiquidData* data,float) const {
+        ++liquidSamples;
+        if (!liquid || std::fabs(x-dryAt)<0.1f) return LIQUID_MAP_NO_WATER;
+        if (data) { data->level=liquidLevel; data->depth_level=liquidBottom; }
+        return MAP_LIQUID_STATUS_IN_CONTACT;
+    }
+    bool isInLineOfSight(float,float,float,float,float,float,uint32,VMAP::ModelIgnoreFlags) const {
+        ++losChecks; return los;
+    }
     bool CheckCollisionAndGetValidCoords(void const*,float,float,float,float& x,float& y,float& z,bool=true) const {
         (void)x;(void)y;(void)z; return collision;
     }
@@ -118,7 +136,10 @@ struct Unit {
     int state=0;
     uint32 map=1,instance=2;
     bool flying=false,water=false,vehicle=false,teleport=false,alive=true,casting=false,sitting=false;
+    bool swimFlag=false,canSwim=true;
     float speed=7;
+    float ground=0, groundHoleAt=std::numeric_limits<float>::infinity();
+    mutable int lastSpeedType=-1, heightSamples=0;
     Map mapObject;
     MotionMaster* motion=nullptr;
     Spline spline;
@@ -133,7 +154,10 @@ struct Unit {
     uint32 GetPhaseMask() const { return 1; }
     float GetCollisionHeight() const { return 2; }
     void* GetTransport() const { return transport ? (void*)this : nullptr; }
-    float GetMapHeight(float,float,float) const { return invalidHeight ? INVALID_HEIGHT : 0; }
+    float GetMapHeight(float x,float,float,bool=true,float=50) const {
+        ++heightSamples;
+        return invalidHeight || std::fabs(x-groundHoleAt)<0.1f ? INVALID_HEIGHT : ground;
+    }
     bool IsStopped() const { return stopped; }
     void StopMoving() { stopped=true; }
     MotionMaster* GetMotionMaster() const { return motion; }
@@ -141,12 +165,14 @@ struct Unit {
     bool IsFlying() const { return flying; }
     bool IsInWater() const { return water; }
     bool IsUnderWater() const { return water; }
-    bool HasUnitMovementFlag(int flag) const { assert(flag==MOVEMENTFLAG_SWIMMING); return water; }
+    bool HasUnitMovementFlag(int flag) const { assert(flag==MOVEMENTFLAG_SWIMMING); return swimFlag; }
+    bool CanSwim() const { return canSwim; }
+    bool SetSwim(bool value) { bool changed=swimFlag!=value; swimFlag=value; return changed; }
     bool IsBeingTeleported() const { return teleport; }
     bool IsAlive() const { return alive; }
     bool IsNonMeleeSpellCasted(bool) const { return casting; }
     bool IsSitState() const { return sitting; }
-    float GetSpeed(int) const { return speed; }
+    float GetSpeed(int type) const { lastSpeedType=type; return speed; }
     float GetOrientation() const { return 0; }
     void AddUnitState(int flags) { state|=flags; }
     void ClearUnitState(int flags) { state&=~flags; }
@@ -186,6 +212,8 @@ struct MotionMaster {
     int mutations=0;
     std::unique_ptr<MovementGenerator> movement;
     int type=POINT_MOTION_TYPE,cleared=0;
+    int speedChanges=0;
+    void PropagateSpeedChange() { ++speedChanges; }
     MovementGenerator* top() const { return movement.get(); }
     int GetCurrentMovementGeneratorType() const { return type; }
     void Clear() { ++cleared; movement.reset(); }
@@ -197,6 +225,7 @@ struct LastMovement {
     uint32 navigationLogTime=0,navigationLogSuppressed=0;
     bool navigationLogStarted=false,navigationLogWarning=false;
     GroundMovementState groundMovement;
+    NavigationDetourState navigationDetour;
     float lastdelayTime=5000;
     int priority=1;
     G3D::Vector3 destination;
@@ -213,6 +242,8 @@ struct MovementAction {
     void TrackGroundMovement(float,float,float,bool,bool);
     void LogStuckResult(char const*,uint32,bool=true);
     void CheckStuck(uint32);
+    bool ValidateWaterConnection(G3D::Vector3 const&,G3D::Vector3 const&);
+    bool ValidateGroundConnection(G3D::Vector3 const&,G3D::Vector3 const&);
     bool IsMovingAllowed() const { return true; } // state-only root/stun have no aura guard
 };
 #define AI_VALUE(type,name) this->last
@@ -234,15 +265,20 @@ struct Route {
     Movement::PointsArray points;
 };
 std::deque<Route> replies;
-struct Query { G3D::Vector3 from,to; };
+struct Query { G3D::Vector3 from,to; float runSpeed,swimSpeed; };
 std::vector<Query> queries;
 struct PathGenerator {
     Unit* source;
     Route route;
+    bool waterShortcut=true;
+    float runSpeed=0,swimSpeed=0;
     explicit PathGenerator(Unit* u,uint32 nodes):source(u) { assert(nodes==4096); }
+    void SetUseWaterShortcut(bool value) { waterShortcut=value; }
+    void SetTravelSpeeds(float run,float swim) { runSpeed=run; swimSpeed=swim; }
     bool CalculatePath(float x,float y,float z,bool,bool,bool,G3D::Vector3 const* from) {
+        assert(!waterShortcut && runSpeed>0 && swimSpeed>0);
         assert(!replies.empty()); route=replies.front(); replies.pop_front();
-        queries.push_back({*from,{x,y,z}}); tick+=2;
+        queries.push_back({*from,{x,y,z},runSpeed,swimSpeed}); tick+=2;
         if (route.automatic) route.points={*from,{x,y,z}};
         return route.calculated;
     }
@@ -262,6 +298,49 @@ bool hasLog(char const* level,char const* text) {
     });
 }
 int summaries() { return std::count_if(logs.begin(),logs.end(),[](Row const& r){return r.level!="debug";}); }
+void connectionTests() {
+    Unit bot; MovementAction action{&bot};
+    // Execute real connector validators against sampled terrain/liquid/LOS.
+    assert(action.ValidateGroundConnection({0,0,0},{3,0,0}));
+    assert(bot.heightSamples==13); // Quarter-metre sampling, both endpoints.
+    assert(!action.ValidateGroundConnection({0,0,0},{3.01f,0,0}));
+    bot.mapObject.los=false;
+    assert(!action.ValidateGroundConnection({0,0,0},{1.0283356f,0,0}));
+    bot.mapObject.los=true; bot.groundHoleAt=0.5f;
+    assert(!action.ValidateGroundConnection({0,0,0},{1,0,0}));
+    bot.groundHoleAt=std::numeric_limits<float>::infinity();
+    bot.invalidHeight=true;
+    assert(!action.ValidateGroundConnection({0,0,0},{1,0,0}));
+    bot.invalidHeight=false; bot.ground=-2.01f;
+    assert(!action.ValidateGroundConnection({0,0,0},{1,0,0}));
+    bot.ground=std::numeric_limits<float>::quiet_NaN();
+    assert(!action.ValidateGroundConnection({0,0,0},{1,0,0}));
+    bot.ground=0;
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    bot.mapObject.liquid=true; bot.mapObject.liquidSamples=0;
+    assert(action.ValidateWaterConnection({0,0,0},{16,0,0}));
+    assert(bot.mapObject.liquidSamples==33); // Half-metre samples.
+    assert(!action.ValidateWaterConnection({0,0,0},{16.01f,0,0}));
+    bot.mapObject.dryAt=0.5f;
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    bot.mapObject.dryAt=std::numeric_limits<float>::infinity();
+    bot.mapObject.los=false;
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    bot.mapObject.los=true;
+    assert(action.ValidateWaterConnection({0,0,-2.04f},{1,0,-2.04f}));
+    assert(!action.ValidateWaterConnection({0,0,-2.06f},{1,0,-2.06f}));
+    assert(action.ValidateWaterConnection({0,0,2.75f},{1,0,2.75f}));
+    assert(!action.ValidateWaterConnection({0,0,2.76f},{1,0,2.76f}));
+    bot.mapObject.liquidLevel=std::numeric_limits<float>::quiet_NaN();
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    bot.mapObject.liquidLevel=bot.mapObject.liquidBottom;
+    assert(!action.ValidateWaterConnection({0,0,0},{1,0,0}));
+    // Water can support a short shoreline connector over deep terrain.
+    bot.mapObject.liquidLevel=2; bot.ground=-10;
+    assert(action.ValidateGroundConnection({0,0,0},{1,0,0}));
+    bot.mapObject.liquid=false;
+    assert(!action.ValidateGroundConnection({0,0,0},{1,0,0}));
+}
 void searchTests() {
     reset(); Unit bot; MovementAction action{&bot}; bool navigation=false;
     replies={Route{}};
@@ -317,7 +396,7 @@ void searchTests() {
     replies={partial,bad(),bad(),bad(),bad()};
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(navigation && hasLog("warn","destination-not-reached"));
-    reset(); action.last={}; partial.points={{2,0,0},{40,0,0}};
+    reset(); action.last={}; partial.points={{4,0,0},{40,0,0}};
     replies={partial,bad(),bad(),bad(),bad()};
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(!navigation && same(path.back(),{8,0,0}) && hasLog("warn","path-start-mismatch"));
@@ -355,6 +434,85 @@ void searchTests() {
     reset(); replies={};
     assert(action.SearchForBestPath(0,0,0,navigation).empty() && queries.empty());
 }
+void continuationTests() {
+    reset(); Unit bot; MovementAction action{&bot}; bool navigation=false;
+    // The old blanket >1 m rejection is now a validated connector, not a
+    // widened unconditional tolerance. Obstructions must still reject it.
+    for (float offset : {0.05f,1.0283356f,2.f,3.f,3.01f}) {
+        reset(); action.last={}; config.navigationMaxAttempts=1;
+        Route projected; projected.automatic=false;
+        projected.points={{offset,0,0},{100,0,0}}; replies={projected};
+        auto path=action.SearchForBestPath(100,0,0,navigation,true);
+        if (offset<=3.f) {
+            assert(navigation && !path.empty() && same(path.back(),{100,0,0}));
+            assert(path.size()==(offset>0.1f ? 3u : 2u));
+            if (offset>0.1f) assert(same(path.front(),bot.position));
+        } else assert(path.empty() && hasLog("warn","path-start-mismatch"));
+    }
+    reset(); action.last={}; config.navigationMaxAttempts=1; bot.mapObject.los=false;
+    Route blocked; blocked.automatic=false; blocked.points={{1.0283356f,0,0},{100,0,0}};
+    replies={blocked};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty() && navigation);
+    bot.mapObject.los=true;
+
+    // A short unobstructed underwater route needs no Detour query. A dry gap
+    // forbids this shortcut even when both endpoints lie inside water.
+    reset(); action.last={}; bot.water=true; bot.mapObject.liquid=true;
+    auto path=action.SearchForBestPath(10,0,0,navigation,true);
+    assert(queries.empty() && navigation && path.size()==2 && same(path.back(),{10,0,0}));
+    bot.mapObject.dryAt=5; replies=std::deque<Route>(5,bad());
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    assert(!queries.empty());
+    bot.water=false; bot.mapObject=Map{};
+
+    // Unsafe surface normalization retries with land preference, inside the
+    // SAME total query budget; regular travel retains actual swim speed.
+    reset(); action.last={}; replies={bad("unsafe-surface-normalization"),Route{}};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(!path.empty() && queries.size()==2);
+    assert(queries[0].swimSpeed==bot.speed && queries[1].swimSpeed==0.01f);
+    assert(queries[0].runSpeed==bot.speed && queries[1].runSpeed==bot.speed);
+    reset(); action.last={}; config.navigationMaxAttempts=1;
+    replies={bad("unsafe-surface-normalization")};
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty() && queries.size()==1);
+
+    // A 200-point prefix retains 8 m for the next replan, without synthesizing
+    // a line to the goal. Its saved geometry permits a checked retreat later.
+    reset(); action.last={}; Route shortPath; shortPath.type=PATHFIND_SHORT;
+    shortPath.automatic=false;
+    for (int i=0;i<200;++i) shortPath.points.push_back({float(i),0,0});
+    replies={shortPath}; path=action.SearchForBestPath(300,0,0,navigation,true);
+    assert(navigation && queries.size()==1 && path.size()==192 && same(path.back(),{191,0,0}));
+    assert(action.last.navigationDetour.continuation.size()==path.size());
+    bot.position=path.back(); queries.clear();
+    tick+=30001; // Allow the next INFO summary without expiring the 60 s history.
+    Route wrongLayer; wrongLayer.automatic=false; wrongLayer.points={{197,0,0},{300,0,0}};
+    replies={wrongLayer,Route{}};
+    path=action.SearchForBestPath(300,0,0,navigation,true);
+    assert(navigation && queries.size()==2 && same(queries[1].from,{187,0,0}));
+    assert(same(path.front(),{191,0,0}) && same(path[1],{190,0,0}) && same(path.back(),{300,0,0}));
+    assert(action.last.navigationDetour.continuation.empty());
+    assert(hasLog("info","continuation-retreat-route"));
+    bot.position={};
+
+    // Planning failures must rotate alternatives even before any spline runs.
+    // Map, instance, goal or idle changes must discard that old history.
+    for (int change : {0,1,2,3}) {
+        reset(); action.last={}; replies=std::deque<Route>(5,bad());
+        assert(action.SearchForBestPath(100,0,0,navigation,true).empty());
+        auto first=queries[1].to;
+        queries.clear(); replies=std::deque<Route>(5,bad());
+        assert(action.SearchForBestPath(100,0,0,navigation,true).empty());
+        assert(!same(first,queries[1].to));
+        if (change==0) ++bot.map;
+        if (change==1) ++bot.instance;
+        if (change==2) action.last.navigationDetour.goal={200,0,0};
+        if (change==3) tick+=60001;
+        queries.clear(); replies=std::deque<Route>(5,bad());
+        assert(action.SearchForBestPath(100,0,0,navigation,true).empty());
+        assert(same(first,queries[1].to));
+    }
+}
 void logTests() {
     reset(); Unit bot; MovementAction action{&bot};
     action.LogNavigationResult("alternative-route","no-path",8,3,100,0,0,false);
@@ -369,7 +527,7 @@ void logTests() {
     tick=100;
     action.LogNavigationResult("fallback-direct","missing-navmesh",16,1,100,0,0,true);
     assert(summaries()==3); // Unsigned server timer rollover must not defeat throttling.
-    action.last={}; bot.water=true;
+    action.last={}; bot.water=true; bot.swimFlag=true;
     action.LogNavigationResult("fallback-direct","far-from-navigation-polygon",68,4,100,0,0,true);
     assert(logs.back().text.ends_with("1 1 1 0 ")); // Distinguish water from a dry-land height fault.
 }
@@ -449,10 +607,30 @@ void stuckTests() {
     start(); motion.type=CHASE_MOTION_TYPE; wait(1); assert(!state.active);
     start(); ++bot.instance; wait(1); assert(!state.active); --bot.instance;
     start(); ++bot.map; wait(1); assert(!state.active); --bot.map;
-    for (bool* excluded : {&bot.transport,&bot.vehicle,&bot.flying,&bot.water,&bot.teleport}) {
+    for (bool* excluded : {&bot.transport,&bot.vehicle,&bot.flying,&bot.teleport}) {
         start(); *excluded=true; wait(5); *excluded=false; assert(!state.active && queries.empty());
     }
     start(); bot.alive=false; wait(5); bot.alive=true; assert(!state.active && queries.empty());
+
+    // Swimming is observed, not excluded. Shore transitions refresh spline
+    // speed exactly once, including idle/chase bots without an owned route.
+    start(); bot.water=true; bot.swimFlag=false; motion.speedChanges=0;
+    wait(3);
+    assert(state.active && state.idleMs==3000 && queries.empty());
+    assert(bot.swimFlag && motion.speedChanges==1 && bot.lastSpeedType==MOVE_SWIM);
+    replies={Route{},Route{},Route{}}; wait(1);
+    assert(state.recovering && state.attempts==1 && queries.size()==3);
+    bot.position={3,0,0}; wait(1); assert(!state.recovering);
+    bot.water=false; wait(1);
+    assert(!bot.swimFlag && motion.speedChanges==2 && bot.lastSpeedType==MOVE_RUN);
+    start(); state.backwards=true; bot.water=true; wait(1);
+    assert(bot.lastSpeedType==MOVE_SWIM_BACK);
+    bot.water=false; wait(1); assert(bot.lastSpeedType==MOVE_RUN_BACK);
+    start(); state.active=false; motion.type=CHASE_MOTION_TYPE; motion.speedChanges=0;
+    bot.water=true; wait(1);
+    assert(bot.swimFlag && motion.speedChanges==1 && queries.empty());
+    wait(1); assert(motion.speedChanges==1);
+    bot.water=false; wait(1); assert(!bot.swimFlag && motion.speedChanges==2);
 
     // Three bounded recovery attempts use different waypoint families, then stop.
     start(); replies=std::deque<Route>(9,Route{});
@@ -490,13 +668,40 @@ void stuckTests() {
     assert(!state.exhausted && state.attempts==0 && same(state.goal,{200,0,0}));
     assert(hasLog("debug","ground-movement-started"));
 }
-int main() { searchTests(); logTests(); executionTests(); stuckTests(); }
+int main() { connectionTests(); searchTests(); continuationTests(); logTests(); executionTests(); stuckTests(); }
 """
 
 with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory:
-    binary = pathlib.Path(directory) / "regression"
-    subprocess.run([sys.argv[2], "-x", "c++", "-std=c++20", "-O1", "-g",
-                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-", "-o", str(binary)],
-                   input=source, text=True, check=True)
-    subprocess.run([str(binary)], check=True)
+    environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
+                       UBSAN_OPTIONS="halt_on_error=1")
+
+    def run(label, code, expected_failure=False):
+        binary = pathlib.Path(directory) / label
+        subprocess.run([sys.argv[2], "-x", "c++", "-std=c++20", "-O1", "-g",
+                        "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-", "-o", str(binary)],
+                       input=code, text=True, check=True)
+        result = subprocess.run([str(binary)], env=environment, text=True, capture_output=True)
+        if expected_failure:
+            assert result.returncode != 0 and "Assertion" in result.stderr, result.stderr
+            print(f"Mutation {label}: rejected by assertion", flush=True)
+        elif result.returncode:
+            sys.stderr.write(result.stderr)
+            raise subprocess.CalledProcessError(result.returncode, [str(binary)])
+
+    run("regression", source)
+    if "--verify-mutations" in sys.argv[3:]:
+        for label, signature in (
+            ("unchecked-water", "bool MovementAction::ValidateWaterConnection("),
+            ("unchecked-ground", "bool MovementAction::ValidateGroundConnection(")):
+            original = method(action_path, signature)
+            unchecked = original[:original.index("{")] + "{ return true; }"
+            assert original in source
+            run(label, source.replace(original, unchecked, 1), True)
+        for label, original, changed in (
+            ("normal-only-fallback", "if (normalOnly || bot->GetTransport())", "if (bot->GetTransport())"),
+            ("lost-overlap", "constexpr float ReplanOverlap = 8.0f;", "constexpr float ReplanOverlap = 0.0f;"),
+            ("swimming-excluded", "bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||",
+             "bot->IsInWater() || bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||")):
+            assert original in source
+            run(label, source.replace(original, changed, 1), True)
 print("Navigation alternatives, fallback, point-path execution and runtime stuck recovery passed", flush=True)
