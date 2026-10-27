@@ -80,7 +80,7 @@ class BattlegroundMgr
         /* Packet Building */
         void BuildPlayerJoinedBattlegroundPacket(WorldPacket* data, ObjectGuid guid);
         void BuildPlayerLeftBattlegroundPacket(WorldPacket* data, ObjectGuid guid);
-        void BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid guid, Player* player, BattlegroundTypeId bgTypeId);
+        bool BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid guid, Player* player, BattlegroundTypeId bgTypeId);
         void BuildStatusFailedPacket(WorldPacket* data, Battleground* bg, Player* pPlayer, uint8 QueueSlot, GroupJoinBattlegroundResult result);
         void BuildUpdateWorldStatePacket(WorldPacket* data, uint32 field, uint32 value);
         void BuildPvpLogDataPacket(WorldPacket* data, Battleground* bg);

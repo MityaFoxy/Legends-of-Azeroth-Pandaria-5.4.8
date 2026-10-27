@@ -66,8 +66,8 @@ void WorldSession::HandleBattlemasterHelloOpcode(WorldPacket& recvData)
 void WorldSession::SendBattleGroundList(ObjectGuid guid, BattlegroundTypeId bgTypeId)
 {
     WorldPacket data;
-    sBattlegroundMgr->BuildBattlegroundListPacket(&data, guid, _player, bgTypeId);
-    SendPacket(&data);
+    if (sBattlegroundMgr->BuildBattlegroundListPacket(&data, guid, _player, bgTypeId))
+        SendPacket(&data);
 }
 
 void WorldSession::HandleBattlemasterJoinOpcode(WorldPacket& recvData)
@@ -303,9 +303,7 @@ void WorldSession::HandleBattlefieldListOpcode(WorldPacket& recvData)
         return;
     }
 
-    WorldPacket data;
-    sBattlegroundMgr->BuildBattlegroundListPacket(&data, ObjectGuid::Empty, _player, BattlegroundTypeId(bgTypeId));
-    SendPacket(&data);
+    SendBattleGroundList(ObjectGuid::Empty, BattlegroundTypeId(bgTypeId));
 }
 
 void WorldSession::HandleBattleFieldPortOpcode(WorldPacket &recvData)
