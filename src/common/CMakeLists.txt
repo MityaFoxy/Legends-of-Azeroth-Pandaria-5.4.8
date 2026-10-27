@@ -112,9 +112,6 @@ target_link_libraries(common
 
 add_dependencies(common revision.h)
 
-# Preserve the existing core buffer-pool policy independently of the allocator.
-target_compile_definitions(common PUBLIC NO_BUFFERPOOL)
-
 # Generate precompiled header
 if (USE_COREPCH)
   target_precompile_headers(common PRIVATE ${common_STAT_PCH_HDR}) 
