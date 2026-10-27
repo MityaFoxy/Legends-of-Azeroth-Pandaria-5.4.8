@@ -773,9 +773,33 @@ void PathGenerator::NormalizePath()
                 }
     }
 
-    if (_privateQuery && _source->ToUnit())
+    Unit const* unit = _source->ToUnit();
+    // Fear/confusion and native chase use the shared query, bypassing the bot
+    // planner. Their normalized ground paths must not cross BG collision either.
+    bool const battlegroundGroundPlayer = unit && unit->GetTypeId() == TYPEID_PLAYER
+        && unit->GetMap()->IsBattlegroundOrArena() && !unit->IsFlying() && !unit->IsFalling()
+        && !unit->GetTransport() && !unit->GetVehicle() && !unit->IsInWater() && !unit->IsUnderWater();
+    if ((_privateQuery || battlegroundGroundPlayer) && unit)
     {
         float const bodyHeight = _source->GetCollisionHeight() * 0.5f;
+        if (!_privateQuery && !_pathPoints.empty())
+        {
+            // MoveSplineInit replaces the first point with the actual position.
+            // Validate both the connector and the resulting first segment;
+            // replacing the start must not cut across a corner of an obstacle.
+            G3D::Vector3 const& from = GetStartPosition();
+            for (size_t i = 0; i < std::min<size_t>(2, _pathPoints.size()); ++i)
+            {
+                G3D::Vector3 const& to = _pathPoints[i];
+                if (!_source->GetMap()->isInLineOfSight(from.x, from.y, from.z + bodyHeight,
+                    to.x, to.y, to.z + bodyHeight, _source->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing))
+                {
+                    _failureReason = "path-start-obstructed";
+                    _type = PATHFIND_NOPATH;
+                    return;
+                }
+            }
+        }
         for (uint32 i = 1; i < _pathPoints.size(); ++i)
         {
             G3D::Vector3 const& from = _pathPoints[i - 1];

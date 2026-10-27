@@ -960,7 +960,10 @@ bool MovementAction::ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vec
             && std::isfinite(liquid.level) && liquid.level > liquid.depth_level
             && point.z >= liquid.depth_level - 0.05f && point.z <= liquid.level + 0.75f)
             continue; // A short shore transition may become supported by water.
-        float ground = bot->GetMapHeight(point.x, point.y, point.z + 2.0f, true, 4.0f);
+        // GetMapHeight already raises the ray origin by Z_OFFSET_FIND_HEIGHT.
+        // Raising it twice can put a supporting VMAP surface beyond the 4 m
+        // search and select the terrain underneath a bridge instead.
+        float ground = bot->GetMapHeight(point.x, point.y, point.z, true, 4.0f);
         if (!std::isfinite(ground) || ground <= INVALID_HEIGHT
             || std::fabs(point.z - ground) > 2.0f)
             return false;
@@ -1197,12 +1200,24 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     G3D::Vector3 const origin = aroundObstruction ? obstruction : start;
     Movement::PointsArray bypass;
     float bypassRemaining = distance + 16.0f;
-    float const dx = x - origin.x;
-    float const dy = y - origin.y;
-    float const horizontal = std::sqrt(dx * dx + dy * dy);
+    float dx = x - origin.x;
+    float dy = y - origin.y;
+    float horizontal = std::sqrt(dx * dx + dy * dy);
+    if (aroundObstruction && horizontal <= 0.1f)
+    {
+        // The last blocked segment may end at the destination itself. Keep
+        // the detour centred on the obstacle, using the approach direction
+        // when obstacle-to-goal cannot define a stable horizontal direction.
+        dx = x - start.x;
+        dy = y - start.y;
+        horizontal = std::sqrt(dx * dx + dy * dy);
+    }
     if (!unavailable && horizontal > 0.1f && !bot->GetTransport())
     {
-        for (uint32 candidate = 0; candidate < limit && attempts < limit; ++candidate)
+        // Height-invalid candidates do not spend a path query. Inspect at most
+        // the finite obstruction ring, while keeping the expensive query budget.
+        uint32 const candidateLimit = aroundObstruction && !recoveryAttempt ? 32 : limit;
+        for (uint32 candidate = 0; candidate < candidateLimit && attempts < limit; ++candidate)
         {
             // Planning can fail before a movement generator is launched, so
             // the running-spline recovery counter cannot advance this search.
@@ -1219,9 +1234,13 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                 // find that exit, regardless of how far sideways they search.
                 static constexpr float forwardFactors[] = {0, 0, -0.707107f, -0.707107f, 0.707107f, 0.707107f, -1, 1};
                 static constexpr float sideFactors[] = {1, -1, 0.707107f, -0.707107f, 0.707107f, -0.707107f, 0, 0};
-                float const radius = 8.0f * float(1u << (variant / 8));
-                forward += forwardFactors[variant % 8] * radius;
-                side = sideFactors[variant % 8] * radius;
+                // Try both sides at increasing radii before changing direction.
+                // Spending every query on the 8 m ring repeatedly crosses long
+                // fences, even when a wider two-leg corridor is unobstructed.
+                uint32 const direction = (variant / 8) * 2 + variant % 2;
+                float const radius = 8.0f * float(1u << ((variant % 8) / 2));
+                forward += forwardFactors[direction] * radius;
+                side = sideFactors[direction] * radius;
             }
             float const wx = origin.x + (dx * forward - dy * side) / horizontal;
             float const wy = origin.y + (dy * forward + dx * side) / horizontal;
