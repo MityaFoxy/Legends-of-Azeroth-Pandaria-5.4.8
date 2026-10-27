@@ -236,6 +236,9 @@ extern int main(int argc, char** argv)
 
     auto outdoorPvpMgrHandle = Trinity::make_unique_ptr_with_deleter(sOutdoorPvPMgr, [](OutdoorPvPMgr* mgr) { mgr->Die(); });
 
+    // Destroy remaining saves after sessions and maps, while groups and databases still exist.
+    auto instanceSaveMgrHandle = Trinity::make_unique_ptr_with_deleter(sInstanceSaveMgr, [](InstanceSaveManager* mgr) { mgr->Unload(); });
+
     // unload all grids (including locked in memory)
     auto mapManagementHandle = Trinity::make_unique_ptr_with_deleter(sMapMgr, [](MapManager* mgr) { mgr->UnloadAll(); });
 
