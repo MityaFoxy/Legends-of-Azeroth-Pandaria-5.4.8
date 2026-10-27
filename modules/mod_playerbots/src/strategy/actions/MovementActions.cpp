@@ -179,11 +179,36 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
         contactPoint = true;
     }
 
+    G3D::Vector3 const targetPosition(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
+    auto canReachTargetFrom = [&](G3D::Vector3 const& point, float range)
+    {
+        return (point - targetPosition).length() <= range &&
+            bot->GetMap()->isInLineOfSight(point.x, point.y, point.z + bot->GetCollisionHeight(),
+                targetPosition.x, targetPosition.y, targetPosition.z + target->GetCollisionHeight(),
+                bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing);
+    };
+    // A reserved angle separates attackers on flat ground, but terrain can
+    // put its contact point outside combat range or behind an obstacle. Do
+    // not keep approaching that same unusable point on every AI update.
+    if (contactPoint && !canReachTargetFrom({tx, ty, tz}, distance))
+    {
+        target->GetPosition(tx, ty, tz);
+        contactPoint = false;
+    }
+
     // Combat must use the same checked ground/water corridors as objective
     // movement. The legacy preliminary path could select a river-bottom point
     // before MoveTo ever reached that planner, leaving the bot unable to chase.
     bool usingNavigation = true;
     Movement::PointsArray path = SearchForBestPath(tx, ty, tz, usingNavigation, true);
+    if (contactPoint && (path.size() < 2 || !canReachTargetFrom(path.back(), distance)))
+    {
+        // Projection can also collapse the preferred point onto our current
+        // position, or leave its actual endpoint out of range. Try the target
+        // corridor once, then shorten it below; never force a direct segment.
+        contactPoint = false;
+        path = SearchForBestPath(targetPosition.x, targetPosition.y, targetPosition.z, usingNavigation, true);
+    }
     if (path.size() < 2)
         return false;
     float shortenTo = distance;
@@ -195,16 +220,12 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     G3D::Vector3 endPos = path.back();
     if (!contactPoint)
     {
-        G3D::Vector3 targetPosition(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
         for (size_t i = 1; i < path.size(); ++i)
         {
             G3D::Vector3 const& point = path[i];
             // Stop at a reachable path vertex with sight of the opponent.
             // Range alone can leave a caster firing into a wall indefinitely.
-            if ((point - targetPosition).length() <= shortenTo &&
-                bot->GetMap()->isInLineOfSight(point.x, point.y, point.z + bot->GetCollisionHeight(),
-                    targetPosition.x, targetPosition.y, targetPosition.z + target->GetCollisionHeight(),
-                    bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing))
+            if (canReachTargetFrom(point, shortenTo))
             {
                 endPos = point;
                 break;
@@ -2036,7 +2057,10 @@ float CombatFormationMoveAction::AverageGroupAngle(Unit* from, bool ranged, bool
 
 Position CombatFormationMoveAction::GetNearestPosition(const std::vector<Position>& positions)
 {
-    Position result;
+    if (positions.empty())
+        return {};
+
+    Position result = positions.front();
     for (const Position& pos : positions)
     {
         if (bot->GetExactDist(pos) < bot->GetExactDist(result))
@@ -2105,31 +2129,25 @@ bool TankFaceAction::Execute(Event event)
     // if dist < bot->GetMeleeRange(target) / 2, target will move backward
     float dist = std::max(bot->GetExactDist(target), bot->GetMeleeRange(target) / 2) - bot->GetCombatReach() - target->GetCombatReach();
     std::vector<Position> availablePos;
-    float x, y, z;
-    target->GetNearPoint(bot, x, y, z, dist, goodAngle1);
-    if (bot->GetMap()->CheckCollisionAndGetValidCoords(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-        x, y, z))
+    for (float goodAngle : {goodAngle1, goodAngle2})
     {
-        /// @todo: movement control now is a mess, prepare to rewrite
+        float x, y, z;
+        target->GetNearPoint(bot, x, y, z, dist, goodAngle);
+        if (!bot->GetMap()->CheckCollisionAndGetValidCoords(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            x, y, z))
+            continue;
+
+        // Collision projection can collapse a candidate onto the bot's XY
+        // while leaving Z on the water surface. Tank facing needs horizontal
+        // repositioning; a height-only change cannot turn the enemy away.
+        if (bot->GetExactDist2d(x, y) <= CONTACT_DISTANCE)
+            continue;
+
         std::list<FleeInfo>& infoList = AI_VALUE(std::list<FleeInfo>&, "recently flee info");
         Position pos(x, y, z);
         float angle = bot->GetAngle(&pos);
         if (CheckLastFlee(angle, infoList))
-        {
-            availablePos.push_back(Position(x, y, z));
-        }
-    }
-    target->GetNearPoint(bot, x, y, z, dist, goodAngle2);
-    if (bot->GetMap()->CheckCollisionAndGetValidCoords(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-        x, y, z))
-    {
-        std::list<FleeInfo>& infoList = AI_VALUE(std::list<FleeInfo>&, "recently flee info");
-        Position pos(x, y, z);
-        float angle = bot->GetAngle(&pos);
-        if (CheckLastFlee(angle, infoList))
-        {
-            availablePos.push_back(Position(x, y, z));
-        }
+            availablePos.push_back(pos);
     }
     if (availablePos.empty())
         return false;
