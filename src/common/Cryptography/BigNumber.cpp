@@ -194,26 +194,25 @@ bool BigNumber::IsNegative() const
     return BN_is_negative(_bn);
 }
 
-uint8* BigNumber::AsByteArray(int32 minSize, bool littleEndian)
+std::unique_ptr<uint8[]> BigNumber::AsByteArray(int32 minSize, bool littleEndian)
 {
     int length = (minSize >= GetNumBytes()) ? minSize : GetNumBytes();
 
-    uint8* array = new uint8[length];
+    std::unique_ptr<uint8[]> array(new uint8[length]);
 
     // If we need more bytes than length of BigNumber set the rest to 0
     if (length > GetNumBytes())
-        std::memset((void*)array, 0, length);
+        std::memset(array.get(), 0, length);
 
     int paddingOffset = length - GetNumBytes();
 
-    BN_bn2bin(_bn, (unsigned char *)array + paddingOffset);
+    BN_bn2bin(_bn, array.get() + paddingOffset);
 
     // openssl's BN stores data internally in big endian format, reverse if little endian desired
     if (littleEndian)
-        std::reverse(array, array + length);
+        std::reverse(array.get(), array.get() + length);
 
-    uint8* ret(array);
-    return ret;
+    return array;
 }
 
 void BigNumber::GetBytes(uint8* buf, size_t bufsize, bool littleEndian) const
@@ -250,13 +249,25 @@ std::vector<uint8> BigNumber::ToByteVector(int32 minSize, bool littleEndian) con
     return v;
 }
 
-char * BigNumber::AsHexStr() const
+namespace
 {
-    return BN_bn2hex(_bn);
+    std::string OwnOpenSSLString(char* value)
+    {
+        auto freeString = [](char* buffer) { OPENSSL_free(buffer); };
+        std::unique_ptr<char, decltype(freeString)> buffer(value, freeString);
+        if (!buffer)
+            throw std::bad_alloc();
+        return std::string(buffer.get());
+    }
 }
 
-char * BigNumber::AsDecStr() const
+std::string BigNumber::AsHexStr() const
 {
-    return BN_bn2dec(_bn);
+    return OwnOpenSSLString(BN_bn2hex(_bn));
+}
+
+std::string BigNumber::AsDecStr() const
+{
+    return OwnOpenSSLString(BN_bn2dec(_bn));
 }
 
