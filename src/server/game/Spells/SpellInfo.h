@@ -383,10 +383,9 @@ class SpellInfo
         int32  ScalingClass;
         float  CoefBase;
         int32  CoefLevelBase;
-        SpellEffectInfo Effects[MAX_SPELL_EFFECTS];
+        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS> Effects;
         uint32 ExplicitTargetMask;
         SpellChainNode const* ChainEntry;
-        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS> _effects;
 
         // SpecializationSpellsEntry
         std::list<uint32> SpecializationIdList;
@@ -519,8 +518,8 @@ class SpellInfo
         bool IsDifferentRankOf(SpellInfo const* spellInfo) const;
         bool IsHighRankOf(SpellInfo const* spellInfo) const;
 
-        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS> const& GetEffects() const { return _effects; }
-        SpellEffectInfo const& GetEffect(SpellEffIndex index) const { ASSERT(index < _effects.size()); return _effects[index]; }
+        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS> const& GetEffects() const { return Effects; }
+        SpellEffectInfo const& GetEffect(SpellEffIndex index) const { ASSERT(index < Effects.size()); return Effects[index]; }
 
         bool IsRequireAdditionalTargetCheck() const;
 
@@ -561,8 +560,8 @@ class SpellInfo
         bool CanBeBlockedByAntiMagicShell(uint32 effectIndex) const;
 
     private:
-        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS>& _GetEffects() { return _effects; }
-        SpellEffectInfo& _GetEffect(SpellEffIndex index) { ASSERT(index < _effects.size()); return _effects[index]; }
+        std::array<SpellEffectInfo, MAX_SPELL_EFFECTS>& _GetEffects() { return Effects; }
+        SpellEffectInfo& _GetEffect(SpellEffIndex index) { ASSERT(index < Effects.size()); return Effects[index]; }
 };
 
 #endif // _SPELLINFO_H

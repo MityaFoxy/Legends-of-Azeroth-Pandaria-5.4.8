@@ -31,6 +31,7 @@
 
 #include <map>
 #include <fstream>
+#include <vector>
 
 typedef std::map<uint16, uint32> AreaFlagByAreaID;
 typedef std::map<uint32, uint32> AreaFlagByMapID;
@@ -279,18 +280,9 @@ PhaseGroupContainer sPhasesByGroup;
 static std::map<uint32, std::vector<SkillLineAbilityEntry const*>> sSpellsBySkill;
 static std::multimap<uint32, uint32> sItemSpecOverrideByItemId;
 
-struct SpellEffect
-{
-    SpellEffect()
-    {
-        for (auto&& it : effects)
-            std::fill(std::begin(it), std::end(it), nullptr);
-    }
-
-    SpellEffectEntry const* effects[MAX_DIFFICULTY][MAX_SPELL_EFFECTS];
-};
-
-typedef std::unordered_map<uint32, SpellEffect> SpellEffectMap;
+// Most spells have only a few effects. Store the existing DBC entries instead
+// of reserving every difficulty/effect combination for every spell.
+typedef std::unordered_map<uint32, std::vector<SpellEffectEntry const*>> SpellEffectMap;
 SpellEffectMap sSpellEffectMap;
 
 static std::multimap<uint32, SpellPowerEntry const*> sSpellPowerMap;
@@ -832,7 +824,7 @@ void DBCManager::LoadDBCStores(const std::string& dataPath, uint32 defaultLocale
     {
         if (SpellEffectEntry const *spellEffect = sSpellEffectStore.LookupEntry(i))
         {
-            sSpellEffectMap[spellEffect->EffectSpellId].effects[spellEffect->EffectDifficulty][spellEffect->EffectIndex] = spellEffect;
+            sSpellEffectMap[spellEffect->EffectSpellId].push_back(spellEffect);
         }
     }
 
@@ -965,10 +957,22 @@ SpellEffectEntry const* GetSpellEffectEntry(uint32 spellId, uint32 effect, uint3
     if (itr == sSpellEffectMap.end())
         return nullptr;
 
-    if (itr->second.effects[difficulty][effect])
-        return itr->second.effects[difficulty][effect];
+    SpellEffectEntry const* fallback = nullptr;
+    // Reverse iteration preserves the previous last-entry-wins behavior for
+    // duplicate difficulty/effect keys. This lookup is used to build SpellInfo.
+    for (auto entry = itr->second.rbegin(); entry != itr->second.rend(); ++entry)
+    {
+        if ((*entry)->EffectIndex != effect)
+            continue;
 
-    return itr->second.effects[REGULAR_DIFFICULTY][effect];
+        if ((*entry)->EffectDifficulty == difficulty)
+            return *entry;
+
+        if (!fallback && (*entry)->EffectDifficulty == REGULAR_DIFFICULTY)
+            fallback = *entry;
+    }
+
+    return fallback;
 }
 
 TalentSpellPos const* DBCManager::GetTalentSpellPos(uint32 spellId)
