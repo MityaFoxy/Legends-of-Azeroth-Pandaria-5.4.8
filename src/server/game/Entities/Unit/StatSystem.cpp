@@ -904,7 +904,7 @@ void Player::UpdateParryPercentage()
     if (CanParry() && parryCap[pclass] > 0.0f)
     {
         float b = GetCreateStat(STAT_STRENGTH);
-        float q = DodgeOrParryPerStat[GetLevel() - 1];
+        float q = DodgeOrParryPerStat[std::clamp<uint32>(GetLevel(), 1, std::size(DodgeOrParryPerStat)) - 1];
         float c = parryCap[GetClass() - 1];
         float k = DodgeOrParryScalingFactor[GetClass() - 1];
         float t = GetStat(STAT_STRENGTH);
@@ -939,7 +939,7 @@ void Player::UpdateDodgePercentage()
     };
 
     float b = GetCreateStat(STAT_AGILITY);
-    float q = DodgeOrParryPerStat[GetLevel() - 1];
+    float q = DodgeOrParryPerStat[std::clamp<uint32>(GetLevel(), 1, std::size(DodgeOrParryPerStat)) - 1];
     float c = dodgeCap[GetClass() - 1];
     float k = DodgeOrParryScalingFactor[GetClass() - 1];
     float t = GetStat(STAT_AGILITY);

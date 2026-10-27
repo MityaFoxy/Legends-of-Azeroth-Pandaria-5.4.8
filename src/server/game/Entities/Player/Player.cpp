@@ -2988,6 +2988,7 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
 // Current player experience not update (must be update by caller)
 void Player::GiveLevel(uint8 level)
 {
+    level = std::clamp<uint8>(level, 1, DEFAULT_MAX_LEVEL);
     uint8 oldLevel = GetLevel();
     if (level == oldLevel)
         return;
@@ -18653,7 +18654,12 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     SetClass(fields[4].GetUInt8());
     SetGender(gender);
 
-    SetUInt32Value(UNIT_FIELD_LEVEL, fields[6].GetUInt8());
+    uint8 const storedLevel = fields[6].GetUInt8();
+    uint8 const playerLevel = std::clamp<uint8>(storedLevel, 1, DEFAULT_MAX_LEVEL);
+    if (playerLevel != storedLevel)
+        TC_LOG_ERROR("entities.player", "Player ({}) has invalid level ({}), clamped to {}.",
+            guid.ToString(), storedLevel, playerLevel);
+    SetUInt32Value(UNIT_FIELD_LEVEL, playerLevel);
     SetUInt32Value(PLAYER_FIELD_XP, fields[7].GetUInt32());
 
     _LoadIntoDataField(fields[55].GetCString(), PLAYER_FIELD_EXPLORED_ZONES, PLAYER_EXPLORED_ZONES_SIZE);

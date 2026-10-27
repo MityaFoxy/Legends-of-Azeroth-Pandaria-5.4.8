@@ -13413,6 +13413,8 @@ bool Unit::CanFreeMove() const
 
 void Unit::SetLevel(uint8 lvl, bool sendUpdate)
 {
+    if (GetTypeId() == TYPEID_PLAYER)
+        lvl = std::clamp<uint8>(lvl, 1, DEFAULT_MAX_LEVEL);
     SetUInt32Value(UNIT_FIELD_LEVEL, lvl);
 
     // group update
