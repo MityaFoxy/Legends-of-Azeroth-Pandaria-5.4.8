@@ -1920,6 +1920,40 @@ bool PlayerbotAI::CanCastSpell(std::string const name, Unit* target, Item* itemT
     return CanCastSpell(_aiObjectContext->GetValue<uint32>("spell id", name)->Get(), target, true, itemTarget);
 }
 
+// The client resolves action-bar spell overrides before casting. Playerbots cast
+// directly, so mirror that resolution for forms and override auras (for example
+// Mangle -> Mangle (Bear)) instead of executing the base spell's dummy effect.
+uint32 PlayerbotAI::GetActionbarOverride(uint32 spellId) const
+{
+    SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+    if (!spellInfo)
+        return spellId;
+
+    for (uint32 overrideId : spellInfo->OverrideSpellList)
+    {
+        if (!bot->HasSpell(overrideId))
+            continue;
+
+        if (SpellInfo const* overrideInfo = sSpellMgr->GetSpellInfo(overrideId))
+        {
+            spellInfo = overrideInfo;
+            spellId = overrideId;
+        }
+        break;
+    }
+
+    Unit::AuraEffectList swaps = bot->GetAuraEffectsByType(SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS);
+    Unit::AuraEffectList const& secondarySwaps = bot->GetAuraEffectsByType(SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS_2);
+    swaps.insert(swaps.end(), secondarySwaps.begin(), secondarySwaps.end());
+
+    for (AuraEffect const* effect : swaps)
+        if (effect->IsAffectingSpell(spellInfo))
+            if (SpellInfo const* overrideInfo = sSpellMgr->GetSpellInfo(effect->GetAmount()))
+                return overrideInfo->Id;
+
+    return spellId;
+}
+
 bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, bool checkHasSpell, Item* itemTarget, Item* castItem)
 {
     if (!spellid)
@@ -1958,6 +1992,8 @@ bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, bool checkHasSpell,
         }
         return false;
     }
+
+    spellid = GetActionbarOverride(spellid);
 
     if (bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL) != nullptr)
     {
@@ -2229,10 +2265,13 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
         return false;
     }
 
+    Pet* pet = bot->GetPet();
+    if (!pet || !pet->HasSpell(spellId))
+        spellId = GetActionbarOverride(spellId);
+
     if (!target)
         target = bot;
 
-    Pet* pet = bot->GetPet();
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
     if (!spellInfo)
         return false;
