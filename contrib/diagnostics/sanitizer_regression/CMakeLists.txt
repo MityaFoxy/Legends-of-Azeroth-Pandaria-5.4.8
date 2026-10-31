@@ -36,6 +36,8 @@ add_test(NAME bg_test_roster_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/bg_test_roster_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME battleground_list_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_list_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME condition_loader_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/condition_loader_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME player_level_cap_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/player_level_cap_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME spell_storage_regression COMMAND ${Python3_EXECUTABLE}

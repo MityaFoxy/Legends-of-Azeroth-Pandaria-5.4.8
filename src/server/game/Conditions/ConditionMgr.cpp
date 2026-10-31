@@ -2194,7 +2194,7 @@ bool ConditionMgr::isConditionTypeValid(Condition* cond) const
                 return false;
             }
 
-            if (cond->ConditionValue2 > 1)
+            if (cond->ConditionType != CONDITION_QUESTSTATE && cond->ConditionValue2 > 1)
                 TC_LOG_ERROR("sql.sql", "Quest condition has useless data in value2 ({})!", cond->ConditionValue2);
             if (cond->ConditionValue3)
                 TC_LOG_ERROR("sql.sql", "Quest condition has useless data in value3 ({})!", cond->ConditionValue3);
