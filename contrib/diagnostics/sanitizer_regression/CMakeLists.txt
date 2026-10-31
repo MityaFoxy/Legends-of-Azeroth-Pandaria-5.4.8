@@ -12,6 +12,8 @@ enable_testing()
 add_test(NAME sanitizer_regression COMMAND sanitizer_regression)
 set_tests_properties(sanitizer_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME heroic_leap_landing_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/heroic_leap_landing_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
