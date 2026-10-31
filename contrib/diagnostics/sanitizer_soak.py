@@ -8,18 +8,141 @@ existing configurations are never overwritten.
 
 import argparse
 import datetime
+import errno
+import fcntl
+import gzip
 import hashlib
 import json
 import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 
 BG_CYCLE_TIMEOUT_SECONDS = 60 * 60
+
+
+class NavigationCaptured(Exception):
+    def __init__(self, finding):
+        super().__init__("Captured BG path-start-mismatch")
+        self.finding = finding
+
+
+class NavigationStopMonitor:
+    """Follow this stage's console; ignore unrelated warnings and other maps."""
+
+    CHUNK_BYTES = 64 * 1024
+    SAMPLE_BYTES = 4 * 1024**2
+    MAX_LINE_BYTES = 64 * 1024
+    ANSI = re.compile(rb"\x1b\[[0-9;]*m")
+
+    def __init__(self, logs, required=1, on_finding=None):
+        if not 1 <= required <= 100:
+            raise ValueError("navigation error count must be between 1 and 100")
+        self.required = required
+        self.on_finding = on_finding
+        self.findings = []
+        self.seen = set()
+        self.pending_states = {}
+        self.path = logs / "console.log"
+        self.identity = None
+        self.offset = 0
+        self.pending = b""
+        self.discarding = False
+
+    def check(self):
+        try:
+            console = self.path.open("rb")
+        except FileNotFoundError:
+            return
+        with console:
+            stat = os.fstat(console.fileno())
+            identity = (stat.st_dev, stat.st_ino)
+            if identity != self.identity or stat.st_size < self.offset:
+                self.identity, self.offset = identity, 0
+                self.pending, self.discarding = b"", False
+            end = min(stat.st_size, self.offset + self.SAMPLE_BYTES)
+            console.seek(self.offset)
+            while self.offset < end:
+                chunk = console.read(min(self.CHUNK_BYTES, end - self.offset))
+                if not chunk:
+                    break
+                self.offset = console.tell()
+                for piece in chunk.splitlines(keepends=True):
+                    if len(self.pending) + len(piece) > self.MAX_LINE_BYTES:
+                        self.discarding = True
+                        self.pending = b""
+                    if not self.discarding:
+                        self.pending += piece
+                    if piece.endswith(b"\n"):
+                        if not self.discarding:
+                            self.inspect(self.pending)
+                        self.pending, self.discarding = b"", False
+
+    def inspect(self, raw):
+        line = self.ANSI.sub(b"", raw).decode(errors="replace").strip()
+        if "[playerbots.navigation]" not in line:
+            return
+        fields = dict(re.findall(r"\b(\w+)=([^\s]+)", line))
+        if fields.get("map") != "529" or not fields.get("bot", "").isdigit():
+            return
+        if (fields.get("outcome") == "start-mismatch-state"
+                or (fields.get("outcome") == "rejected" and fields.get("reason") == "path-start-mismatch")):
+            # State and rejection are one throttled event with the same bot,
+            # instance and second. Also ignore replayed lines after rotation.
+            stamp = line.split("[playerbots.navigation]", 1)[0].strip()
+            key = (stamp, fields["bot"], fields.get("instance"))
+            actor = (fields["bot"], fields.get("instance"))
+            if fields.get("outcome") == "start-mismatch-state":
+                self.pending_states[actor] = stamp
+            else:
+                previous = self.pending_states.pop(actor, None)
+                paired = previous == stamp
+                if previous and not paired:
+                    try:
+                        # These two adjacent log calls can straddle a second.
+                        before = datetime.datetime.fromisoformat(previous.split()[0].replace("_", "T"))
+                        after = datetime.datetime.fromisoformat(stamp.split()[0].replace("_", "T"))
+                        paired = 0 <= (after - before).total_seconds() <= 1
+                    except ValueError:
+                        pass
+                if paired:
+                    self.seen.add(key)
+                    return
+            if key in self.seen:
+                return
+            self.seen.add(key)
+            finding = dict(reason="path-start-mismatch", source=str(self.path),
+                           bot=int(fields["bot"]), map=529,
+                           instance=fields.get("instance"), line=line)
+            self.findings.append(finding)
+            if self.on_finding:
+                self.on_finding(finding, self.findings)
+            if len(self.findings) >= self.required:
+                raise NavigationCaptured(dict(finding, captured_count=len(self.findings),
+                                              required_count=self.required, findings=list(self.findings)))
+
+
+def navigation_capture_overlay(text):
+    # Navigation DEBUG can have a separate file appender. Retain it, but make
+    # sure the stop monitor also receives the warning/state pair on console.
+    try:
+        value = setting(text, "Logger.playerbots.navigation")
+    except RuntimeError:
+        # This logger can inherit its parent in an existing runtime config.
+        value = "3,Console Server"
+    level, appenders = value.split(",", 1)
+    names = appenders.split()
+    if "Console" not in names:
+        names.append("Console")
+    if int(level) > 3 or int(level) == 0:
+        level = "3"
+    return optional_overlay(text, {"Logger.playerbots.navigation": level + "," + " ".join(names)})
 
 
 class SanitizerMonitor:
@@ -91,6 +214,62 @@ def memory():
     return fields
 
 
+def disk_space(path, sysfs=Path("/sys/fs/btrfs")):
+    """Read the backing filesystem, including Btrfs metadata reservations.
+
+    Linux BTRFS_IOC_FS_INFO / BTRFS_IOC_DEV_INFO use the fixed UAPI layouts
+    from linux/btrfs.h. These read-only ioctls also work in rootless containers.
+    Do not count the global reserve twice: it is included in bytes_may_use.
+    """
+    record = {"disk_free_bytes": shutil.disk_usage(path).free}
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        info = bytearray(1024)
+        try:
+            fcntl.ioctl(fd, 0x8400941f, info, True)  # BTRFS_IOC_FS_INFO
+        except OSError as error:
+            if error.errno == errno.ENOTTY:
+                return record  # Other filesystems retain the statfs guard.
+            raise
+        fsid = str(uuid.UUID(bytes=bytes(info[16:32])))
+        root = sysfs / fsid
+        metadata = root / "allocation/metadata"
+        counters = {name: int((metadata / name).read_text()) for name in (
+            "total_bytes", "bytes_used", "bytes_reserved", "bytes_pinned",
+            "bytes_may_use", "bytes_readonly")}
+        zone = metadata / "bytes_zone_unusable"
+        counters["bytes_zone_unusable"] = int(zone.read_text()) if zone.exists() else 0
+        headroom = max(0, counters["total_bytes"] - sum(
+            value for name, value in counters.items() if name != "total_bytes"))
+        devices = []
+        for device in (root / "devinfo").iterdir():
+            dev = bytearray(4096)
+            struct.pack_into("=Q", dev, 0, int(device.name))
+            fcntl.ioctl(fd, 0xd000941e, dev, True)  # BTRFS_IOC_DEV_INFO
+            used, total = struct.unpack_from("=QQ", dev, 24)
+            devices.append(max(0, total - used))
+        if not devices:
+            raise RuntimeError("Btrfs device allocation counters are unavailable")
+        record.update(btrfs_fsid=fsid, btrfs_metadata=counters,
+                      btrfs_metadata_headroom_bytes=headroom,
+                      btrfs_min_device_unallocated_bytes=min(devices))
+        return record
+    finally:
+        os.close(fd)
+
+
+def check_disk_space(record):
+    if record["disk_free_bytes"] < 10 * 1024**3:
+        raise RuntimeError("Less than 10 GiB of disk space available")
+    # Conservative diagnostic policy, not a guarantee against every ENOSPC:
+    # leave metadata headroom OR room on every device for new metadata chunks.
+    if ("btrfs_fsid" in record
+            and record["btrfs_metadata_headroom_bytes"] < 256 * 1024**2
+            and record["btrfs_min_device_unallocated_bytes"] < 2 * 1024**3):
+        raise RuntimeError("Btrfs metadata headroom below 256 MiB and device "
+                           "unallocated space below 2 GiB; refusing disk pressure")
+
+
 def setting(text, key):
     match = re.search(r"^\s*" + re.escape(key) + r"\s*=\s*(.*?)\s*$", text, re.M)
     if not match:
@@ -137,6 +316,60 @@ def navigation_diagnostics_overlay(text, enabled):
         "Appender.PlayerbotNavigation": "2,2,7,PlayerbotNavigation.log,a,67108864",
         "Logger.playerbots.navigation": "2,PlayerbotNavigation",
     })
+
+
+def full_bot_logging_overlay(world, bots):
+    world = optional_overlay(world, {
+        "Appender.PlayerbotFull": "2,1,7,PlayerbotFull.log,a,67108864",
+        # Console remains INFO-filtered and feeds the live lost-owner guard.
+        "Logger.playerbots": "1,PlayerbotFull Console",
+        "Appender.PlayerbotBehavior": "2,1,7,PlayerbotBehavior.log,a,67108864",
+        "Logger.playerbots.behavior": "1,PlayerbotBehavior",
+    })
+    bots = optional_overlay(bots, {
+        "AiPlayerbot.LogBehavior": "1",
+        "AiPlayerbot.LogBehaviorInterval": "5",
+        "AiPlayerbot.LogInGroupOnly": "0",
+    })
+    return navigation_diagnostics_overlay(world, True), bots
+
+
+def compress_rotated_bot_log(directory, now=None):
+    """Compress at most one closed rotation, preserving all logged decisions."""
+    now = time.time() if now is None else now
+    for path in sorted(directory.glob("*-bots-*/Logs/Playerbot*.log.*")):
+        if (path.is_symlink() or not path.is_file()
+                or not re.fullmatch(r"Playerbot\w*\.log\.\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", path.name)):
+            continue
+        before = path.stat()
+        if now - before.st_mtime < 60:
+            continue
+        archive = path.with_name(path.name + ".gz")
+        temporary = path.with_name(path.name + ".gz.tmp")
+        if archive.exists() or temporary.exists():
+            continue
+        digest = hashlib.sha256()
+        try:
+            with path.open("rb") as source, temporary.open("xb") as raw:
+                with gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=1) as target:
+                    while chunk := source.read(1024 * 1024):
+                        digest.update(chunk)
+                        target.write(chunk)
+                raw.flush()
+                os.fsync(raw.fileno())
+            with gzip.open(temporary, "rb") as check:
+                actual = hashlib.file_digest(check, "sha256").digest()
+            after = path.stat()
+            if (actual != digest.digest() or (before.st_ino, before.st_size, before.st_mtime_ns)
+                    != (after.st_ino, after.st_size, after.st_mtime_ns)):
+                raise RuntimeError("Rotated bot log changed during compression: " + str(path))
+            size = temporary.stat().st_size
+            temporary.rename(archive)
+            path.unlink()
+            return dict(file=str(archive), original_bytes=before.st_size, compressed_bytes=size)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return None
 
 
 def alive(pid):
@@ -256,6 +489,22 @@ def guarded_pause(seconds, check_resources):
     while time.monotonic() < deadline:
         time.sleep(min(5, max(0, deadline - time.monotonic())))
         check_resources()
+
+
+def finish_navigation_capture(run, finding, process, sanitizer_monitor, event):
+    (run / "navigation-finding.json").write_text(json.dumps(finding, indent=2) + "\n")
+    event("navigation_error_captured", **finding)
+    shutdown = stop_after_failure(process, event)
+    try:
+        if shutdown["exit_code"]:
+            raise RuntimeError("Failure on captured-error shutdown: inspect logs")
+        sanitizer_monitor.check(drain=True)
+    except BaseException as error:
+        event("failed", error=str(error), shutdown=shutdown, navigation_finding=finding)
+        raise
+    event("complete", message="Navigation error captured; worldserver stopped gracefully",
+          stop_reason="navigation_error_captured", error_reproduced=True,
+          navigation_finding=finding, shutdown=shutdown)
 
 
 def population_stages(only_bots, soak_duration):
@@ -392,9 +641,16 @@ def main():
     startup = parser.add_mutually_exclusive_group(required=True)
     startup.add_argument("--old-pid", type=int)
     startup.add_argument("--already-stopped", action="store_true")
-    parser.add_argument("--hours", type=float, default=12)
+    ending = parser.add_mutually_exclusive_group()
+    ending.add_argument("--hours", type=float)
+    ending.add_argument("--until-navigation-error", choices=("path-start-mismatch",),
+                        help="Observe native AB until the requested matching error count, then stop gracefully; no timed soak")
+    parser.add_argument("--navigation-error-count", type=int, default=1,
+                        help="Distinct path-start-mismatch events required before stopping (1..100, default 1)")
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--bot-behavior-log", action="store_true")
+    parser.add_argument("--full-bot-log", action="store_true",
+                        help="All emitted bot TRACE messages, every AI decision, 5-second state snapshots and navigation DEBUG; losslessly compress closed rotations")
     parser.add_argument("--navigation-debug-log", action="store_true",
                         help="Isolated rotating DEBUG path/query/spline log; counts against the normal log budget")
     parser.add_argument("--skip-db-backup", action="store_true",
@@ -417,7 +673,14 @@ def main():
     parser.add_argument("--revision", required=True)
     parser.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
-    if args.hours <= 0 or args.jobs < 1:
+    if args.full_bot_log:
+        args.bot_behavior_log = True
+        args.navigation_debug_log = True
+    if not 1 <= args.navigation_error_count <= 100 or (args.navigation_error_count != 1 and not args.until_navigation_error):
+        parser.error("--navigation-error-count requires event mode and a count between 1 and 100")
+    if args.hours is None and not args.until_navigation_error:
+        args.hours = 12
+    if (args.hours is not None and args.hours <= 0) or args.jobs < 1:
         parser.error("hours and jobs must be positive")
     if args.only_bots is not None and args.only_bots < 1:
         parser.error("bot population must be positive")
@@ -427,6 +690,10 @@ def main():
         parser.error("--normal-build requires --auth-pid")
     if args.skip_bg_cycle_gate and not args.battleground_test:
         parser.error("--skip-bg-cycle-gate requires --battleground-test")
+    if args.until_navigation_error and (not args.battleground_test or args.only_bots is None or args.normal_build):
+        parser.error("--until-navigation-error requires --battleground-test --only-bots and a sanitizer-only run")
+    # Fail before creating artifacts, dumping databases or starting a server.
+    check_disk_space(disk_space(args.runtime))
     os.umask(0o077)
     args.run.mkdir(parents=True, exist_ok=False)
     events = (args.run / "events.jsonl").open("a", buffering=1)
@@ -464,14 +731,18 @@ def main():
             (args.run / "result.json").write_text(json.dumps(record, indent=2) + "\n")
 
     def sample(kind, pid, directory, bots=None):
+        if args.full_bot_log:
+            compressed = compress_rotated_bot_log(directory)
+            if compressed:
+                event("bot_log_compressed", **compressed)
         mem = memory()
         record = dict(
             pid=pid,
             rss_bytes=rss(pid),
             available_bytes=mem["MemAvailable"],
             swap_free_bytes=mem["SwapFree"],
-            disk_free_bytes=shutil.disk_usage(args.run).free,
             log_bytes=log_size(directory),
+            **disk_space(args.run),
         )
         if bots is not None:
             record["bots_online"] = bots
@@ -480,8 +751,7 @@ def main():
             raise RuntimeError(
                 "Less than %d MiB of host RAM available" % args.min_available_ram_mib
             )
-        if record["disk_free_bytes"] < 10 * 1024**3:
-            raise RuntimeError("Less than 10 GiB of disk space available")
+        check_disk_space(record)
         if record["log_bytes"] > 12 * 1024**3:
             raise RuntimeError("Run logs exceeded the 12 GiB budget")
 
@@ -554,7 +824,7 @@ def main():
         phases = []
         if args.normal_build:
             phases.append(("mimalloc", args.normal_build, 1800))
-        phases.append(("sanitizer", args.build, args.hours * 3600))
+        phases.append(("sanitizer", args.build, args.hours * 3600 if args.hours is not None else None))
         for phase, build_directory, soak_duration in phases:
             binary = build_directory / "src/server/worldserver/worldserver"
             with (args.run / ("build-%s.log" % phase)).open("wb") as output:
@@ -707,8 +977,16 @@ def main():
                         "Logger.playerbots.bgtest": "3,PlayerbotBG",
                         "Logger.bg.resurrection": "3,PlayerbotBG",
                     })
-                    stage_bot = optional_overlay(stage_bot, {"AiPlayerbot.BattlegroundTest": "1"})
+                    stage_bot = optional_overlay(stage_bot, {
+                        "AiPlayerbot.BattlegroundTest": "1",
+                        "AiPlayerbot.RandomBotMinLevel": "90",
+                        "AiPlayerbot.RandomBotMaxLevel": "90",
+                    })
                 stage_world = navigation_diagnostics_overlay(stage_world, args.navigation_debug_log)
+                if args.full_bot_log:
+                    stage_world, stage_bot = full_bot_logging_overlay(stage_world, stage_bot)
+                if args.until_navigation_error:
+                    stage_world = navigation_capture_overlay(stage_world)
                 (stage / "worldserver.conf").write_text(stage_world)
                 (stage / "playerbots.conf").write_text(stage_bot)
                 server_env = os.environ.copy()
@@ -739,19 +1017,31 @@ def main():
                         phase=phase,
                         bots=target,
                         pid=process.pid,
-                        hours=duration / 3600,
+                        hours=duration / 3600 if duration is not None else None,
+                        until_navigation_error=args.until_navigation_error,
+                        navigation_error_count=args.navigation_error_count,
                     )
                     started = time.monotonic()
                     reached = None
                     population_reached = None
                     bg_telemetry = BattlegroundTelemetry()
-                    bg_verified = not requires_bg_cycle(args.battleground_test, args.skip_bg_cycle_gate)
-                    if args.battleground_test and args.skip_bg_cycle_gate:
+                    skip_cycle_gate = args.skip_bg_cycle_gate or bool(args.until_navigation_error)
+                    bg_verified = not requires_bg_cycle(args.battleground_test, skip_cycle_gate)
+                    if args.battleground_test and skip_cycle_gate:
                         event("bg_cycle_gate_skipped", reason="Focused observation run; full native cycle not claimed")
                     workload_guard = WorkloadGuard(target)
                     behavior_verified = False
                     sanitizer_monitor = SanitizerMonitor(stage / "Logs") if phase == "sanitizer" else None
-                    while reached is None or time.monotonic() - reached < duration:
+                    def save_navigation_finding(finding, findings):
+                        pending = args.run / "navigation-findings.json.tmp"
+                        pending.write_text(json.dumps(findings, indent=2) + "\n")
+                        pending.replace(args.run / "navigation-findings.json")
+                        event("navigation_error_observed", captured_count=len(findings),
+                              required_count=args.navigation_error_count, finding=finding)
+
+                    navigation_monitor = NavigationStopMonitor(stage / "Logs", args.navigation_error_count,
+                                                               save_navigation_finding) if args.until_navigation_error else None
+                    while args.until_navigation_error or reached is None or time.monotonic() - reached < duration:
                         if sanitizer_monitor:
                             sanitizer_monitor.check()
                         if process.poll() is not None:
@@ -759,6 +1049,8 @@ def main():
                                 "Worldserver exited unexpectedly with code %s in stage %s"
                                 % (process.returncode, target)
                             )
+                        if navigation_monitor:
+                            navigation_monitor.check()
                         sql = (
                             "SELECT COUNT(*) FROM `%s`.characters c JOIN `%s`.account a ON a.id=c.account "
                             "WHERE c.online=1 AND a.username LIKE 'RNDBOT%%'"
@@ -773,6 +1065,8 @@ def main():
                                     "Worldserver exited during SQL check"
                                 )
                             sample("resource_sample", process.pid, args.run)
+                            if navigation_monitor:
+                                navigation_monitor.check()
 
                         count = query_bot_count(
                             mysql_args, env, sql, event, check_query_resources
@@ -790,7 +1084,7 @@ def main():
                             if bg_state["cycle_verified"] and not bg_verified:
                                 bg_verified = True
                                 event("bg_cycle_verified", **bg_state)
-                            if requires_bg_cycle(args.battleground_test, args.skip_bg_cycle_gate):
+                            if requires_bg_cycle(args.battleground_test, skip_cycle_gate):
                                 check_bg_cycle_deadline(time.monotonic(), population_reached, bg_verified)
                         if reached is not None:
                             workload_guard.check(time.monotonic(), count, bg_state)
@@ -844,6 +1138,8 @@ def main():
                 else "100-bot overnight interval completed; worldserver stopped gracefully"
             ),
         )
+    except NavigationCaptured as captured:
+        finish_navigation_capture(args.run, captured.finding, process, sanitizer_monitor, event)
     except BaseException as error:
         event("failure_detected", error=str(error))
         if build_process is not None and build_process.poll() is None:

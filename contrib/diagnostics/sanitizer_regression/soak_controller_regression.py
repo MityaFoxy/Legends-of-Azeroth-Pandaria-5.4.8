@@ -3,12 +3,17 @@
 
 import importlib.util
 import datetime
+import errno
+import gzip
 import json
+import os
 import pathlib
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 root = pathlib.Path(sys.argv.pop(1))
@@ -21,6 +26,273 @@ spec.loader.exec_module(soak)
 
 
 class ControllerTests(unittest.TestCase):
+    def test_full_bot_logging_isolated_and_unfiltered(self):
+        world = "Logger.playerbots = 3,Console Server\nLogger.playerbots.bgtest = 3,PlayerbotBG\n"
+        bots = "AiPlayerbot.LogBehavior = 0\nAiPlayerbot.LogInGroupOnly = 1\n"
+        configured, ai = soak.full_bot_logging_overlay(world, bots)
+        self.assertEqual(soak.setting(configured, "Logger.playerbots"), "1,PlayerbotFull Console")
+        self.assertEqual(soak.setting(configured, "Logger.playerbots.behavior"), "1,PlayerbotBehavior")
+        self.assertEqual(soak.setting(configured, "Logger.playerbots.navigation"), "2,PlayerbotNavigation")
+        self.assertEqual(soak.setting(configured, "Logger.playerbots.bgtest"), "3,PlayerbotBG")
+        self.assertEqual(soak.setting(ai, "AiPlayerbot.LogBehaviorInterval"), "5")
+        self.assertEqual(soak.setting(ai, "AiPlayerbot.LogInGroupOnly"), "0")
+
+    def test_log_compression_retains_bytes_and_ignores_live_and_sanitizer_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            logs = root / "sanitizer-bots-100/Logs"
+            logs.mkdir(parents=True)
+            name = "PlayerbotBehavior.log.2026-10-28_00-30-00"
+            rotated = logs / name
+            payload = b"Bot=test GUID=123 decision=A:cast - FAILED\n" * 10000
+            rotated.write_bytes(payload)
+            os.utime(rotated, (10, 10))
+            preserved = [logs / "PlayerbotBehavior.log", logs / "asan.123",
+                         logs / "PlayerbotBG.log.2026-10-28_00-31-00"]
+            for p in preserved:
+                p.write_bytes(b"still live")
+                os.utime(p, (100, 100))
+            result = soak.compress_rotated_bot_log(root, now=110)
+            self.assertEqual(result["original_bytes"], len(payload))
+            self.assertFalse(rotated.exists())
+            with gzip.open(logs / (name + ".gz"), "rb") as f:
+                self.assertEqual(f.read(), payload)
+            for p in preserved:
+                self.assertEqual(p.read_bytes(), b"still live")
+            self.assertIsNone(soak.compress_rotated_bot_log(root, now=110))
+
+    def test_failed_log_archive_never_removes_original(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            logs = root / "sanitizer-bots-100/Logs"
+            logs.mkdir(parents=True)
+            rotated = logs / "PlayerbotNavigation.log.2026-10-28_00-30-00"
+            rotated.write_bytes(b"evidence")
+            os.utime(rotated, (10, 10))
+            with patch.object(soak.gzip, "GzipFile", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    soak.compress_rotated_bot_log(root, now=100)
+            self.assertEqual(rotated.read_bytes(), b"evidence")
+            self.assertFalse(list(logs.glob("*.tmp")))
+
+    def test_btrfs_reservations_block_false_statfs_capacity(self):
+        # Reproduce the incident: 23 GiB reported free, but metadata is reserved
+        # and only 1 MiB remains outside allocated device chunks.
+        fsid = uuid.UUID("2fbaf853-75fb-42c6-ae06-79cbb70f0ff4")
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            metadata = base / str(fsid) / "allocation/metadata"
+            metadata.mkdir(parents=True)
+            (base / str(fsid) / "devinfo/1").mkdir(parents=True)
+            counters = dict(total_bytes=6979321856, bytes_used=6432210944,
+                            bytes_reserved=98304, bytes_pinned=802816,
+                            bytes_may_use=542670848, bytes_readonly=0,
+                            bytes_zone_unusable=0)
+            for key, value in counters.items():
+                (metadata / key).write_text(str(value))
+            def ioctl(fd, request, data, mutate):
+                if request == 0x8400941f:
+                    data[16:32] = fsid.bytes
+                elif request == 0xd000941e:
+                    self.assertEqual(struct.unpack_from("=Q", data)[0], 1)
+                    struct.pack_into("=QQ", data, 24, 511569821696, 511570870272)
+                else:
+                    self.fail("Unexpected ioctl")
+            with patch.object(soak.fcntl, "ioctl", side_effect=ioctl), \
+                    patch.object(soak.shutil, "disk_usage", return_value=Mock(free=23 * 1024**3)):
+                record = soak.disk_space(base, sysfs=base)
+            self.assertEqual(record["btrfs_metadata_headroom_bytes"], 3538944)
+            self.assertEqual(record["btrfs_min_device_unallocated_bytes"], 1024**2)
+            with self.assertRaisesRegex(RuntimeError, "Btrfs metadata"):
+                soak.check_disk_space(record)
+            # Growth space can resolve pressure without removing existing data.
+            record["btrfs_min_device_unallocated_bytes"] = 2 * 1024**3
+            soak.check_disk_space(record)
+            record["btrfs_min_device_unallocated_bytes"] = 0
+            record["btrfs_metadata_headroom_bytes"] = 256 * 1024**2
+            soak.check_disk_space(record)
+
+    def test_non_btrfs_retains_disk_floor(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(soak.fcntl, "ioctl", side_effect=OSError(errno.ENOTTY, "Not Btrfs")), \
+                patch.object(soak.shutil, "disk_usage", return_value=Mock(free=9 * 1024**3)):
+            record = soak.disk_space(directory)
+        self.assertNotIn("btrfs_fsid", record)
+        with self.assertRaisesRegex(RuntimeError, "10 GiB"):
+            soak.check_disk_space(record)
+
+    def test_unreadable_btrfs_counters_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(soak.fcntl, "ioctl", side_effect=PermissionError(errno.EPERM, "Denied")):
+                with self.assertRaises(PermissionError):
+                    soak.disk_space(directory)
+            # A successful FS_INFO with inaccessible sysfs must not silently
+            # downgrade to statfs and repeat the original false-safe result.
+            with patch.object(soak.fcntl, "ioctl", return_value=0):
+                with self.assertRaises(FileNotFoundError):
+                    soak.disk_space(directory, sysfs=pathlib.Path(directory))
+
+    def test_two_distinct_errors_preserve_first_and_deduplicate_state_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = pathlib.Path(directory)
+            console = logs / "console.log"
+            observed = []
+            def saved(finding, findings):
+                observed.append(dict(finding))
+                (logs / "saved.json").write_text(json.dumps(findings))
+            monitor = soak.NavigationStopMonitor(logs, 2, saved)
+            prefix = "2026-10-26_01:00:00 WARN [playerbots.navigation] bot=133 map=529 instance=2 "
+            state = prefix + "outcome=start-mismatch-state splinePoints='0:1,2,3;1:4,5,6'"
+            reject = prefix.replace("01:00:00", "01:00:01") + "outcome=rejected reason=path-start-mismatch"
+            console.write_text(state + "\n" + reject + "\n")
+            monitor.check()
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(json.loads((logs / "saved.json").read_text())[0]["line"], state)
+            # A replay in a rotated file is still the same error.
+            console.rename(logs / "old.log")
+            console.write_text(state + "\n" + reject + "\n")
+            monitor.check()
+            self.assertEqual(len(observed), 1)
+            # A later failure from the same bot counts; no need for another bot.
+            second = state.replace("01:00:00", "01:00:31")
+            with console.open("a") as output:
+                output.write(second[:-4])
+            monitor.check()
+            self.assertEqual(len(observed), 1)
+            with console.open("a") as output:
+                output.write(second[-4:] + "\n")
+            with self.assertRaises(soak.NavigationCaptured) as captured:
+                monitor.check()
+            self.assertEqual(captured.exception.finding["captured_count"], 2)
+            self.assertEqual(len(captured.exception.finding["findings"]), 2)
+            self.assertEqual(len(json.loads((logs / "saved.json").read_text())), 2)
+
+    def test_two_summary_only_errors_from_different_bots_in_same_second(self):
+        with tempfile.TemporaryDirectory() as directory:
+            monitor = soak.NavigationStopMonitor(pathlib.Path(directory), 2)
+            line = "2026-10-26_01:00:00 WARN [playerbots.navigation] bot=1 map=529 instance=2 outcome=rejected reason=path-start-mismatch"
+            monitor.inspect(line.encode())
+            with self.assertRaises(soak.NavigationCaptured):
+                monitor.inspect(line.replace("bot=1", "bot=2").encode())
+
+    def test_navigation_capture_is_specific_and_keeps_full_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = pathlib.Path(directory)
+            console = logs / "console.log"
+            monitor = soak.NavigationStopMonitor(logs)
+            monitor.check()
+            console.write_text("[playerbots.navigation] bot=61 map=0 outcome=start-mismatch-state\n"
+                               "[other] bot=61 map=529 outcome=start-mismatch-state\n"
+                               "[playerbots.navigation] bot=61 map=529 outcome=rejected reason=path-body-obstructed\n"
+                               "[playerbots.navigation] bot=61 map=529 outcome=alternative-route reason=path-start-mismatch\n")
+            monitor.check()
+            state = ("[playerbots.navigation] bot=61 map=529 instance=3 outcome=start-mismatch-state "
+                     "groundDelta=4.376 combat=true auras='123:3:2400:155'")
+            with console.open("ab") as output:
+                output.write(b"\x1b[31m" + state[:70].encode())
+            monitor.check()  # Wait for the complete diagnostic, including auras.
+            with console.open("ab") as output:
+                output.write(state[70:].encode() + b"\x1b[0m\n")
+            with self.assertRaises(soak.NavigationCaptured) as caught:
+                monitor.check()
+            finding = caught.exception.finding
+            self.assertEqual(finding["line"], state)
+            self.assertEqual(finding["bot"], 61)
+            self.assertEqual(finding["reason"], "path-start-mismatch")
+
+    def test_navigation_capture_handles_bounds_rotation_and_truncation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = pathlib.Path(directory)
+            console = logs / "console.log"
+            marker = b"[playerbots.navigation] bot=61 map=529 outcome=rejected reason=path-start-mismatch\n"
+            monitor = soak.NavigationStopMonitor(logs)
+            console.write_bytes(b"x" * (monitor.MAX_LINE_BYTES * 2))
+            monitor.check()
+            self.assertLessEqual(len(monitor.pending), monitor.MAX_LINE_BYTES)
+            with console.open("ab") as output:
+                output.write(b"\n" + marker)
+            with self.assertRaises(soak.NavigationCaptured):
+                monitor.check()
+            monitor = soak.NavigationStopMonitor(logs)
+            console.write_bytes(b"ignored\n" * (monitor.SAMPLE_BYTES // 8 + 20) + marker)
+            monitor.check()
+            self.assertEqual(monitor.offset, monitor.SAMPLE_BYTES)
+            with self.assertRaises(soak.NavigationCaptured):
+                monitor.check()
+            monitor = soak.NavigationStopMonitor(logs)
+            console.write_bytes(marker[:-5])
+            monitor.check()
+            console.rename(logs / "old.log")
+            console.write_bytes(marker[-5:])
+            monitor.check()  # Never join partial records from different files.
+            console.write_bytes(b"x")
+            monitor.check()  # Truncation resets both pending data and offset.
+            self.assertEqual(monitor.offset, 1)
+            self.assertEqual(monitor.pending, b"x")
+            with console.open("ab") as output:
+                output.write(b"\n" + marker)
+            with self.assertRaises(soak.NavigationCaptured):
+                monitor.check()
+
+    def test_navigation_capture_overlay_preserves_debug_and_adds_console(self):
+        original = "Logger.playerbots.navigation = 2,PlayerbotNavigation\nOther = unchanged\n"
+        result = soak.navigation_capture_overlay(original)
+        self.assertEqual(soak.setting(result, "Logger.playerbots.navigation"), "2,PlayerbotNavigation Console")
+        self.assertIn("Other = unchanged", result)
+        self.assertEqual(soak.navigation_capture_overlay(result), result)
+        disabled = "Logger.playerbots.navigation = 0,Server\n"
+        self.assertEqual(soak.setting(soak.navigation_capture_overlay(disabled), "Logger.playerbots.navigation"),
+                         "3,Server Console")
+        inherited = "Logger.playerbots = 3,Console Server\nOther = unchanged\n"
+        result = soak.navigation_capture_overlay(inherited)
+        self.assertEqual(soak.setting(result, "Logger.playerbots.navigation"), "3,Console Server")
+        self.assertIn(inherited, result)
+
+    def test_navigation_capture_stops_gracefully_and_is_not_a_clean_soak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = pathlib.Path(directory)
+            process = Mock(pid=123)
+            process.poll.side_effect = [None, 0, 0, 0]
+            monitor = Mock()
+            events = []
+            finding = dict(bot=61, reason="path-start-mismatch", line="state with effects")
+            soak.finish_navigation_capture(run, finding, process, monitor,
+                                           lambda kind, **data: events.append((kind, data)))
+            process.send_signal.assert_called_once_with(soak.signal.SIGTERM)
+            process.wait.assert_called_once_with(timeout=120)
+            process.kill.assert_not_called()
+            monitor.check.assert_called_once_with(drain=True)
+            self.assertEqual(json.loads((run / "navigation-finding.json").read_text()), finding)
+            self.assertEqual(events[-1][0], "complete")
+            self.assertTrue(events[-1][1]["error_reproduced"])
+            self.assertEqual(events[-1][1]["stop_reason"], "navigation_error_captured")
+            self.assertNotIn("gate completed", events[-1][1]["message"])
+
+    def test_navigation_capture_does_not_hide_shutdown_or_sanitizer_failure(self):
+        for exit_code in (0, 1):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                process = Mock(pid=123)
+                process.poll.return_value = exit_code
+                monitor = Mock()
+                monitor.check.side_effect = RuntimeError("sanitizer finding on shutdown")
+                events = []
+                with self.assertRaises(RuntimeError):
+                    soak.finish_navigation_capture(pathlib.Path(directory), {}, process, monitor,
+                                                   lambda kind, **data: events.append((kind, data)))
+                self.assertEqual(events[-1][0], "failed")
+                self.assertNotIn("complete", [kind for kind, _ in events])
+
+    def test_error_capture_cli_rejects_conflicting_or_incomplete_modes(self):
+        for options in (("--hours", "1", "--until-navigation-error", "path-start-mismatch"),
+                        ("--until-navigation-error", "path-start-mismatch"),
+                        ("--navigation-error-count", "2"),
+                        ("--navigation-error-count", "0"),
+                        ("--navigation-error-count", "101")):
+            result = subprocess.run([sys.executable, str(path), "--already-stopped", "--revision", "test",
+                                     "--run", "/unused", *options], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("error:", result.stderr)
+
     def test_console_monitor_detects_split_reports_without_newline(self):
         with tempfile.TemporaryDirectory() as directory:
             logs = pathlib.Path(directory)
@@ -406,6 +678,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_terminal_failure_is_written_after_cleanup(self):
         source = path.read_text()
+        source = source[source.index("def main():"):]
         failure = source[source.index("    except BaseException as error:") :]
         self.assertLess(
             failure.index('event("failure_detected"'),
