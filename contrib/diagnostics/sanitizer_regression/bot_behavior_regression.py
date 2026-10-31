@@ -38,9 +38,35 @@ uint32 getMSTimeDiff(uint32 before, uint32 after) { return after - before; }
 int reports = 0;
 uint32 recordedOk = 0, recordedFailed = 0;
 std::string recordedAction;
+constexpr int LOG_LEVEL_TRACE = 1;
+struct Logger {
+    bool traceEnabled = false;
+    bool ShouldLog(char const* category, int level) {
+        assert(std::string(category) == "playerbots.behavior" && level == LOG_LEVEL_TRACE);
+        return traceEnabled;
+    }
+} logger;
+Logger* sLog = &logger;
+int traces = 0;
+std::string recordedTrace;
+void recordTrace(std::string const& name, uint32 guid, uint32 map, uint32 instance, char const* message) {
+    assert(name == "regression" && guid == 123 && map == 529 && instance == 1);
+    ++traces; recordedTrace = message;
+}
+#define TC_LOG_TRACE(category, format, ...) recordTrace(__VA_ARGS__)
 #define TC_LOG_DEBUG(...) do { ++reports; recordedOk = behaviorActionsOk; recordedFailed = behaviorActionsFailed; recordedAction = lastBehaviorAction; } while (false)
-struct Player {};
-struct PlayerbotAI { Player bot; Player* GetBot() { return &bot; } };
+struct Guid { uint32 GetCounter() { return 123; } };
+struct Player {
+    std::string GetName() { return "regression"; }
+    Guid GetGUID() { return {}; }
+    uint32 GetMapId() { return 529; }
+    uint32 GetInstanceId() { return 1; }
+};
+struct PlayerbotAI {
+    Player bot;
+    Player* GetBot() { return &bot; }
+    uint32 GetState() { assert(false && "AI state not ready during strategy construction"); return 0; }
+};
 struct Engine {
     PlayerbotAI* botAI;
     bool testMode = false;
@@ -56,9 +82,11 @@ struct Engine {
 int main() {
     PlayerbotAI ai;
     Engine engine; engine.botAI = &ai;
+    logger.traceEnabled = true;
     engine.LogAction("A:%s - OK", "attack");
     engine.LogAction("--- AI Tick ---");
-    assert(!reports && engine.lastBehaviorAction == "none");
+    assert(!reports && !traces && engine.lastBehaviorAction == "none");
+    logger.traceEnabled = false;
     engine.behaviorLogEnabled = true;
     engine.LogAction("--- AI Tick ---");
     assert(reports == 1);
@@ -80,6 +108,19 @@ int main() {
     int before = reports;
     clockNow = 48; wrapped.LogAction("--- AI Tick ---"); assert(reports == before);
     clockNow = 49; wrapped.LogAction("--- AI Tick ---"); assert(reports == before + 1);
+    assert(!traces); // DEBUG retains the sampled path without per-decision output.
+    logger.traceEnabled = true;
+    wrapped.LogAction("T:%s", "enemy healer");
+    assert(traces == 1 && recordedTrace == "T:enemy healer");
+    wrapped.LogAction("A:%s - OK", "attack");
+    assert(traces == 2 && recordedTrace == "A:attack - OK");
+    assert(wrapped.behaviorActionsOk == 1 && !wrapped.behaviorActionsFailed);
+    wrapped.LogAction("A:%s - FAILED", "cast");
+    assert(traces == 3 && wrapped.behaviorActionsFailed == 1);
+    wrapped.LogAction("A:%s - USELESS", std::string(5000, 'x').c_str());
+    assert(traces == 4 && recordedTrace.size() == 1023);
+    assert(wrapped.behaviorActionsOk == 1 && wrapped.behaviorActionsFailed == 1);
+    assert(wrapped.lastAction.empty());
 }
 """
 )

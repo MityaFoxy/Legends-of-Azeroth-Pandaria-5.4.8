@@ -74,6 +74,24 @@ protected:
     };
 
 private:
+    // Per-search evidence; never retained as movement state or used to select a route.
+    struct NavigationDiagnostics
+    {
+        char const* primaryReason = "not-queried";
+        uint32 primaryType = 0;
+        char const* stage = "not-queried";
+        char const* lastReason = "not-queried";
+        uint32 lastType = 0;
+        G3D::Vector3 queryFrom{0, 0, 0}, queryTo{0, 0, 0};
+        float endOffset = -1.0f;
+        uint32 mismatchAttempt = 0;
+        char const* mismatchStage = "none";
+        G3D::Vector3 mismatchFrom{0, 0, 0}, mismatchStart{0, 0, 0};
+        uint32 blockedAttempt = 0;
+        char const* blockedStage = "none";
+        G3D::Vector3 blockedFrom{0, 0, 0}, blockedTo{0, 0, 0};
+    };
+
     bool ValidateWaterConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     bool ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     Movement::PointsArray SearchForBestPath(float x, float y, float z, bool& usingNavigation,
@@ -82,7 +100,7 @@ private:
     void TrackGroundMovement(float x, float y, float z, bool normalOnly, bool backwards);
     void LogStuckResult(char const* outcome, uint32 attempts, bool warning = true);
     void LogNavigationResult(char const* outcome, char const* reason, uint32 type, uint32 attempts,
-        float x, float y, float z, bool warning);
+        float x, float y, float z, bool warning, NavigationDiagnostics const* diagnostics = nullptr);
 };
 
 class MoveRandomAction : public MovementAction

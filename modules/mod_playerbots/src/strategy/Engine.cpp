@@ -610,6 +610,23 @@ void Engine::LogAction(char const* format, ...)
         if (!behaviorLogEnabled)
             return;
 
+        // Opt-in live diagnostics: TRACE records every decision, while DEBUG
+        // retains the existing periodic summaries and normal logging cost.
+        if (sLog->ShouldLog("playerbots.behavior", LOG_LEVEL_TRACE))
+        {
+            char message[1024];
+            va_list args;
+            va_start(args, format);
+            vsnprintf(message, sizeof(message), format, args);
+            va_end(args);
+            Player* bot = botAI->GetBot();
+            // Strategy construction also calls this before PlayerbotAI has
+            // selected its current engine/state. Only read the ready Player.
+            TC_LOG_TRACE("playerbots.behavior", "Bot={} GUID={} map={} instance={} decision={}",
+                bot->GetName(), bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(),
+                message);
+        }
+
         if (strncmp(format, "A:", 2) == 0)
         {
             char message[512];

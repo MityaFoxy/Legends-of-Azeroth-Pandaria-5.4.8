@@ -734,7 +734,7 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 }
 
 void MovementAction::LogNavigationResult(char const* outcome, char const* reason, uint32 type, uint32 attempts,
-    float x, float y, float z, bool warning)
+    float x, float y, float z, bool warning, NavigationDiagnostics const* diagnostics)
 {
     LastMovement& last = AI_VALUE(LastMovement&, "last movement");
     uint32 const now = getMSTime();
@@ -749,15 +749,114 @@ void MovementAction::LogNavigationResult(char const* outcome, char const* reason
     last.navigationLogWarning = warning;
     last.navigationLogTime = now;
     last.navigationLogSuppressed = 0;
+    NavigationDiagnostics const empty;
+    NavigationDiagnostics const& d = diagnostics ? *diagnostics : empty;
+    if (warning && d.mismatchAttempt)
+    {
+        // Only sample support after the shared throttle permits this warning.
+        // Keep the first mismatch: a later alternative may fail at a waypoint
+        // rather than at the bot's actual position.
+        float const ground = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), true, 50.0f);
+        bool const groundValid = std::isfinite(ground) && ground > INVALID_HEIGHT;
+        G3D::Vector3 const splineEnd = bot->movespline->FinalDestination();
+        GroundMovementState const& tracked = last.groundMovement;
+        // Snapshot applied effects, not just owned auras: hostile effects can
+        // explain a displaced start. Cap the payload and report omissions.
+        constexpr uint32 MaxLoggedAuras = 32;
+        uint32 auraCount = 0;
+        std::string auras;
+        for (auto const& entry : bot->GetAppliedAuras())
+        {
+            AuraApplication const* application = entry.second;
+            if (!application->GetEffectMask())
+                continue;
+            if (++auraCount > MaxLoggedAuras)
+                continue;
+            Aura const* aura = application->GetBase();
+            if (!auras.empty())
+                auras += ',';
+            // spell ID : applied effect mask : remaining ms : caster GUID
+            auras += std::to_string(aura->GetId()) + ':' + std::to_string(application->GetEffectMask())
+                + ':' + std::to_string(aura->GetDuration()) + ':' + std::to_string(aura->GetCasterGUID().GetRawValue());
+        }
+        Unit const* victim = bot->GetVictim();
+        // Keep the actual spline (including control points), not the rejected
+        // candidate. One bounded record lets the stop monitor save it atomically.
+        auto const& spline = bot->movespline->_Spline();
+        auto const& controls = spline.getPoints();
+        constexpr size_t MaxSplinePoints = 256;
+        size_t const recorded = std::min(controls.size(), MaxSplinePoints);
+        std::string splinePoints;
+        for (size_t i = 0; i < recorded; ++i)
+        {
+            auto const& point = controls[i];
+            if (i)
+                splinePoints += ';';
+            splinePoints += std::to_string(i) + ':' + std::to_string(point.x) + ','
+                + std::to_string(point.y) + ',' + std::to_string(point.z);
+        }
+        int32 const first = spline.first(), lastPoint = spline.last();
+        int32 const current = bot->movespline->_currentSplineIdx();
+        // Chords are the real trajectory only for ordinary linear ground
+        // splines in world coordinates. Never label an unsupported check clear.
+        bool const checkSpline = bot->movespline->Initialized() && !bot->movespline->Finalized()
+            && tracked.active && tracked.splineId == bot->movespline->GetId()
+            && bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == POINT_MOTION_TYPE
+            && spline.mode() == Movement::SplineBase::ModeLinear && !spline.isCyclic()
+            && !bot->movespline->onTransport && !bot->GetTransport() && !bot->GetVehicle()
+            && !bot->IsFlying() && !bot->movespline->isFalling() && !bot->HasUnitState(UNIT_STATE_CHARGING)
+            && controls.size() <= MaxSplinePoints && first >= 0 && lastPoint > first
+            && size_t(lastPoint) < controls.size() && current >= first && current < lastPoint;
+        std::string splineLos;
+        int32 currentLinkLos = -1;
+        float const bodyHeight = bot->GetCollisionHeight() * 0.5f;
+        auto clear = [&](G3D::Vector3 const& a, G3D::Vector3 const& b)
+        {
+            return bot->GetMap()->isInLineOfSight(a.x, a.y, a.z + bodyHeight,
+                b.x, b.y, b.z + bodyHeight, bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing);
+        };
+        if (checkSpline)
+        {
+            for (int32 i = first; i < lastPoint; ++i)
+            {
+                if (i != first)
+                    splineLos += ';';
+                splineLos += std::to_string(i) + ':' + (clear(controls[i], controls[i + 1]) ? "1" : "0");
+            }
+            currentLinkLos = clear(G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()), controls[current + 1]);
+        }
+        TC_LOG_WARN("playerbots.navigation", "action='{}' bot={} map={} instance={} outcome=start-mismatch-state attempt={} stage={} queryFrom=({},{},{}) pathStart=({},{},{}) startOffset={} botGroundZ={} groundValid={} groundDelta={} movementFlags={} falling={} charging={} stopped={} motionType={} controlledMotionType={} spline={} splineFinalized={} splineFalling={} splineEnd=({},{},{}) tracked={} trackedActive={} trackedSpline={} combat={} victim={} rooted={} stunned={} lostControl={} splineMode={} splineCyclic={} splineTransport={} splineFirst={} splineLast={} splineCurrent={} splinePointCount={} splinePointsOmitted={} splinePoints='{}' splineLosChecked={} splineBodyHeight={} splinePhase={} splineLos='{}' currentLinkLos={} auraCount={} aurasOmitted={} auras='{}'",
+            getName(), bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(),
+            d.mismatchAttempt, d.mismatchStage, d.mismatchFrom.x, d.mismatchFrom.y, d.mismatchFrom.z,
+            d.mismatchStart.x, d.mismatchStart.y, d.mismatchStart.z, (d.mismatchStart - d.mismatchFrom).length(),
+            ground, groundValid, groundValid ? bot->GetPositionZ() - ground : 0.0f,
+            bot->GetUnitMovementFlags(), bot->IsFalling(), bot->HasUnitState(UNIT_STATE_CHARGING), bot->IsStopped(),
+            uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()),
+            uint32(bot->GetMotionMaster()->GetMotionSlotType(MOTION_SLOT_CONTROLLED)),
+            bot->movespline->GetId(), bot->movespline->Finalized(), bot->movespline->isFalling(),
+            splineEnd.x, splineEnd.y, splineEnd.z, tracked.tracked, tracked.active, tracked.splineId,
+            bot->IsInCombat(), victim ? victim->GetGUID().GetRawValue() : 0,
+            bot->HasUnitState(UNIT_STATE_ROOT), bot->HasUnitState(UNIT_STATE_STUNNED),
+            bot->HasUnitState(UNIT_STATE_LOST_CONTROL), uint32(spline.mode()), spline.isCyclic(), bot->movespline->onTransport,
+            first, lastPoint, current, controls.size(), controls.size() - recorded, splinePoints,
+            checkSpline, bodyHeight, bot->GetPhaseMask(), splineLos, currentLinkLos, auraCount,
+            auraCount > MaxLoggedAuras ? auraCount - MaxLoggedAuras : 0, auras);
+    }
     if (warning)
-        TC_LOG_WARN("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} inWater={} underWater={} swimming={} suppressed={}",
-            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            x, y, z, outcome, reason, type, attempts, bot->IsInWater(), bot->IsUnderWater(),
+        TC_LOG_WARN("playerbots.navigation", "action='{}' bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} primaryReason={} primaryType={} lastStage={} lastReason={} lastType={} queryFrom=({},{},{}) queryTo=({},{},{}) endOffset={} blockedAttempt={} blockedStage={} blockedFrom=({},{},{}) blockedTo=({},{},{}) bodyHeight={} inWater={} underWater={} swimming={} suppressed={}",
+            getName(), bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            x, y, z, outcome, reason, type, attempts, d.primaryReason, d.primaryType, d.stage, d.lastReason, d.lastType,
+            d.queryFrom.x, d.queryFrom.y, d.queryFrom.z, d.queryTo.x, d.queryTo.y, d.queryTo.z, d.endOffset,
+            d.blockedAttempt, d.blockedStage, d.blockedFrom.x, d.blockedFrom.y, d.blockedFrom.z,
+            d.blockedTo.x, d.blockedTo.y, d.blockedTo.z, bot->GetCollisionHeight() * 0.5f, bot->IsInWater(), bot->IsUnderWater(),
             bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), suppressed);
     else
-        TC_LOG_INFO("playerbots.navigation", "bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} inWater={} underWater={} swimming={} suppressed={}",
-            bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            x, y, z, outcome, reason, type, attempts, bot->IsInWater(), bot->IsUnderWater(),
+        TC_LOG_INFO("playerbots.navigation", "action='{}' bot={} map={} instance={} from=({},{},{}) target=({},{},{}) outcome={} reason={} pathType={} attempts={} primaryReason={} primaryType={} lastStage={} lastReason={} lastType={} queryFrom=({},{},{}) queryTo=({},{},{}) endOffset={} blockedAttempt={} blockedStage={} blockedFrom=({},{},{}) blockedTo=({},{},{}) bodyHeight={} inWater={} underWater={} swimming={} suppressed={}",
+            getName(), bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            x, y, z, outcome, reason, type, attempts, d.primaryReason, d.primaryType, d.stage, d.lastReason, d.lastType,
+            d.queryFrom.x, d.queryFrom.y, d.queryFrom.z, d.queryTo.x, d.queryTo.y, d.queryTo.z, d.endOffset,
+            d.blockedAttempt, d.blockedStage, d.blockedFrom.x, d.blockedFrom.y, d.blockedFrom.z,
+            d.blockedTo.x, d.blockedTo.y, d.blockedTo.z, bot->GetCollisionHeight() * 0.5f, bot->IsInWater(), bot->IsUnderWater(),
             bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), suppressed);
 }
 
@@ -1037,6 +1136,13 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     uint32 attempts = 0;
     uint32 lastType = PATHFIND_BLANK;
     char const* reason = "no-path";
+    NavigationDiagnostics diagnostics;
+    auto logResult = [&](char const* outcome, char const* resultReason, uint32 type, bool warning)
+    {
+        diagnostics.lastReason = reason;
+        diagnostics.lastType = lastType;
+        LogNavigationResult(outcome, resultReason, type, attempts, x, y, z, warning, &diagnostics);
+    };
     bool unavailable = false;
     bool startBridge = false;
     bool avoidLiquids = false;
@@ -1057,11 +1163,15 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         detour.continuation.assign(points.begin(), points.end());
         detour.updatedAt = now;
     };
-    auto query = [&](G3D::Vector3 const& from, G3D::Vector3 const& to, bool completeOnly) -> Movement::PointsArray
+    auto query = [&](G3D::Vector3 const& from, G3D::Vector3 const& to, bool completeOnly,
+        char const* stage) -> Movement::PointsArray
     {
         if (attempts >= limit)
             return {};
         ++attempts;
+        diagnostics.stage = stage;
+        diagnostics.queryFrom = from;
+        diagnostics.queryTo = to;
         // Private bounded query: never resize/mutate the shared NPC query.
         PathGenerator gen(bot, 4096);
         // A deeply submerged start still needs a corridor to the shore.
@@ -1079,6 +1189,16 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         // No amount of waypoint searching can repair a missing map or query.
         unavailable = !gen.HasNavigationData() || (type & PATHFIND_NOT_USING_PATH);
         Movement::PointsArray points = gen.GetPath();
+        diagnostics.endOffset = points.empty() ? -1.0f : (points.back() - to).length();
+        if (std::string(reason) == "path-body-obstructed" && points.size() >= 2)
+        {
+            // NormalizePath truncates at the first blocked segment. Copy its
+            // evidence before later queries replace the path and failure reason.
+            diagnostics.blockedAttempt = attempts;
+            diagnostics.blockedStage = stage;
+            diagnostics.blockedFrom = points[points.size() - 2];
+            diagnostics.blockedTo = points.back();
+        }
         if (std::string(reason) == "path-body-obstructed" && !points.empty())
         {
             obstruction = points.back();
@@ -1111,6 +1231,13 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         {
             if (!ValidateGroundConnection(from, points.front()))
             {
+                if (!diagnostics.mismatchAttempt)
+                {
+                    diagnostics.mismatchAttempt = attempts;
+                    diagnostics.mismatchStage = stage;
+                    diagnostics.mismatchFrom = from;
+                    diagnostics.mismatchStart = points.front();
+                }
                 reason = "path-start-mismatch";
                 return {};
             }
@@ -1136,9 +1263,12 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         return points;
     };
 
-    Movement::PointsArray partial = query(start, destination, false);
+    Movement::PointsArray partial = query(start, destination, false, "primary");
+    diagnostics.primaryReason = !partial.empty() && (partial.back() - destination).length() > 1.0f
+        && std::string(reason) == "none" ? "destination-not-reached" : reason;
+    diagnostics.primaryType = lastType;
     if (partial.empty() && avoidLiquids && attempts < limit)
-        partial = query(start, destination, false);
+        partial = query(start, destination, false, "land-retry");
     uint32 const primaryType = lastType;
     bool const primaryStartBridge = startBridge;
     if (!partial.empty() && (partial.back() - destination).length() > 1.0f && std::string(reason) == "none")
@@ -1156,7 +1286,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     {
         retainReplanOverlap(partial);
         rememberContinuation(partial);
-        LogNavigationResult("partial-route", primaryReason, primaryType, attempts, x, y, z, false);
+        logResult("partial-route", primaryReason, primaryType, false);
         return partial;
     }
 
@@ -1184,16 +1314,23 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             if (retreatDistance < 4.0f)
                 continue;
 
-            Movement::PointsArray continuation = query(candidate, destination, false);
+            Movement::PointsArray continuation = query(candidate, destination, false, "continuation");
             if (continuation.empty())
                 continue;
             bool const continuationComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
                 && (!(lastType & PATHFIND_INCOMPLETE) || startBridge)
                 && (continuation.back() - destination).length() <= 1.0f;
             if (!continuationComplete && !(lastType & PATHFIND_SHORT))
+            {
+                if (std::string(reason) == "none")
+                    reason = "continuation-destination-not-reached";
                 continue;
+            }
             if ((retreat.back() - continuation.front()).length() > 0.1f)
+            {
+                reason = "discontinuous-continuation";
                 continue;
+            }
 
             retreat.insert(retreat.end(), continuation.begin() + 1, continuation.end());
             bool const partialContinuation = !continuationComplete;
@@ -1206,8 +1343,8 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                 rememberContinuation(retreat);
             else
                 detour.continuation.clear();
-            LogNavigationResult(partialContinuation ? "partial-continuation-retreat-route"
-                : "continuation-retreat-route", primaryReason, primaryType, attempts, x, y, z, false);
+            logResult(partialContinuation ? "partial-continuation-retreat-route"
+                : "continuation-retreat-route", primaryReason, primaryType, false);
             return retreat;
         }
     }
@@ -1282,7 +1419,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             }
             if (wz == INVALID_HEIGHT || !Trinity::IsValidMapCoord(wx, wy, wz) || std::fabs(wz - origin.z) > 8.0f)
                 continue;
-            Movement::PointsArray first = query(start, {wx, wy, wz}, false);
+            Movement::PointsArray first = query(start, {wx, wy, wz}, false, "alternative-first");
             if (first.empty())
                 continue;
             if (aroundObstruction && (lastType & PATHFIND_SHORT))
@@ -1291,7 +1428,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                 // fill the point buffer. Replan from its validated endpoint.
                 retainReplanOverlap(first);
                 rememberContinuation(first);
-                LogNavigationResult("partial-alternative-route", reason, lastType, attempts, x, y, z, false);
+                logResult("partial-alternative-route", reason, lastType, false);
                 return first;
             }
             G3D::Vector3 const waypoint(wx, wy, wz);
@@ -1303,7 +1440,11 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                     && ValidateWaterConnection(waypoint, first.back()));
             if ((lastType & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
                 || !reachedWaypoint)
+            {
+                if (std::string(reason) == "none")
+                    reason = "waypoint-not-reached";
                 continue;
+            }
             // Several separate obstacles may lie on the remaining corridor.
             // Retain a fully validated bypass leg while looking for a complete
             // alternative. It must end clear of the original obstruction and
@@ -1322,9 +1463,12 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             // legs used the budget unevenly, do not discard the final allowed
             // first-leg query; a validated obstruction bypass can still move.
             if (attempts >= limit)
+            {
+                reason = "query-budget-exhausted";
                 continue;
+            }
             // Use the first route's actual endpoint, not a theoretical waypoint.
-            Movement::PointsArray second = query(first.back(), destination, false);
+            Movement::PointsArray second = query(first.back(), destination, false, "alternative-second");
             if (second.empty())
                 continue;
             bool const secondComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
@@ -1333,7 +1477,11 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             // Only an explicitly bounded, validated prefix is a usable
             // truncated second leg; a mesh-hole corridor is not a detour.
             if (!secondComplete && !(lastType & PATHFIND_SHORT))
+            {
+                if (std::string(reason) == "none")
+                    reason = "alternative-destination-not-reached";
                 continue;
+            }
             if ((first.back() - second.front()).length() > 0.1f)
             {
                 reason = "discontinuous-alternative";
@@ -1350,11 +1498,11 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                     first.resize(MAX_POINT_PATH_LENGTH);
                 retainReplanOverlap(first);
                 rememberContinuation(first);
-                LogNavigationResult("partial-alternative-route", partialSecond ? reason : "path-point-limit", primaryType, attempts, x, y, z, false);
+                logResult("partial-alternative-route", partialSecond ? reason : "path-point-limit", primaryType, false);
                 return first;
             }
             detour.continuation.clear();
-            LogNavigationResult("alternative-route", primaryReason, primaryType, attempts, x, y, z, false);
+            logResult("alternative-route", primaryReason, primaryType, false);
             return first;
         }
     }
@@ -1364,7 +1512,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         detour.updatedAt = now;
         detour.nextVariant = 0;
         rememberContinuation(bypass);
-        LogNavigationResult("partial-alternative-route", "validated-obstacle-bypass", primaryType, attempts, x, y, z, false);
+        logResult("partial-alternative-route", "validated-obstacle-bypass", primaryType, false);
         return bypass;
     }
     detour.nextVariant = (detour.nextVariant + 2) % 32;
@@ -1372,13 +1520,13 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     if (!recoveryAttempt && !partial.empty() && (partial.back() - destination).length() + 0.1f < distance)
     {
         rememberContinuation(partial);
-        LogNavigationResult("partial-route", primaryReason, primaryType, attempts, x, y, z, true);
+        logResult("partial-route", primaryReason, primaryType, true);
         return partial;
     }
     // Preserve callers' existing navigation-only safety contract (e.g. flee).
     if (normalOnly || bot->GetTransport())
     {
-        LogNavigationResult("rejected", reason, lastType, attempts, x, y, z, true);
+        logResult("rejected", reason, lastType, true);
         return {};
     }
     usingNavigation = false;
@@ -1396,10 +1544,10 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
         fallbackX, fallbackY, fallbackZ) || (G3D::Vector3(fallbackX, fallbackY, fallbackZ) - start).length() <= 0.01f)
     {
         usingNavigation = true;
-        LogNavigationResult("rejected", "unsafe-direct-fallback", primaryType, attempts, x, y, z, true);
+        logResult("rejected", "unsafe-direct-fallback", primaryType, true);
         return {};
     }
-    LogNavigationResult("fallback-direct", primaryReason, primaryType, attempts, x, y, z, true);
+    logResult("fallback-direct", primaryReason, primaryType, true);
     return {start, {fallbackX, fallbackY, fallbackZ}};
 }
 

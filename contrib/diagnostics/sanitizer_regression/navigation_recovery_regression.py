@@ -7,6 +7,7 @@ Use --verify-mutations to verify rejection of disabled safety/recovery guards.
 """
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -57,6 +58,7 @@ source = r"""
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -69,7 +71,8 @@ constexpr int PATHFIND_BLANK=0, PATHFIND_NORMAL=1, PATHFIND_SHORTCUT=2, PATHFIND
     PATHFIND_NOPATH=8, PATHFIND_NOT_USING_PATH=16, PATHFIND_SHORT=32,
     PATHFIND_FARFROMPOLY_START=64, PATHFIND_FARFROMPOLY_END=128, MAX_POINT_PATH_LENGTH=200;
 constexpr float INVALID_HEIGHT=-100000;
-constexpr int UNIT_STATE_ROOT=1, UNIT_STATE_STUNNED=2, UNIT_STATE_ROAMING=4, UNIT_STATE_ROAMING_MOVE=8;
+constexpr int UNIT_STATE_ROOT=1, UNIT_STATE_STUNNED=2, UNIT_STATE_ROAMING=4, UNIT_STATE_ROAMING_MOVE=8, UNIT_STATE_CHARGING=16;
+constexpr int UNIT_STATE_LOST_CONTROL=UNIT_STATE_CHARGING|32;
 constexpr int TYPEID_UNIT=0, TYPEID_PLAYER=1, EVENT_CHARGE_PREPATH=99;
 constexpr int POINT_MOTION_TYPE=1, CHASE_MOTION_TYPE=2, MOVE_RUN=0, MOVE_RUN_BACK=1, MOVEMENTFLAG_SWIMMING=8;
 constexpr int MOVE_SWIM=2, MOVE_SWIM_BACK=3;
@@ -79,6 +82,7 @@ namespace VMAP { enum class ModelIgnoreFlags { Nothing }; }
 struct LiquidData { float level=0, depth_level=0; };
 using MovementSlot = int;
 constexpr MovementSlot MOTION_SLOT_ACTIVE=1;
+constexpr MovementSlot MOTION_SLOT_CONTROLLED=2;
 uint32 tick=100;
 uint32 getMSTime() { return tick; }
 uint32 getMSTimeDiff(uint32 before,uint32 after) { return after-before; }
@@ -94,15 +98,33 @@ struct Vector3 {
 };
 }
 bool same(G3D::Vector3 const& a,G3D::Vector3 const& b) { return (a-b).length()<0.001f; }
-namespace Movement { using PointsArray=std::vector<G3D::Vector3>; }
+namespace Movement { using PointsArray=std::vector<G3D::Vector3>; struct SplineBase { enum { ModeLinear=0 }; }; }
 namespace Trinity {
 bool IsValidMapCoord(float x,float y,float z) { return std::isfinite(x)&&std::isfinite(y)&&std::isfinite(z); }
 }
 struct Creature;
 struct Formation { Creature* GetLeader() const { return nullptr; } void LeaderStartedMoving() {} };
 struct Creature { Formation* GetFormation() const { return nullptr; } };
-struct Guid { uint32 GetCounter() const { return 7; } };
+struct Guid {
+    uint32 counter=7;
+    uint32 GetCounter() const { return counter; }
+    std::uint64_t GetRawValue() const { return counter; }
+};
+struct Aura {
+    uint32 id=123, caster=155;
+    int32 duration=2400;
+    uint32 GetId() const { return id; }
+    int32 GetDuration() const { return duration; }
+    Guid GetCasterGUID() const { return {caster}; }
+};
+struct AuraApplication {
+    Aura aura;
+    uint32 mask=3;
+    uint32 GetEffectMask() const { return mask; }
+    Aura const* GetBase() const { return &aura; }
+};
 struct Map {
+    mutable std::vector<std::pair<G3D::Vector3,G3D::Vector3>> rays;
     bool collision=true, liquid=false, los=true;
     float liquidLevel=2, liquidBottom=-2, dryAt=std::numeric_limits<float>::infinity();
     mutable int liquidSamples=0, losChecks=0;
@@ -112,7 +134,8 @@ struct Map {
         if (data) { data->level=liquidLevel; data->depth_level=liquidBottom; }
         return MAP_LIQUID_STATUS_IN_CONTACT;
     }
-    bool isInLineOfSight(float,float,float,float,float,float,uint32,VMAP::ModelIgnoreFlags) const {
+    bool isInLineOfSight(float x,float y,float z,float tx,float ty,float tz,uint32,VMAP::ModelIgnoreFlags) const {
+        rays.push_back({{x,y,z},{tx,ty,tz}});
         ++losChecks; return los;
     }
     bool CheckCollisionAndGetValidCoords(void const*,float,float,float,float& x,float& y,float& z,bool=true) const {
@@ -120,11 +143,23 @@ struct Map {
     }
 };
 struct Spline {
+    int firstIndex=0, lastIndex=-1, splineMode=0;
+    bool cyclic=false, onTransport=false;
+    Spline const& _Spline() const { return *this; }
+    auto const& getPoints() const { return points; }
+    int first() const { return firstIndex; }
+    int last() const { return lastIndex<0 ? int(points.size())-1 : lastIndex; }
+    int mode() const { return splineMode; }
+    bool isCyclic() const { return cyclic; }
+    bool Initialized() const { return points.size()>=2; }
+    int _currentSplineIdx() const { return index; }
     int index=0, launches=0, direct=0;
     bool finalized=false;
+    bool falling=false;
     Movement::PointsArray points;
     int currentPathIdx() const { return index; }
     bool Finalized() const { return finalized; }
+    bool isFalling() const { return falling; }
     uint32 id=1;
     uint32 GetId() const { return id; }
     G3D::Vector3 FinalDestination() const { return points.empty() ? G3D::Vector3{100,0,0} : points.back(); }
@@ -135,10 +170,20 @@ struct Unit {
     bool transport=false, invalidHeight=false, stopped=true;
     int state=0;
     uint32 map=1,instance=2;
+    uint32 guidValue=7;
+    bool combat=false;
+    Unit* victim=nullptr;
+    std::vector<std::pair<uint32,AuraApplication*>> appliedAuras;
+    mutable int auraReads=0;
+    auto const& GetAppliedAuras() const { ++auraReads; return appliedAuras; }
+    bool IsInCombat() const { return combat; }
+    Unit const* GetVictim() const { return victim; }
     bool flying=false,water=false,vehicle=false,teleport=false,alive=true,casting=false,sitting=false;
     bool swimFlag=false,canSwim=true;
     float speed=7;
     float ground=0, groundHoleAt=std::numeric_limits<float>::infinity();
+    float bridgeSurface=std::numeric_limits<float>::quiet_NaN();
+    bool missingLeftGround=false;
     mutable int lastSpeedType=-1, heightSamples=0;
     Map mapObject;
     MotionMaster* motion=nullptr;
@@ -149,18 +194,27 @@ struct Unit {
     float GetPositionZ() const { return position.z; }
     uint32 GetMapId() const { return map; }
     uint32 GetInstanceId() const { return instance; }
-    Guid GetGUID() const { return {}; }
+    Guid GetGUID() const { return {guidValue}; }
     Map* GetMap() { return &mapObject; }
     uint32 GetPhaseMask() const { return 1; }
     float GetCollisionHeight() const { return 2; }
     void* GetTransport() const { return transport ? (void*)this : nullptr; }
-    float GetMapHeight(float x,float,float,bool=true,float=50) const {
+    float GetMapHeight(float x,float y,float z,bool=true,float search=50) const {
         ++heightSamples;
-        return invalidHeight || std::fabs(x-groundHoleAt)<0.1f ? INVALID_HEIGHT : ground;
+        // WorldObject adds its height-search offset before casting down. A
+        // finite VMAP ray can miss a bridge and expose the lower raw terrain.
+        float origin=z+HEIGHT_SEARCH_OFFSET;
+        if (std::isfinite(bridgeSurface) && origin>=bridgeSurface && origin-bridgeSurface<=search)
+            return bridgeSurface;
+        return invalidHeight || (missingLeftGround && y>0) || std::fabs(x-groundHoleAt)<0.1f ? INVALID_HEIGHT : ground;
     }
     bool IsStopped() const { return stopped; }
     void StopMoving() { stopped=true; }
-    MotionMaster* GetMotionMaster() const { return motion; }
+    MotionMaster* GetMotionMaster() const;
+    uint32 movementFlags=0;
+    bool falling=false;
+    uint32 GetUnitMovementFlags() const { return movementFlags; }
+    bool IsFalling() const { return falling; }
     void* GetVehicle() const { return vehicle ? (void*)this : nullptr; }
     bool IsFlying() const { return flying; }
     bool IsInWater() const { return water; }
@@ -216,10 +270,15 @@ struct MotionMaster {
     void PropagateSpeedChange() { ++speedChanges; }
     MovementGenerator* top() const { return movement.get(); }
     int GetCurrentMovementGeneratorType() const { return type; }
+    int GetMotionSlotType(int slot) const { assert(slot==MOTION_SLOT_CONTROLLED); return 0; }
     void Clear() { ++cleared; movement.reset(); }
     void Mutate(MovementGenerator* m,MovementSlot) { ++mutations; movement.reset(m); }
     bool MovePointPath(uint32,Movement::PointsArray const&,MovementSlot=MOTION_SLOT_ACTIVE);
 };
+MotionMaster* Unit::GetMotionMaster() const {
+    static MotionMaster idle{nullptr};
+    return motion?motion:&idle;
+}
 """ + state_source + r"""
 struct LastMovement {
     uint32 navigationLogTime=0,navigationLogSuppressed=0;
@@ -236,8 +295,9 @@ Config* sPlayerbotAIConfig=&config;
 struct MovementAction {
     Unit* bot;
     LastMovement last;
+    std::string getName() const { return "fixture movement"; }
     Movement::PointsArray SearchForBestPath(float,float,float,bool&,bool=false,uint32=0);
-    void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool);
+    void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool,NavigationDiagnostics const* =nullptr);
     bool CanStartGroundMovement(float,float,float);
     void TrackGroundMovement(float,float,float,bool,bool);
     void LogStuckResult(char const*,uint32,bool=true);
@@ -247,13 +307,25 @@ struct MovementAction {
     bool IsMovingAllowed() const { return true; } // state-only root/stun have no aura guard
 };
 #define AI_VALUE(type,name) this->last
-struct Row { std::string level,text; };
+struct Row { std::string level,text,formatted; };
 std::vector<Row> logs;
 template<class... Args> void emit(char const* level,char const*,char const* format,Args... args) {
     std::ostringstream out;
     out << format << ' ';
     ((out << args << ' '),...);
-    logs.push_back({level,out.str()});
+    std::string formatted=format;
+    size_t position=0;
+    auto substitute=[&](auto const& value) {
+        position=formatted.find("{}",position);
+        assert(position!=std::string::npos);
+        std::ostringstream text; text << value;
+        auto replacement=text.str();
+        formatted.replace(position,2,replacement);
+        position+=replacement.size();
+    };
+    (substitute(args),...);
+    assert(formatted.find("{}",position)==std::string::npos);
+    logs.push_back({level,out.str(),formatted});
 }
 #define TC_LOG_DEBUG(...) emit("debug",__VA_ARGS__)
 #define TC_LOG_WARN(...) emit("warn",__VA_ARGS__)
@@ -267,6 +339,7 @@ struct Route {
 std::deque<Route> replies;
 struct Query { G3D::Vector3 from,to; float runSpeed,swimSpeed; };
 std::vector<Query> queries;
+std::function<Route(G3D::Vector3 const&,G3D::Vector3 const&)> routeFor;
 struct PathGenerator {
     Unit* source;
     Route route;
@@ -277,7 +350,8 @@ struct PathGenerator {
     void SetTravelSpeeds(float run,float swim) { runSpeed=run; swimSpeed=swim; }
     bool CalculatePath(float x,float y,float z,bool,bool,bool,G3D::Vector3 const* from) {
         assert(!waterShortcut && runSpeed>0 && swimSpeed>0);
-        assert(!replies.empty()); route=replies.front(); replies.pop_front();
+        if (routeFor) route=routeFor(*from,{x,y,z});
+        else { assert(!replies.empty()); route=replies.front(); replies.pop_front(); }
         queries.push_back({*from,{x,y,z},runSpeed,swimSpeed}); tick+=2;
         if (route.automatic) route.points={*from,{x,y,z}};
         return route.calculated;
@@ -291,7 +365,7 @@ struct PathGenerator {
 };
 """ + "\n".join(methods) + r"""
 Route bad(char const* reason="no-path-or-mesh-hole") { Route r; r.type=PATHFIND_NOPATH; r.reason=reason; return r; }
-void reset() { config={}; replies.clear(); queries.clear(); logs.clear(); tick=100; }
+void reset() { config={}; replies.clear(); queries.clear(); routeFor={}; logs.clear(); tick=100; }
 bool hasLog(char const* level,char const* text) {
     return std::any_of(logs.begin(),logs.end(),[&](Row const& r) {
         return r.level==level && r.text.find(text)!=std::string::npos;
@@ -301,6 +375,24 @@ int summaries() { return std::count_if(logs.begin(),logs.end(),[](Row const& r){
 void connectionTests() {
     Unit bot; MovementAction action{&bot};
     // Execute real connector validators against sampled terrain/liquid/LOS.
+    // Captured BG failure: interpolation is 0.55 m above a VMAP surface. The
+    // extra caller offset used to miss that surface and return lower terrain.
+    bot.ground=-67.51784f; bot.bridgeSurface=-61.788746f;
+    assert(action.ValidateGroundConnection({874.3679f,983.1656f,-61.237156f},
+        {874.3679f,983.1656f,-61.788746f}));
+    // The same layered geometry at arbitrary coordinates/heights, in both
+    // directions, works without GUID, map, or logged-coordinate special cases.
+    bot.ground=-8; bot.bridgeSurface=0;
+    for (float gap:{0.2f,0.49f,0.51f,0.55f,1.5f,1.99f}) {
+        assert(action.ValidateGroundConnection({0,0,gap},{0,0,0}));
+        assert(action.ValidateGroundConnection({0,0,0},{0,0,gap}));
+    }
+    assert(!action.ValidateGroundConnection({0,0,2.01f},{0,0,0}));
+    bot.mapObject.los=false;
+    assert(!action.ValidateGroundConnection({0,0,-0.55f},{0,0,0}));
+    bot.mapObject.los=true;
+    bot.bridgeSurface=std::numeric_limits<float>::quiet_NaN(); bot.ground=0;
+    bot.heightSamples=0;
     assert(action.ValidateGroundConnection({0,0,0},{3,0,0}));
     assert(bot.heightSamples==13); // Quarter-metre sampling, both endpoints.
     assert(!action.ValidateGroundConnection({0,0,0},{3.01f,0,0}));
@@ -513,6 +605,269 @@ void continuationTests() {
         assert(same(first,queries[1].to));
     }
 }
+void obstructionSearchTests() {
+    // The narrow first-leg corridors cross a long fence. A wider first leg
+    // and its continuation are navigable. Missing ground on the left must
+    // not prevent trying the right within the same five-query budget.
+    reset(); Unit bot; bot.missingLeftGround=true;
+    MovementAction action{&bot}; bool navigation=true;
+    routeFor=[](G3D::Vector3 const& from,G3D::Vector3 const& to) {
+        if (from.y<=-24 || to.y<=-24) return Route{};
+        Route r=bad("path-body-obstructed"); r.automatic=false;
+        r.points={from,{19,0,1.5f},{20,0,0}};
+        return r;
+    };
+    auto path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(navigation && queries.size()==5 && path.size()==3);
+    assert(path[1].y<=-24 && same(path.back(),{100,0,0}));
+    assert(same(queries.back().from,path[1]));
+    assert(hasLog("info","alternative-route"));
+
+    // A second fence may still block continuation. Retain only the verified
+    // wider first leg, so the next search starts on the other side of this one.
+    reset(); action.last={};
+    routeFor=[](G3D::Vector3 const& from,G3D::Vector3 const& to) {
+        if (from.y==0 && to.y<=-24) return Route{};
+        Route r=bad("path-body-obstructed"); r.automatic=false;
+        r.points={from,{19,0,1.5f},{20,0,0}};
+        return r;
+    };
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(navigation && queries.size()==5 && path.size()==2);
+    assert(path.back().y<=-24 && !same(path.back(),{100,0,0}));
+    assert(hasLog("info","validated-obstacle-bypass"));
+
+    // The finite set of height checks stays bounded even if every candidate
+    // is invalid. No bogus path queries or direct movement may be generated.
+    reset(); action.last={}; bot.invalidHeight=true; bot.heightSamples=0;
+    Route blocked=bad("path-body-obstructed"); blocked.automatic=false;
+    blocked.points={{0,0,0},{20,0,0}}; replies={blocked};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(path.empty() && navigation && queries.size()==1 && bot.heightSamples==32);
+
+    // More candidates must not increase the configured expensive query limit.
+    for (uint32 budget : {1u,5u,7u,10u}) {
+        reset(); action.last={}; bot.invalidHeight=false; bot.missingLeftGround=false;
+        config.navigationMaxAttempts=budget;
+        replies=std::deque<Route>(budget,blocked);
+        path=action.SearchForBestPath(100,0,0,navigation,true);
+        assert(path.empty() && navigation && queries.size()==budget);
+    }
+}
+void endpointObstructionTests() {
+    // Exact starts/goals/blocked endpoints from the three remaining AB refusals.
+    // Path responses are scripted: this tests planner policy, not live geometry.
+    struct Case { G3D::Vector3 start,goal,blocked; };
+    Case cases[]={
+        {{843.5866f,878.2756f,-58.36555f},{813.5677f,874.77924f,-58.034657f},{813.5677f,874.77924f,-58.57741f}},
+        {{1161.8827f,1176.844f,-56.439476f},{1157.5034f,1179.2567f,-55.357456f},{1157.5034f,1179.2567f,-56.21999f}},
+        {{1200.262f,1134.7853f,-56.801228f},{1181.9203f,1144.2401f,-56.107136f},{1181.9203f,1144.2401f,-56.363285f}}
+    };
+    for(auto const& c:cases) for(float offset:{0.f,.05f,1.f}) {
+        reset(); config.navigationMaxAttempts=7;
+        Unit bot; bot.position=c.start; bot.ground=c.blocked.z;
+        MovementAction action{&bot}; bool navigation=true;
+        G3D::Vector3 obstacle=c.blocked; obstacle.x+=offset;
+        Route blocked=bad("path-body-obstructed"); blocked.automatic=false;
+        blocked.points={c.start,obstacle}; replies={blocked,Route{},Route{}};
+        auto path=action.SearchForBestPath(c.goal.x,c.goal.y,c.goal.z,navigation,true);
+        assert(navigation && queries.size()==3 && path.size()==3 && same(path.back(),c.goal));
+        assert(same(queries[2].from,queries[1].to));
+        // Only the direction may fall back to start->goal. The ring must
+        // stay around the obstacle; nondegenerate directions stay unchanged.
+        auto direction=c.goal-(offset<=.1f ? c.start : obstacle);
+        float horizontal=std::hypot(direction.x,direction.y);
+        auto displacement=queries[1].to-obstacle;
+        float forward=(displacement.x*direction.x+displacement.y*direction.y)/horizontal;
+        float side=(-displacement.x*direction.y+displacement.y*direction.x)/horizontal;
+        assert(std::fabs(forward+2)<.002f && std::fabs(side-8)<.002f);
+    }
+    for(uint32 budget:{1u,2u,7u,10u}) {
+        reset(); config.navigationMaxAttempts=budget;
+        Unit bot; MovementAction action{&bot}; bool navigation=true;
+        Route blocked=bad("path-body-obstructed"); blocked.automatic=false;
+        blocked.points={{0,0,0},{10,0,0}};
+        replies=std::deque<Route>(budget,blocked);
+        assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+        assert(navigation && queries.size()==budget); // No unchecked fallback.
+    }
+    // Runtime recovery uses the same direction repair, with its own waypoints.
+    reset(); config.navigationMaxAttempts=7;
+    Unit bot; MovementAction action{&bot}; bool navigation=true;
+    Route blocked=bad("path-body-obstructed"); blocked.automatic=false;
+    blocked.points={{0,0,0},{10,0,0}}; replies={blocked,Route{},Route{}};
+    auto path=action.SearchForBestPath(10,0,0,navigation,true,1);
+    assert(navigation && queries.size()==3 && same(path.back(),{10,0,0}));
+
+    // Purely vertical displacement still has no usable horizontal direction.
+    reset(); action.last={}; bot.heightSamples=0; blocked.points={{0,0,0},{0,0,3}}; replies={blocked};
+    assert(action.SearchForBestPath(0,0,3,navigation,true).empty());
+    assert(navigation && queries.size()==1 && bot.heightSamples==0);
+}
+void diagnosticTests() {
+    // Reproduce the run's reason=none: valid projected legs miss their waypoint.
+    reset(); config.navigationMaxAttempts=7;
+    Unit bot; MovementAction action{&bot}; bool navigation=true;
+    Route blocked=bad("path-body-obstructed");
+    blocked.automatic=false; blocked.points={{0,0,0},{2,0,0},{3,1,0}};
+    replies.push_back(blocked);
+    Route projected; projected.automatic=false; projected.points={{0,0,0},{1,0,0}};
+    for (int i=0;i<6;++i) replies.push_back(projected);
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    assert(navigation && queries.size()==7 && summaries()==1);
+    auto row=logs.back().formatted;
+    assert(row.find("action='fixture movement'")!=std::string::npos);
+    assert(row.find("outcome=rejected reason=waypoint-not-reached")!=std::string::npos);
+    assert(row.find("primaryReason=path-body-obstructed primaryType=8")!=std::string::npos);
+    assert(row.find("lastStage=alternative-first lastReason=waypoint-not-reached lastType=1")!=std::string::npos);
+    assert(row.find("blockedAttempt=1 blockedStage=primary blockedFrom=(2,0,0) blockedTo=(3,1,0)")!=std::string::npos);
+
+    // A successful first leg may consume the budget before the second leg.
+    reset(); action.last={}; config.navigationMaxAttempts=2;
+    replies={bad(),Route{}};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    assert(queries.size()==2 && navigation);
+    assert(logs.back().formatted.find("outcome=rejected reason=query-budget-exhausted")!=std::string::npos);
+    assert(logs.back().formatted.find("blockedAttempt=0 blockedStage=none")!=std::string::npos);
+
+    // A land-preferred retry must not erase the first query's failure.
+    reset(); action.last={}; config.navigationMaxAttempts=2;
+    replies={bad("unsafe-surface-normalization"),bad("path-body-obstructed")};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    row=logs.back().formatted;
+    assert(row.find("primaryReason=unsafe-surface-normalization")!=std::string::npos);
+    assert(row.find("lastStage=land-retry lastReason=path-body-obstructed")!=std::string::npos);
+
+    // A normal second leg that stops far from the goal is still rejected.
+    reset(); action.last={}; config.navigationMaxAttempts=3;
+    projected.points={{5,8,0},{6,8,0}};
+    replies={bad(),Route{},projected};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    assert(queries.size()==3 && navigation);
+    row=logs.back().formatted;
+    assert(row.find("reason=alternative-destination-not-reached")!=std::string::npos);
+    assert(row.find("lastStage=alternative-second")!=std::string::npos);
+    assert(row.find("queryFrom=(5,8,0) queryTo=(10,0,0)")!=std::string::npos);
+
+    // Latest obstruction is labelled with its own attempt and leg; primary
+    // reason must survive, and no stale obstruction may leak into another call.
+    reset(); action.last={}; config.navigationMaxAttempts=2;
+    replies={bad("navigation-query-node-limit"),blocked};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    row=logs.back().formatted;
+    assert(row.find("primaryReason=navigation-query-node-limit")!=std::string::npos);
+    assert(row.find("blockedAttempt=2 blockedStage=alternative-first")!=std::string::npos);
+    tick+=30000; replies={bad(),bad()};
+    assert(action.SearchForBestPath(10,0,0,navigation,true).empty());
+    assert(logs.back().formatted.find("blockedAttempt=0 blockedStage=none")!=std::string::npos);
+}
+void startMismatchDiagnosticsTests() {
+    reset(); config.navigationMaxAttempts=2;
+    Unit bot; MovementAction action{&bot}; bool navigation=false;
+    bot.position={927.1432f,1002.073f,-49.914406f}; bot.ground=-54.29065f;
+    bot.movementFlags=4096; bot.falling=true; bot.state=UNIT_STATE_CHARGING|UNIT_STATE_ROOT|UNIT_STATE_STUNNED;
+    Unit enemy; enemy.guidValue=155; bot.combat=true; bot.victim=&enemy;
+    AuraApplication effect,inactive; inactive.mask=0;
+    bot.appliedAuras={{123,&effect},{124,&inactive}};
+    bot.spline.falling=true; bot.spline.points={bot.position,{930,1000,-54}};
+    Route primary; primary.automatic=false;
+    primary.points={{bot.position.x,bot.position.y,bot.ground},{926.43085f,1006.68945f,-54.1566f}};
+    Route alternative=primary; alternative.points.front().z-=1;
+    replies={primary,alternative};
+    assert(action.SearchForBestPath(926.43085f,1006.68945f,-54.1566f,navigation,true).empty());
+    assert(queries.size()==2 && summaries()==2);
+    auto evidence=std::find_if(logs.begin(),logs.end(),[](Row const& row) {
+        return row.formatted.find("outcome=start-mismatch-state")!=std::string::npos;
+    });
+    assert(evidence!=logs.end());
+    auto const& row=evidence->formatted;
+    assert(row.find("attempt=1 stage=primary")!=std::string::npos);
+    assert(row.find("startOffset=4.376")!=std::string::npos);
+    assert(row.find("groundValid=1 groundDelta=4.376")!=std::string::npos);
+    assert(row.find("movementFlags=4096 falling=1 charging=1")!=std::string::npos);
+    assert(row.find("splineFalling=1 splineEnd=(930,1000,-54)")!=std::string::npos);
+    assert(row.find("combat=1 victim=155 rooted=1 stunned=1 lostControl=1")!=std::string::npos);
+    assert(row.find("auraCount=1 aurasOmitted=0 auras='123:3:2400:155'")!=std::string::npos);
+    assert(logs.back().formatted.find("reason=path-start-mismatch")!=std::string::npos);
+
+    // Diagnostic support sampling shares the warning throttle, never queries
+    // navigation, and never presents invalid terrain as a real height delta.
+    reset(); action.last={}; bot.heightSamples=0; bot.auraReads=0;
+    MovementAction::NavigationDiagnostics d;
+    d.mismatchAttempt=1; d.mismatchStage="primary";
+    d.mismatchFrom=bot.position; d.mismatchStart=primary.points.front();
+    action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+    assert(bot.heightSamples==1 && summaries()==2);
+    action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+    assert(bot.heightSamples==1 && bot.auraReads==1 && summaries()==2 && action.last.navigationLogSuppressed==1);
+    tick+=30000; bot.invalidHeight=true;
+    bot.appliedAuras.assign(33,{123,&effect});
+    action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+    assert(bot.heightSamples==2 && summaries()==4);
+    assert(logs[logs.size()-2].formatted.find("groundValid=0 groundDelta=0")!=std::string::npos);
+    auto const& capped=logs[logs.size()-2].formatted;
+    assert(capped.find("auraCount=33 aurasOmitted=1")!=std::string::npos);
+    assert(std::count(capped.begin()+capped.find("auras='"),capped.end(),':')==32*3);
+    tick+=30000;
+    action.LogNavigationResult("alternative-route","path-start-mismatch",1,3,0,0,0,false,&d);
+    assert(bot.heightSamples==2 && summaries()==5 && queries.empty());
+    assert(bot.auraReads==2);
+    tick+=30000; bot.appliedAuras.clear(); bot.combat=false; bot.victim=nullptr; bot.state=0;
+    action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+    auto const& cleared=logs[logs.size()-2].formatted;
+    assert(cleared.find("combat=0 victim=0 rooted=0 stunned=0 lostControl=0")!=std::string::npos);
+    assert(cleared.find("auraCount=0 aurasOmitted=0 auras=''")!=std::string::npos);
+}
+void activeSplineDiagnosticsTests() {
+    reset(); Unit bot; MovementAction action{&bot};
+    MovementAction::NavigationDiagnostics d; d.mismatchAttempt=1;
+    // Padding is logged for reconstruction, but is not a traversed segment.
+    bot.spline.points={{-999,0,0},{0,0,0},{2,0,0},{3,0,0},{999,0,0}};
+    bot.spline.firstIndex=1; bot.spline.lastIndex=3; bot.spline.index=2;
+    bot.position={2.5f,0,0}; bot.stopped=false;
+    action.last.groundMovement.active=true;
+    action.last.groundMovement.splineId=bot.spline.id;
+    auto emit=[&] {
+        tick+=30000;
+        bot.mapObject.rays.clear();
+        action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+        return logs[logs.size()-2].formatted;
+    };
+    auto row=emit();
+    assert(row.find("splineFirst=1 splineLast=3 splineCurrent=2 splinePointCount=5 splinePointsOmitted=0")!=std::string::npos);
+    assert(row.find("0:-999.000000,0.000000,0.000000;1:0.000000")!=std::string::npos);
+    assert(row.find("splineLosChecked=1 splineBodyHeight=1 splinePhase=1 splineLos='1:1;2:1' currentLinkLos=1")!=std::string::npos);
+    assert(bot.mapObject.rays.size()==3);
+    assert(same(bot.mapObject.rays[0].first,{0,0,1}));
+    assert(same(bot.mapObject.rays[1].second,{3,0,1}));
+    assert(same(bot.mapObject.rays[2].first,{2.5f,0,1}));
+    action.LogNavigationResult("rejected","path-start-mismatch",1,1,0,0,0,true,&d);
+    assert(bot.mapObject.rays.size()==3); // Shared throttle precedes all LOS work.
+    bot.mapObject.los=false; row=emit();
+    assert(row.find("splineLos='1:0;2:0' currentLinkLos=0")!=std::string::npos);
+    for (bool* excluded : {&bot.spline.finalized,&bot.spline.falling,&bot.spline.cyclic,
+                           &bot.spline.onTransport,&bot.transport,&bot.vehicle,&bot.flying}) {
+        *excluded=true; row=emit(); *excluded=false;
+        assert(bot.mapObject.rays.empty());
+        assert(row.find("splineLosChecked=0")!=std::string::npos);
+        assert(row.find("currentLinkLos=-1")!=std::string::npos);
+    }
+    bot.spline.splineMode=1; row=emit(); bot.spline.splineMode=0;
+    assert(bot.mapObject.rays.empty());
+    bot.spline.index=10; row=emit(); bot.spline.index=2;
+    assert(bot.mapObject.rays.empty());
+    ++action.last.groundMovement.splineId; row=emit();
+    assert(bot.mapObject.rays.empty());
+    action.last.groundMovement.splineId=bot.spline.id;
+    bot.spline.points.resize(257,{7,8,9}); row=emit();
+    assert(row.find("splinePointCount=257 splinePointsOmitted=1")!=std::string::npos);
+    assert(row.find("256:7.000000")==std::string::npos && bot.mapObject.rays.empty());
+    assert(row.size()<64*1024);
+    bot.spline.points.clear(); row=emit();
+    assert(row.find("splinePointCount=0 splinePointsOmitted=0 splinePoints=''")!=std::string::npos);
+    assert(bot.mapObject.rays.empty() && queries.empty());
+    assert(bot.spline.launches==0 && !bot.stopped);
+}
 void logTests() {
     reset(); Unit bot; MovementAction action{&bot};
     action.LogNavigationResult("alternative-route","no-path",8,3,100,0,0,false);
@@ -668,8 +1023,28 @@ void stuckTests() {
     assert(!state.exhausted && state.attempts==0 && same(state.goal,{200,0,0}));
     assert(hasLog("debug","ground-movement-started"));
 }
-int main() { connectionTests(); searchTests(); continuationTests(); logTests(); executionTests(); stuckTests(); }
+int main() { connectionTests(); searchTests(); continuationTests(); obstructionSearchTests(); endpointObstructionTests(); diagnosticTests(); startMismatchDiagnosticsTests(); activeSplineDiagnosticsTests(); logTests(); executionTests(); stuckTests(); }
 """
+production_only = "--production-only" in sys.argv[3:]
+if production_only:
+    # The published server omits the local evidence payload. Retain every
+    # routing/recovery test and skip only tests of that omitted payload.
+    source = source.replace(",NavigationDiagnostics const* =nullptr", "")
+    for name in ("diagnosticTests", "startMismatchDiagnosticsTests", "activeSplineDiagnosticsTests"):
+        begin = source.index("void " + name + "()")
+        end = source.index("{", begin) + 1
+        depth = 1
+        while depth:
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        source = source[:begin] + source[end:]
+        source = source.replace(name + "();", "")
+else:
+    source = source.replace("struct MovementAction {", "struct MovementAction {\n" + method(
+        "modules/mod_playerbots/src/strategy/actions/MovementActions.h", "struct NavigationDiagnostics") + ";")
+height_defines = (root / "src/server/game/Miscellaneous/SharedDefines.h").read_text()
+height_offset = re.search(r"constexpr float Z_OFFSET_FIND_HEIGHT = ([^;]+);", height_defines).group(1)
+source = source.replace("HEIGHT_SEARCH_OFFSET", height_offset)
 
 with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory:
     environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
@@ -698,10 +1073,20 @@ with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory
             assert original in source
             run(label, source.replace(original, unchecked, 1), True)
         for label, original, changed in (
+            ("double-height-offset", "GetMapHeight(point.x, point.y, point.z, true, 4.0f)",
+             "GetMapHeight(point.x, point.y, point.z + 2.0f, true, 4.0f)"),
+            ("lost-endpoint-detour", "if (aroundObstruction && horizontal <= 0.1f)", "if (false)"),
+            ("narrow-obstruction-ring", "((variant % 8) / 2)", "(variant / 8)"),
+            ("height-candidates-spend-budget", "aroundObstruction && !recoveryAttempt ? 32 : limit", "limit"),
+            ("lost-waypoint-reason", 'reason = "waypoint-not-reached";', 'reason = "none";'),
+            ("lost-obstruction-evidence", "diagnostics.blockedAttempt = attempts;", "diagnostics.blockedAttempt = 0;"),
+            ("lost-start-mismatch-evidence", "diagnostics.mismatchAttempt = attempts;", "diagnostics.mismatchAttempt = 0;"),
             ("normal-only-fallback", "if (normalOnly || bot->GetTransport())", "if (bot->GetTransport())"),
             ("lost-overlap", "constexpr float ReplanOverlap = 8.0f;", "constexpr float ReplanOverlap = 0.0f;"),
             ("swimming-excluded", "bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||",
              "bot->IsInWater() || bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||")):
+            if production_only and label in ("lost-waypoint-reason", "lost-obstruction-evidence", "lost-start-mismatch-evidence"):
+                continue
             assert original in source
             run(label, source.replace(original, changed, 1), True)
 print("Navigation alternatives, fallback, point-path execution and runtime stuck recovery passed", flush=True)

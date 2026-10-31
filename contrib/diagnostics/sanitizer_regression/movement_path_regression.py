@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Execute actual movement/path methods with controlled map and path doubles.
 
-Tests dispatch, endpoint bookkeeping and non-Unit safety, not Detour geometry
-or client movement. Those still require an in-game run.
+Tests dispatch, combat contact selection, endpoint bookkeeping and non-Unit
+safety, not Detour geometry or client movement. Those still require an in-game
+run. Use --verify-mutations to check the combat range/LOS/retry assertions.
 """
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -54,6 +56,8 @@ source = r"""
 using uint32 = std::uint32_t;
 using PathType = int;
 constexpr float INVALID_HEIGHT = -100000.0f;
+constexpr float CONTACT_DISTANCE = 0.5f;
+namespace VMAP { enum class ModelIgnoreFlags { Nothing }; }
 constexpr int UNIT_STATE_IGNORE_PATHFINDING = 1, UNIT_STAND_STATE_STAND = 0;
 constexpr int MOVE_RUN = 0, MOVE_RUN_BACK = 1;
 constexpr int MAP_ALL_LIQUIDS = 15, MAP_LIQUID_STATUS_IN_CONTACT = 1;
@@ -77,9 +81,12 @@ bool IsValidMapCoord(float x, float y, float z) {
 }
 }
 struct Position {
-    Position(float, float, float, float) {}
+    G3D::Vector3 point;
+    Position(float x, float y, float z, float = 0) : point{x,y,z} {}
+    void GetPosition(float& x, float& y, float& z) const { x=point.x; y=point.y; z=point.z; }
     float GetExactDist2d(float, float) const { return 100; }
 };
+struct Guid { uint32 value; uint32 GetCounter() const { return value; } };
 struct Unit;
 struct Vehicle;
 struct WorldObject {
@@ -90,6 +97,10 @@ struct WorldObject {
     void GetPosition(float& x, float& y, float& z) const {
         x = position.x; y = position.y; z = position.z;
     }
+    Position GetPosition() const { return {position.x,position.y,position.z}; }
+    float GetPositionX() const { return position.x; }
+    float GetPositionY() const { return position.y; }
+    float GetPositionZ() const { return position.z; }
     void UpdateAllowedPositionZ(float, float, float& z) const { z = 5; }
     uint32 GetMapId() const { return 1; }
 };
@@ -110,6 +121,10 @@ struct MotionMaster {
 };
 struct Map {
     bool liquid = false;
+    float blockedX = std::numeric_limits<float>::quiet_NaN();
+    bool isInLineOfSight(float x,float,float,float,float,float,uint32,VMAP::ModelIgnoreFlags) const {
+        return !(std::fabs(x-blockedX)<0.01f);
+    }
     int GetLiquidStatus(uint32, float, float, float, int, void*, float) const {
         return liquid ? MAP_LIQUID_STATUS_IN_CONTACT : 0;
     }
@@ -117,10 +132,26 @@ struct Map {
 struct Unit : WorldObject {
     bool VisualizePathfinding = false, ignorePath = false;
     bool flying = false, water = false, sitting = false, battleground = false;
+    bool los = true, reposition = false;
+    uint32 guid = 1;
+    float nearPointZ = std::numeric_limits<float>::quiet_NaN();
+    Position repositionPoint{0,0,0};
     Vehicle* vehicle = nullptr;
     MotionMaster motion;
     Map map;
     Unit() { unit = this; }
+    Guid GetGUID() const { return {guid}; }
+    float GetCombatReach() const { return 1.5f; }
+    bool IsWithinLOSInMap(Unit*) const { return los; }
+    bool GetMeleeRepositionPoint(Unit*,Position& point) const {
+        if (reposition) point=repositionPoint;
+        return reposition;
+    }
+    void GetNearPoint(Unit* bot,float& x,float& y,float& z,float distance,float angle) const {
+        float radius=GetCombatReach()+bot->GetCombatReach()+distance;
+        x=position.x+radius*std::cos(angle); y=position.y+radius*std::sin(angle);
+        z=std::isfinite(nearPointZ) ? nearPointZ : position.z;
+    }
     bool HasUnitState(int) const { return ignorePath; }
     bool IsFlying() const { return flying; }
     bool CanFly() const { return flying; }
@@ -163,6 +194,7 @@ struct LastMovement {
 };
 struct Config {
     int disableMoveSplinePath = 0, maxMovementSearchTime = 3, maxWaitForMove = 5000;
+    float meleeDistance = 0.75f;
 } config;
 Config* sPlayerbotAIConfig = &config;
 struct BotAI { int GetReactDelay() const { return 100; } } ai;
@@ -171,20 +203,28 @@ struct MovementAction {
     BotAI* botAI = &ai;
     LastMovement last;
     Movement::PointsArray path = {{0,0,0}, {30,0,4}};
+    std::vector<Movement::PointsArray> scriptedPaths;
+    std::vector<G3D::Vector3> queries;
     float height = 4;
     bool allowed = true, duplicate = false, waiting = false, recoveryAllowed = true;
     bool lastGeneratePath = false, lastNormalOnly = false;
 """ + failure_fields + r"""
-    bool MoveTo(uint32,float,float,float,bool,bool,bool,bool,MovementPriority,bool,bool);
+    bool MoveTo(uint32,float,float,float,bool,bool,bool,bool,MovementPriority,bool,bool=false);
+    bool ReachCombatTo(Unit*,float);
     void UpdateMovementState() {}
     bool IsMovingAllowed(uint32,float,float,float) const { return allowed; }
+    bool IsMovingAllowed(Unit* target) const { return allowed && target; }
     bool IsDuplicateMove(uint32,float,float,float) const { return duplicate; }
     bool IsWaitingForLastMove(MovementPriority) const { return waiting; }
     bool CanStartGroundMovement(float,float,float) const { return recoveryAllowed; }
     void TrackGroundMovement(float,float,float,bool,bool) {}
     float MoveDelay(float distance, bool) const { return distance / 10; }
-    Movement::PointsArray SearchForBestPath(float,float,float,bool& generate,bool normal) {
+    Movement::PointsArray SearchForBestPath(float x,float y,float z,bool& generate,bool normal) {
         lastGeneratePath=generate;lastNormalOnly=normal;
+        queries.push_back({x,y,z});
+        if (!scriptedPaths.empty()) {
+            auto result=scriptedPaths.front(); scriptedPaths.erase(scriptedPaths.begin()); return result;
+        }
         return path;
     }
     void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool) {}
@@ -209,7 +249,7 @@ struct PathGenerator {
     void VisualizePath(int) { ++visualized; }
     void VisualizeNavmesh(int) { ++visualized; }
 };
-""" + move + "\n" + calculate + r"""
+""" + move + "\n" + calculate + "\n" + reach_combat + r"""
 bool same(G3D::Vector3 const& a, G3D::Vector3 const& b) {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }
@@ -354,9 +394,97 @@ void pathTests() {
         assert(std::string(missing._failureReason) == (enabled ? "missing-navmesh" : "pathfinding-disabled"));
     }
 }
+void combatTests() {
+    // Actual 8h-soak coordinates: the deterministic GUID lane is only 4.5cm
+    // from the bot, but its terrain height leaves the opponent 5.85m away.
+    // The old code repeatedly requested this lane until the match ended.
+    {
+        Unit bot,target; bot.battleground=true;
+        bot.guid=70; target.guid=169;
+        bot.position={1132.7568f,1216.7504f,-56.712738f};
+        target.position={1136.0001f,1218.1334f,-52.00786f};
+        target.nearPointZ=-56.69769f;
+        MovementAction action{&bot};
+        G3D::Vector3 reachable{1135.0f,1218.0f,-53.0f};
+        action.scriptedPaths={{bot.position,reachable,target.position},{bot.position,reachable}};
+        assert(action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.size()==2 && same(action.queries[0],target.position));
+        assert(same(bot.motion.destination,reachable) && bot.motion.generated);
+    }
+    // Preferred lane can look in range before projection but yield no path,
+    // as in same-XY height-only rejections. Or its real endpoint may be out
+    // of combat range/LOS. Each gets exactly one checked target-corridor retry.
+    for (int failure=0;failure<3;++failure) {
+        Unit bot,target; bot.battleground=true; target.position={6,0,0};
+        target.reposition=true; target.repositionPoint={3,0,0};
+        MovementAction action{&bot};
+        Movement::PointsArray preferred;
+        if (failure==1) preferred={bot.position,{1,0,0}};
+        if (failure==2) {
+            preferred={bot.position,{3,1,0}};
+            // Block only the projected endpoint, not the proposed candidate.
+            bot.map.blockedX=3.1f; preferred.back().x=3.1f;
+        }
+        action.scriptedPaths={preferred,{bot.position,{4,0,0},target.position},
+            {bot.position,{4,0,0}}};
+        assert(action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.size()==3 && same(action.queries[1],target.position));
+        assert(same(bot.motion.destination,{4,0,0}) && bot.motion.generated);
+        assert(action.lastNormalOnly);
+    }
+    // A blocked preferred contact point must be rejected before pathfinding.
+    {
+        Unit bot,target; bot.battleground=true; target.position={6,0,0};
+        target.reposition=true; target.repositionPoint={3,0,0}; bot.map.blockedX=3;
+        MovementAction action{&bot};
+        action.scriptedPaths={{bot.position,{4,0,0},target.position},{bot.position,{4,0,0}}};
+        assert(action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.size()==2 && same(action.queries.front(),target.position));
+    }
+    // Both routes blocked: no movement, no direct fallback, no endless retry.
+    {
+        Unit bot,target; bot.battleground=true; target.position={6,0,0};
+        target.reposition=true; target.repositionPoint={3,0,0};
+        MovementAction action{&bot}; action.scriptedPaths={{},{}};
+        assert(!action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.size()==2 && !bot.motion.moves && !bot.motion.cleared);
+        assert(action.lastNormalOnly);
+    }
+    // Preserve a good contact reservation and partial target corridors.
+    for (bool partial : {false,true}) {
+        Unit bot,target; bot.battleground=true; target.position={6,0,0};
+        target.reposition=true; target.repositionPoint={3,0,0};
+        MovementAction action{&bot};
+        if (partial) action.scriptedPaths={{},{bot.position,{1,0,0}},{bot.position,{1,0,0}}};
+        else action.scriptedPaths={{bot.position,{3,0,0}},{bot.position,{3,0,0}}};
+        assert(action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.size()==(partial?3:2));
+        assert(same(bot.motion.destination,{partial?1.0f:3.0f,0,0}));
+    }
+    // Ranged approach must not stop at an in-range vertex behind a wall.
+    {
+        Unit bot,target; bot.battleground=true; target.position={12,0,0};
+        bot.map.blockedX=6;
+        MovementAction action{&bot};
+        action.scriptedPaths={{bot.position,{6,0,0},{7,0,0},target.position},{bot.position,{7,0,0}}};
+        assert(action.ReachCombatTo(&target,5));
+        assert(same(bot.motion.destination,{7,0,0}));
+    }
+    // Already in range, absent target and movement restrictions need no query.
+    {
+        Unit bot,target; target.position={2,0,0};
+        MovementAction action{&bot};
+        assert(!action.ReachCombatTo(&target,config.meleeDistance));
+        assert(!action.ReachCombatTo(nullptr,config.meleeDistance));
+        action.allowed=false; target.position={20,0,0};
+        assert(!action.ReachCombatTo(&target,config.meleeDistance));
+        assert(action.queries.empty() && !bot.motion.moves);
+    }
+}
 int main(int argc, char** argv) {
     assert(argc == 2);
     if (std::string(argv[1]) == "movement") movementTests();
+    else if (std::string(argv[1]) == "combat") combatTests();
     else pathTests();
 }
 """
@@ -369,6 +497,24 @@ with tempfile.TemporaryDirectory(prefix="loa-movement-path-regression-") as dire
          "-o", str(binary)], input=source, text=True, check=True,
     )
     results = [subprocess.run([str(binary), scenario]).returncode
-               for scenario in ("movement", "path")]
-    assert results == [0, 0], f"movement/path scenarios failed: {results}"
-print("Movement endpoint and non-Unit path regression passed", flush=True)
+               for scenario in ("movement", "path", "combat")]
+    assert results == [0, 0, 0], f"movement/path/combat scenarios failed: {results}"
+    if "--verify-mutations" in sys.argv[3:]:
+        mutations = (
+            ("unchecked-contact", "if (contactPoint && !canReachTargetFrom({tx, ty, tz}, distance))", "if (false)"),
+            ("no-target-corridor-retry", "if (contactPoint && (path.size() < 2 || !canReachTargetFrom(path.back(), distance)))", "if (false)"),
+            ("unchecked-combat-los", "bot->GetMap()->isInLineOfSight(point.x, point.y, point.z + bot->GetCollisionHeight(),\n"
+             "                targetPosition.x, targetPosition.y, targetPosition.z + target->GetCollisionHeight(),\n"
+             "                bot->GetPhaseMask(), VMAP::ModelIgnoreFlags::Nothing)", "true"),
+        )
+        environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
+                           UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
+        for label, original, changed in mutations:
+            assert source.count(original) == 1, label
+            subprocess.run([compiler, "-x", "c++", "-std=c++20", "-O1", "-g",
+                            "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-", "-o", str(binary)],
+                           input=source.replace(original, changed, 1), text=True, check=True)
+            result = subprocess.run([str(binary), "combat"], env=environment, text=True, capture_output=True)
+            assert result.returncode != 0 and "Assertion" in result.stderr, (label, result.stderr)
+            print(f"Mutation {label}: rejected by assertion", flush=True)
+print("Movement endpoint, combat approach and non-Unit path regression passed", flush=True)
