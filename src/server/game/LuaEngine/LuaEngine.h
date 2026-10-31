@@ -563,9 +563,6 @@ class Eluna
 
         ~Eluna()
         {
-            if (!L)
-                return;
-
             for (std::map<int, std::vector<int> >::iterator itr = ServerEventBindings.begin(); itr != ServerEventBindings.end(); ++itr)
             {
                 for (std::vector<int>::iterator it = itr->second.begin(); it != itr->second.end(); ++it)
@@ -613,7 +610,8 @@ class Eluna
             ItemGossipBindings->Clear();
             playerGossipBindings->Clear();
 
-            lua_close(L); // Closing
+            if (L)
+                lua_close(L); // Closing (there is no state when Eluna.Enabled = 0)
         }
 
         struct ElunaBind

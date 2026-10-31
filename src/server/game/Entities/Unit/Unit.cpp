@@ -11901,7 +11901,7 @@ void Unit::SetInCombatState(bool PvP, Unit* enemy)
         {
             if (IsAIEnabled)
             {
-                creature->AI()->JustEngagedWith(enemy);
+                creature->AI()->EngageFromCombatState(enemy);
 
                 if (creature->GetEntry() != 69427 && creature->GetEntry() != 69701 && creature->GetEntry() != 69700 && creature->GetEntry() != 69699 && creature->GetEntry() != 72249 && creature->GetEntry() != 71742 && creature->GetEntry() != 71749 && creature->GetEntry() != 71763)
                     RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PC); // unit has engaged in combat, remove immunity so players can fight back
@@ -15121,7 +15121,7 @@ void Unit::ClearComboPointHolders()
         ObjectGuid guid = *m_comboPointHolders.begin();
 
         Player* player = ObjectAccessor::FindPlayer(guid);
-        if (player && player->GetComboTarget() && player->GetComboTarget()->GetGUID() == GetGUID())     // recheck for safe
+        if (player && player->GetComboTargetGUID() == GetGUID())   // By GUID, the pointer may dangle     // recheck for safe
             player->ClearComboPoints();                                                                 // remove also guid from m_ComboPointHolders;
         else
             m_comboPointHolders.erase(guid);                                                            // or remove manually
