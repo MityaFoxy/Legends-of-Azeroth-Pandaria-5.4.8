@@ -35,7 +35,8 @@ def method(path, signature):
 
 action_path = "modules/mod_playerbots/src/strategy/actions/MovementActions.cpp"
 point_path = "src/server/game/Movement/MovementGenerators/PointMovementGenerator.cpp"
-methods = [method(action_path, signature) for signature in (
+methods = [method(action_path, "bool IsNavigationEndpointReached(")]
+methods += [method(action_path, signature) for signature in (
     "bool MovementAction::ValidateWaterConnection(", "bool MovementAction::ValidateGroundConnection(",
     "void MovementAction::LogNavigationResult(", "Movement::PointsArray MovementAction::SearchForBestPath(",
     "bool MovementAction::CanStartGroundMovement(", "void MovementAction::TrackGroundMovement(",
@@ -438,6 +439,13 @@ void searchTests() {
     replies={Route{}};
     auto path=action.SearchForBestPath(100,0,0,navigation);
     assert(queries.size()==1 && navigation && same(path.back(),{100,0,0}) && summaries()==0);
+
+    // Match PathGenerator's endpoint contract: horizontal and vertical
+    // tolerances are independent, not a stricter one-metre 3D sphere.
+    reset(); action.last={}; Route projectedComplete; projectedComplete.automatic=false;
+    projectedComplete.points={{0,0,0},{99.1f,0,0.9f}}; replies={projectedComplete};
+    path=action.SearchForBestPath(100,0,0,navigation);
+    assert(queries.size()==1 && navigation && same(path.back(),{99.1f,0,0.9f}) && summaries()==0);
 
     // Primary and first complete detour fail; the opposite two-leg detour succeeds.
     reset(); action.last={}; replies={bad(),Route{},bad(),Route{},Route{}};
@@ -936,6 +944,8 @@ void stuckTests() {
     assert(!state.recovering && hasLog("info","stuck-progress-restored"));
     bot.position={100,0,0}; wait(1);
     assert(!state.active && hasLog("info","stuck-goal-reached"));
+    start(); bot.position={99.1f,0,0.9f}; state.attempts=1; wait(1);
+    assert(!state.active && hasLog("info","stuck-goal-reached"));
 
     // Forced-control states and casts reset, rather than accumulate, idle time.
     for (int flag : {UNIT_STATE_ROOT,UNIT_STATE_STUNNED}) {
@@ -1073,6 +1083,9 @@ with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory
             assert original in source
             run(label, source.replace(original, unchecked, 1), True)
         for label, original, changed in (
+            ("strict-3d-endpoint",
+             "return delta.x * delta.x + delta.y * delta.y < 1.0f && std::fabs(delta.z) < 1.0f;",
+             "return delta.x * delta.x + delta.y * delta.y + delta.z * delta.z < 1.0f;"),
             ("double-height-offset", "GetMapHeight(point.x, point.y, point.z, true, 4.0f)",
              "GetMapHeight(point.x, point.y, point.z + 2.0f, true, 4.0f)"),
             ("lost-endpoint-detour", "if (aroundObstruction && horizontal <= 0.1f)", "if (false)"),

@@ -44,6 +44,15 @@
 #include "WaypointMovementGenerator.h"
 #include "Corpse.h"
 
+namespace
+{
+bool IsNavigationEndpointReached(G3D::Vector3 const& actual, G3D::Vector3 const& expected)
+{
+    G3D::Vector3 const delta = actual - expected;
+    return delta.x * delta.x + delta.y * delta.y < 1.0f && std::fabs(delta.z) < 1.0f;
+}
+}
+
 MovementAction::MovementAction(PlayerbotAI* botAI, std::string const name) : Action(botAI, name)
 {
     bot = botAI->GetBot();
@@ -949,7 +958,7 @@ void MovementAction::CheckStuck(uint32 elapsed)
         state.idleMs = 0;
         return;
     }
-    if ((position - state.goal).length() <= 1.0f)
+    if (IsNavigationEndpointReached(position, state.goal))
     {
         if (state.attempts)
             LogStuckResult("stuck-goal-reached", state.attempts, false);
@@ -1251,10 +1260,10 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             return {};
         }
         bool const bridgedComplete = startBridge && !(type & PATHFIND_FARFROMPOLY_END)
-            && (points.back() - to).length() <= 1.0f;
+            && IsNavigationEndpointReached(points.back(), to);
         if (completeOnly && (((type & PATHFIND_INCOMPLETE) && !bridgedComplete)
             || (type & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END)) ||
-            (points.back() - to).length() > 1.0f))
+            !IsNavigationEndpointReached(points.back(), to)))
         {
             if (std::string(reason) == "none")
                 reason = "destination-not-reached";
@@ -1264,19 +1273,19 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     };
 
     Movement::PointsArray partial = query(start, destination, false, "primary");
-    diagnostics.primaryReason = !partial.empty() && (partial.back() - destination).length() > 1.0f
+    diagnostics.primaryReason = !partial.empty() && !IsNavigationEndpointReached(partial.back(), destination)
         && std::string(reason) == "none" ? "destination-not-reached" : reason;
     diagnostics.primaryType = lastType;
     if (partial.empty() && avoidLiquids && attempts < limit)
         partial = query(start, destination, false, "land-retry");
     uint32 const primaryType = lastType;
     bool const primaryStartBridge = startBridge;
-    if (!partial.empty() && (partial.back() - destination).length() > 1.0f && std::string(reason) == "none")
+    if (!partial.empty() && !IsNavigationEndpointReached(partial.back(), destination) && std::string(reason) == "none")
         reason = "destination-not-reached";
     char const* const primaryReason = reason;
     bool const primaryComplete = !partial.empty() && !(primaryType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
         && (!(primaryType & PATHFIND_INCOMPLETE) || primaryStartBridge)
-        && (partial.back() - destination).length() <= 1.0f;
+        && IsNavigationEndpointReached(partial.back(), destination);
     if (!recoveryAttempt && primaryComplete)
     {
         detour.continuation.clear();
@@ -1319,7 +1328,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                 continue;
             bool const continuationComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
                 && (!(lastType & PATHFIND_INCOMPLETE) || startBridge)
-                && (continuation.back() - destination).length() <= 1.0f;
+                && IsNavigationEndpointReached(continuation.back(), destination);
             if (!continuationComplete && !(lastType & PATHFIND_SHORT))
             {
                 if (std::string(reason) == "none")
@@ -1435,7 +1444,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             // A waypoint selected from ground height can be below the water
             // surface corridor. Accept that vertical adjustment only inside
             // a continuous, unobstructed liquid volume at the same XY.
-            bool const reachedWaypoint = (first.back() - waypoint).length() <= 1.0f
+            bool const reachedWaypoint = IsNavigationEndpointReached(first.back(), waypoint)
                 || (std::hypot(first.back().x - wx, first.back().y - wy) <= 1.0f
                     && ValidateWaterConnection(waypoint, first.back()));
             if ((lastType & (PATHFIND_INCOMPLETE | PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
@@ -1473,7 +1482,7 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
                 continue;
             bool const secondComplete = !(lastType & (PATHFIND_SHORT | PATHFIND_FARFROMPOLY_END))
                 && (!(lastType & PATHFIND_INCOMPLETE) || startBridge)
-                && (second.back() - destination).length() <= 1.0f;
+                && IsNavigationEndpointReached(second.back(), destination);
             // Only an explicitly bounded, validated prefix is a usable
             // truncated second leg; a mesh-hole corridor is not a detour.
             if (!secondComplete && !(lastType & PATHFIND_SHORT))
