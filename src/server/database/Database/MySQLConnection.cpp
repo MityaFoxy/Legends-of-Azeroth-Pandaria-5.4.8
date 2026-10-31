@@ -30,6 +30,7 @@
 #include <errmsg.h>
 #include "MySQLWorkaround.h"
 #include <mysqld_error.h>
+#include <string_view>
 
 MySQLConnectionInfo::MySQLConnectionInfo(std::string const& infoString)
 {
@@ -149,6 +150,15 @@ uint32 MySQLConnection::Open()
 
     if (m_Mysql)
     {
+        char const* serverInfo = mysql_get_server_info(m_Mysql);
+        if (serverInfo && std::string_view(serverInfo).find("MariaDB") != std::string_view::npos)
+        {
+            TC_LOG_ERROR("sql.driver", "MariaDB servers are not supported; please use MySQL 5.7 or newer");
+            mysql_close(m_Mysql);
+            m_Mysql = nullptr;
+            return 1;
+        }
+
         if (!m_reconnecting)
         {
             TC_LOG_INFO("sql.sql", "MySQL client library: {}", mysql_get_client_info());
