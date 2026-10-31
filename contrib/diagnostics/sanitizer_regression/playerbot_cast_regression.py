@@ -48,6 +48,7 @@ assert "if (!strict && m_casttime == 0)" in check_range
 unit_cast = method(ai, "bool PlayerbotAI::CastSpell(uint32 spellId, Unit*")
 position_cast = method(ai, "bool PlayerbotAI::CastSpell(uint32 spellId, float")
 named_cast = method(ai, "bool PlayerbotAI::CastSpell(std::string const name,")
+actionbar_override = method(ai, "uint32 PlayerbotAI::GetActionbarOverride(")
 send_result = method(core, "void Spell::SendCastResult(SpellCastResult result)")
 event_class = header[header.index("class SpellEvent :"):header.index("class MissileData")]
 events = "\n".join(method(core, signature) for signature in (
@@ -75,17 +76,28 @@ enum SpellCastResult { SPELL_CAST_OK, SPELL_FAILED_OUT_OF_RANGE,
     SPELL_FAILED_SPELL_UNAVAILABLE };
 enum { TRIGGERED_NONE, UNIT_STATE_IN_FLIGHT, UNIT_STAND_STATE_STAND,
     SPELL_EFFECT_OPEN_LOCK = 20, SPELL_EFFECT_SKINNING,
-    TYPEID_PLAYER, TYPEID_UNIT, SMSG_CAST_FAILED };
+    TYPEID_PLAYER, TYPEID_UNIT, SMSG_CAST_FAILED,
+    SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS,
+    SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS_2 };
 constexpr uint32 TARGET_FLAG_ITEM=1, TARGET_FLAG_DEST_LOCATION=2,
     TARGET_FLAG_SOURCE_LOCATION=4, SPELL_FACING_FLAG_INFRONT=1;
 constexpr float CAST_ANGLE_IN_FRONT=1;
 enum { SPELL_STATE_PREPARING, SPELL_STATE_FINISHED, SPELL_STATE_DELAYED };
 struct Item {};
 struct Effect { int Effect=0; };
-struct SpellInfo { uint32 Id=42, Targets=0, FacingCasterFlags=0; ::Effect Effects[1]; };
+struct SpellInfo {
+    uint32 Id=42, Targets=0, FacingCasterFlags=0;
+    ::Effect Effects[1];
+    std::vector<uint32> OverrideSpellList;
+};
 struct SpellManager {
     SpellInfo info;
-    SpellInfo const* GetSpellInfo(uint32 id) { return id == info.Id ? &info : nullptr; }
+    std::map<uint32, SpellInfo> overrides;
+    SpellInfo const* GetSpellInfo(uint32 id) {
+        if (id == info.Id) return &info;
+        auto itr = overrides.find(id);
+        return itr == overrides.end() ? nullptr : &itr->second;
+    }
 } manager;
 auto sSpellMgr = &manager;
 struct Config { int reactDelay=100, globalCoolDown=1500; } config;
@@ -98,18 +110,35 @@ struct Pet {
     bool HasSpell(uint32) const { return known; }
     void ToggleAutocast(SpellInfo const*, bool) { toggled=true; }
 };
+struct AuraEffect {
+    uint32 affectedSpell=0, amount=0;
+    bool IsAffectingSpell(SpellInfo const* info) const {
+        return info && info->Id == affectedSpell;
+    }
+    uint32 GetAmount() const { return amount; }
+};
 ''' + without_includes((root / "src/common/Utilities/EventProcessor.h").read_text()) + r'''
 struct WorldObject {};
 struct Unit : WorldObject {
+    using AuraEffectList = std::vector<AuraEffect const*>;
     ObjectGuid guid=7, selected=99;
     bool moving=false, flying=false, standing=true, trade=false, player=true;
     Pet* pet=nullptr;
+    std::vector<uint32> knownSpells;
+    AuraEffectList actionbarOverrides, secondaryActionbarOverrides;
     Session session;
     MotionMaster motion;
     EventProcessor m_Events;
     ObjectGuid GetGUID() const { return guid; }
     std::string GetName() const { return "test"; }
     Pet* GetPet() { return pet; }
+    bool HasSpell(uint32 id) const {
+        return std::find(knownSpells.begin(), knownSpells.end(), id) != knownSpells.end();
+    }
+    AuraEffectList const& GetAuraEffectsByType(int type) const {
+        return type == SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS
+            ? actionbarOverrides : secondaryActionbarOverrides;
+    }
     bool IsFlying() const { return flying; }
     bool HasUnitState(int) const { return false; }
     bool IsStandState() const { return standing; }
@@ -165,6 +194,7 @@ struct Spell;
 ''' + event_class + r'''
 struct Spell {
     static inline int created=0, destroyed=0, cancelled=0, prepared=0, rechecks=0, packets=0;
+    static inline uint32 lastInfo=0;
     static inline SpellCastResult outcome=SPELL_CAST_OK;
     static inline uint32 initialCastTime=0;
     static inline bool pending=false, deletable=true;
@@ -173,7 +203,9 @@ struct Spell {
     Item* m_CastItem=nullptr;
     int m_cast_count=0, m_customError=0, state=SPELL_STATE_PREPARING;
     SpellCastResult m_castResult=SPELL_CAST_OK;
-    Spell(Unit* caster, SpellInfo const* info, int):m_caster(caster),m_spellInfo(info) { ++created; }
+    Spell(Unit* caster, SpellInfo const* info, int):m_caster(caster),m_spellInfo(info) {
+        ++created; lastInfo=info->Id;
+    }
     ~Spell() { ++destroyed; }
     uint32 GetCastTime() const { return initialCastTime; }
     void cancel() { ++cancelled; state=SPELL_STATE_FINISHED; }
@@ -202,6 +234,7 @@ struct PlayerbotAI {
     Context* _aiObjectContext=&context;
     int delay=0;
     void SetNextCheckDelay(int value) { delay=value; }
+    uint32 GetActionbarOverride(uint32) const;
     bool CastSpell(uint32, Unit*, Item* = nullptr);
     bool CastSpell(uint32, float, float, float, Item* = nullptr);
     bool CastSpell(std::string const, Unit*, Item* = nullptr);
@@ -213,9 +246,10 @@ void reset()
 {
     assert(Spell::created == Spell::destroyed);
     Spell::created=Spell::destroyed=Spell::cancelled=Spell::prepared=Spell::rechecks=Spell::packets=0;
+    Spell::lastInfo=0;
     Spell::outcome=SPELL_CAST_OK; Spell::initialCastTime=0;
     Spell::pending=false; Spell::deletable=true;
-    manager.info=SpellInfo{};
+    manager.info=SpellInfo{}; manager.overrides.clear();
 }
 bool cast(PlayerbotAI& ai, Unit& target, int variant)
 {
@@ -327,6 +361,42 @@ int main()
         bot.m_Events.Update(1);
         assert(Spell::destroyed == 1);
     }
+    // Execute the production action-bar resolution used by unit casts.
+    reset();
+    {
+        Unit bot, target;
+        PlayerbotAI ai{&bot};
+        manager.info.OverrideSpellList={84};
+        manager.overrides[84].Id=84;
+        bot.knownSpells={84};
+        assert(ai.CastSpell(42,&target));
+        assert(Spell::lastInfo == 84);
+        bot.m_Events.Update(1);
+        assert(Spell::destroyed == 1);
+    }
+    reset();
+    {
+        Unit bot, target;
+        PlayerbotAI ai{&bot};
+        manager.overrides[126].Id=126;
+        AuraEffect overrideAura{42,126};
+        bot.secondaryActionbarOverrides={&overrideAura};
+        assert(ai.CastSpell(42,&target));
+        assert(Spell::lastInfo == 126);
+        bot.m_Events.Update(1);
+        assert(Spell::destroyed == 1);
+    }
+    reset();
+    {
+        Unit bot, target;
+        PlayerbotAI ai{&bot};
+        Pet pet; pet.known=true; pet.m_autospells={42}; bot.pet=&pet;
+        manager.info.OverrideSpellList={84};
+        manager.overrides[84].Id=84;
+        bot.knownSpells={84};
+        assert(ai.CastSpell(42,&target));
+        assert(pet.toggled && Spell::created == 0 && Spell::lastInfo == 0);
+    }
     reset();
 }
 '''
@@ -336,7 +406,7 @@ environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1:detect_leaks=1",
 with tempfile.TemporaryDirectory(prefix="loa-playerbot-cast-") as directory:
     def run(label, unit, position, result_body, expected_failure=None):
         binary = Path(directory) / label
-        source = prefix + result_body + unit + position + named_cast + tests
+        source = prefix + result_body + actionbar_override + unit + position + named_cast + tests
         subprocess.run([compiler, "-x", "c++", "-std=c++20", "-g", "-O1",
                         "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                         "-", "-o", str(binary)], input=source, text=True, check=True)
