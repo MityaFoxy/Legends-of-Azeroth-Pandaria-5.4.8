@@ -1,4 +1,5 @@
 #include "RandomPlayerbotBracketMgr.h"
+#include "BattlegroundTestController.h"
 
 #include "Helper.h"
 #include "PlayerbotSpec.h"
@@ -106,6 +107,10 @@ void RandomBotBacketManager::AdjustBotToRange(Player* bot, int targetRangeIndex,
 
 void RandomBotBacketManager::Update(uint32 diff)
 {
+    // A fixed-level diagnostic roster must not be scattered over 18 queues.
+    if (BattlegroundTest::GetTargetLevel())
+        return;
+
     _timer += diff;
     if (_timer < (_BotDistCheckFrequency * 1000))
         return;

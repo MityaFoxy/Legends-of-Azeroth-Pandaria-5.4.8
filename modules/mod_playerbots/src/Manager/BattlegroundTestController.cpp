@@ -118,6 +118,14 @@ namespace
     bool RepairQueueReadiness(Player* bot, State& state, uint32 now, uint32& repairBudget)
     {
         uint32 targetLevel = sRandomPlayerbotMgr->GetValue(bot, "level");
+        bool pendingRandomization = sRandomPlayerbotMgr->HasPendingRandomization(bot);
+        uint8 testLevel = BattlegroundTest::GetTargetLevel();
+        if (testLevel && (pendingRandomization ? targetLevel != testLevel : bot->GetLevel() != testLevel))
+        {
+            sRandomPlayerbotMgr->TagForRandomize(bot, testLevel);
+            targetLevel = testLevel;
+        }
+
         uint32 equipped = EquippedCombatItems(bot);
         QueueReadinessIssue issue = QueueReadinessIssue::None;
         if (sRandomPlayerbotMgr->HasPendingRandomization(bot))
@@ -322,6 +330,16 @@ namespace
             bot->GetSession()->HandleAreaSpiritHealerQueueOpcode(packet);
         }
     }
+}
+
+uint8 BattlegroundTest::GetTargetLevel()
+{
+    if (!sPlayerbotAIConfig->battlegroundTest
+        || sPlayerbotAIConfig->randomBotMinLevel != sPlayerbotAIConfig->randomBotMaxLevel)
+        return 0;
+
+    uint32 level = sPlayerbotAIConfig->randomBotMinLevel;
+    return level >= 10 && level <= DEFAULT_MAX_LEVEL ? uint8(level) : 0;
 }
 
 void BattlegroundTest::Update(uint32 diff)

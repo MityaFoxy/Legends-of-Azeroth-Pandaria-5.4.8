@@ -781,7 +781,11 @@ AiPlayerbot.RandomBotAutoJoinBG = 0
 # navigate to existing nodes, use banners with normal capture casts, fight through
 # their existing class AI, resurrect in normal spirit-guide waves, and leave/requeue
 # only after the core completes the match. All level/team/capacity/deserter rules apply.
-# Does NOT change character levels, factions, equipment, BG rules or rewards.
+# Equal RandomBotMinLevel/RandomBotMaxLevel (10..90) prepares unowned random
+# bots at that level via normal randomization and equipment readiness before queueing.
+# The ordinary bracket distributor is suspended in that fixed-level test mode.
+# Different min/max levels retain the ordinary distribution. Real players and
+# player-owned bots are excluded; factions, BG rules and rewards are unchanged.
 # State transitions and 60-second snapshots: logger playerbots.bgtest (INFO).
 AiPlayerbot.BattlegroundTest = 0
 
