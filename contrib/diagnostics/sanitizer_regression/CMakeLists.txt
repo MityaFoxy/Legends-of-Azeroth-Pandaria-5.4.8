@@ -9,11 +9,39 @@ target_include_directories(sanitizer_regression PRIVATE
 target_compile_options(sanitizer_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
 target_link_options(sanitizer_regression PRIVATE -fsanitize=address,undefined)
 enable_testing()
+find_package(OpenSSL REQUIRED)
+add_executable(bignumber_ownership_regression bignumber_ownership_regression.cpp)
+target_include_directories(bignumber_ownership_regression PRIVATE ${LOA_SOURCE_DIR}/src/common)
+target_link_libraries(bignumber_ownership_regression PRIVATE OpenSSL::Crypto)
+target_compile_options(bignumber_ownership_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_link_options(bignumber_ownership_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME bignumber_ownership_regression COMMAND bignumber_ownership_regression)
+find_package(ZLIB REQUIRED)
+add_library(zlib ALIAS ZLIB::ZLIB)
+add_subdirectory(${LOA_SOURCE_DIR}/dep/g3dlite g3dlite)
+target_compile_options(g3dlib PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+add_executable(g3d_allocator_regression g3d_allocator_regression.cpp)
+target_link_libraries(g3d_allocator_regression PRIVATE g3dlib ${CMAKE_DL_LIBS})
+target_compile_options(g3d_allocator_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_link_options(g3d_allocator_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME g3d_allocator_regression COMMAND g3d_allocator_regression)
 add_test(NAME sanitizer_regression COMMAND sanitizer_regression)
 set_tests_properties(sanitizer_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME heroic_leap_landing_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/heroic_leap_landing_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME earth_elemental_threat_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/earth_elemental_threat_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME bg_test_roster_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_test_roster_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME battleground_list_packet_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_list_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME player_level_cap_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/player_level_cap_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME spell_storage_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/spell_storage_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME bg_native_path_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_native_path_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
@@ -29,6 +57,8 @@ add_test(NAME lifecycle_regression COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 add_test(NAME leak_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/leak_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME instance_save_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/instance_save_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(leak_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME cleanup_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/cleanup_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
@@ -63,6 +93,9 @@ add_test(NAME vehicle_condition_registry_regression COMMAND ${Python3_EXECUTABLE
 add_test(NAME movement_path_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/movement_path_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(movement_path_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME tank_face_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tank_face_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(tank_face_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME navigation_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/navigation_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(navigation_recovery_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
