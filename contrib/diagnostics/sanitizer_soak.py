@@ -160,15 +160,25 @@ def log_size(directory):
     return sum(p.stat().st_size for p in directory.rglob("*") if p.is_file())
 
 
-def stop(process):
+def stop(process, event=None):
     if process.poll() is None:
         process.send_signal(signal.SIGTERM)
         try:
             process.wait(timeout=120)
         except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                "Server did not finish graceful shutdown within 120 seconds"
-            )
+            # A sanitizer build can spend more than two minutes saving and
+            # logging out a large bot population. Keep supervising the same
+            # graceful stop: a second SIGTERM terminates worldserver instead
+            # of telling us whether its first shutdown would have completed.
+            while process.poll() is None:
+                if event:
+                    event("shutdown_waiting", pid=process.pid, still_alive=True,
+                          rss_bytes=rss(process.pid),
+                          available_bytes=memory()["MemAvailable"])
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    continue
 
 
 def query_bot_count(mysql_args, env, sql, event, check_resources):
@@ -217,7 +227,7 @@ def stop_after_failure(process, event):
         return None
     event("shutdown_requested", pid=process.pid)
     try:
-        stop(process)
+        stop(process, event)
     except (RuntimeError, OSError) as error:
         event("shutdown_failed", error=str(error), pid=process.pid)
     # A startup or slow save can outlive the graceful-stop deadline. Never
@@ -815,7 +825,7 @@ def main():
                                 "Target bot population was not reached within twenty minutes"
                             )
                         guarded_pause(30, check_query_resources)
-                    stop(process)
+                    stop(process, event)
                 event(
                     "stage_finished",
                     phase=phase,

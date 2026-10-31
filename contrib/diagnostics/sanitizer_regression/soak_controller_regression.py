@@ -358,8 +358,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual([call.kwargs["timeout"] for call in process.wait.call_args_list], [120, 30, 30])
         self.assertEqual(
             [kind for kind, _ in events],
-            ["shutdown_requested", "shutdown_failed", "shutdown_waiting", "shutdown_waiting", "shutdown_finished"],
+            ["shutdown_requested", "shutdown_waiting", "shutdown_waiting", "shutdown_finished"],
         )
+
+    def test_normal_shutdown_timeout_never_sends_a_second_signal(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        calls = 0
+
+        def wait(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise subprocess.TimeoutExpired("worldserver", kwargs["timeout"])
+            process.poll.return_value = 0
+
+        process.wait.side_effect = wait
+        events = []
+        soak.stop(process, lambda kind, **data: events.append((kind, data)))
+        process.send_signal.assert_called_once_with(soak.signal.SIGTERM)
+        self.assertEqual([call.kwargs["timeout"] for call in process.wait.call_args_list], [120, 30, 30])
+        self.assertEqual([kind for kind, _ in events], ["shutdown_waiting", "shutdown_waiting"])
 
     def test_failed_stop_waits_for_a_real_child_without_force_kill(self):
         process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.2)"])
