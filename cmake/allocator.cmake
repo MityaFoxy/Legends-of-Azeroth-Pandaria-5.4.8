@@ -14,6 +14,12 @@ foreach(flag_variable CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS
   endif()
 endforeach()
 
+string(TOUPPER "${CMAKE_BUILD_TYPE}" allocator_build_type)
+set(allocator_debug OFF)
+if(allocator_build_type STREQUAL "DEBUG")
+  set(allocator_debug ON)
+endif()
+
 if(NOJEM)
   message(STATUS "NOJEM is deprecated; using the SYSTEM allocator")
   if(allocator_requested STREQUAL "MIMALLOC")
@@ -23,7 +29,7 @@ if(NOJEM)
 endif()
 
 if(allocator_requested STREQUAL "AUTO")
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT allocator_sanitized)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT allocator_sanitized AND NOT allocator_debug)
     set(allocator_selected MIMALLOC)
   else()
     set(allocator_selected SYSTEM)
@@ -39,6 +45,9 @@ if(allocator_selected STREQUAL "MIMALLOC")
   endif()
   if(allocator_sanitized)
     message(FATAL_ERROR "Sanitizer builds require ALLOCATOR=SYSTEM (or AUTO)")
+  endif()
+  if(allocator_debug)
+    message(FATAL_ERROR "Debug builds require ALLOCATOR=SYSTEM (or AUTO)")
   endif()
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "MIMALLOC override is currently validated only for Linux; use SYSTEM")
@@ -58,8 +67,8 @@ if(allocator_selected STREQUAL "MIMALLOC")
   set(MI_STATS OFF CACHE STRING "" FORCE)
   set(MI_PROFILE OFF CACHE BOOL "" FORCE)
   FetchContent_Declare(loa_mimalloc
-    URL https://codeload.github.com/microsoft/mimalloc/tar.gz/refs/tags/v3.5.3
-    URL_HASH SHA256=3b4a15153a59905995f7070296ed604bb5ccc00cabb8b93446931aff77224d47)
+    URL https://codeload.github.com/microsoft/mimalloc/tar.gz/refs/tags/v3.6.0
+    URL_HASH SHA256=c663101ba193b5b823c8541c1b719ab67e3ebf9976e425a02359a5cad5e52990)
   FetchContent_MakeAvailable(loa_mimalloc)
   # The object precedes archives; an archive-only link can silently lose overrides.
   target_link_libraries(server_allocator INTERFACE mimalloc-obj $<TARGET_OBJECTS:mimalloc-obj>)

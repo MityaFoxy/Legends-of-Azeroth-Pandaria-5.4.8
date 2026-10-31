@@ -61,12 +61,29 @@ class AllocatorTests(unittest.TestCase):
             )
             self.assertIn("Server allocator: SYSTEM", output)
 
+    def test_auto_debug_uses_system(self):
+        with tempfile.TemporaryDirectory(prefix="loa-allocator-") as directory:
+            output = self.configure(
+                directory, "-DALLOCATOR=AUTO", "-DCMAKE_BUILD_TYPE=Debug"
+            )
+            self.assertIn("Server allocator: SYSTEM", output)
+
     def test_explicit_mimalloc_rejects_sanitizers(self):
         with tempfile.TemporaryDirectory(prefix="loa-allocator-") as directory:
             output = self.configure(
                 directory, "-DALLOCATOR=MIMALLOC", "-DWITH_SANITIZER=ON", success=False
             )
             self.assertIn("Sanitizer builds require", output)
+
+    def test_explicit_mimalloc_rejects_debug(self):
+        with tempfile.TemporaryDirectory(prefix="loa-allocator-") as directory:
+            output = self.configure(
+                directory,
+                "-DALLOCATOR=MIMALLOC",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                success=False,
+            )
+            self.assertIn("Debug builds require", output)
 
     def test_legacy_nojem_uses_system(self):
         with tempfile.TemporaryDirectory(prefix="loa-allocator-") as directory:
