@@ -24,9 +24,9 @@ Debug builds: `cmake .. -DCMAKE_BUILD_TYPE=Debug`
 
 - **Compiler**: GCC ≥ 13 or Clang ≥ 12 (Windows: MSVC ≥ 2019 v16.4)
 - **CMake** ≥ 3.16 (README says 3.27.2)
-- **MySQL** 5.7, 8.0-8.1, or 8.4 LTS; MariaDB Server is not supported (note: OpenSSL 3.2.0 not supported with MySQL ≥ 8.0.33)
+- **MySQL** 5.7, 8.0-8.1, or 8.4 LTS; MariaDB Server is not supported
 - **Boost** ≥ 1.85 (Linux), ≥ 1.81 MSVC
-- **OpenSSL** 1.1.1 or 3.0–3.1.1
+- **OpenSSL** 1.1.1 or 3.0–3.5.x; 3.5.5 LTS is recommended, while 3.6.x is not supported yet
 - **C++20** (enforced via `CMAKE_CXX_STANDARD`)
 
 ## Architecture

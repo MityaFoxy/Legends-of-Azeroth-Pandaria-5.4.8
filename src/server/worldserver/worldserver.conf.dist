@@ -159,6 +159,23 @@ WorldDatabase.SynchThreads     = 1
 CharacterDatabase.SynchThreads = 2
 
 #
+#    Database.ConnectionRetryAttempts
+#        Description: Total number of attempts made while MySQL is temporarily unavailable during
+#                     server startup. Authentication, schema, and other permanent errors fail
+#                     immediately. Set to 1 to disable retries.
+#        Default:     30
+
+Database.ConnectionRetryAttempts = 30
+
+#
+#    Database.ConnectionRetryInterval
+#        Description: Delay in seconds between startup connection attempts.
+#        Range:       1-60
+#        Default:     1
+
+Database.ConnectionRetryInterval = 1
+
+#
 #    MaxPingTime
 #        Description: Time (in minutes) between database pings.
 #        Default:     30

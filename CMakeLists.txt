@@ -94,3 +94,7 @@ if (USE_MODULES)
 	# add core modules
 	add_subdirectory(modules)
 endif()
+
+if(SERVERS)
+  add_subdirectory(contrib/diagnostics/openssl_compatibility EXCLUDE_FROM_ALL)
+endif()

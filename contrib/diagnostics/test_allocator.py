@@ -47,6 +47,14 @@ class AllocatorTests(unittest.TestCase):
             subprocess.run(
                 ["ctest", "--test-dir", directory, "--output-on-failure"], check=True
             )
+            install = Path(directory) / "install"
+            subprocess.run(
+                ["cmake", "--install", directory, "--prefix", str(install)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            self.assertTrue((install / "bin/allocator_smoke").is_file())
+            self.assertFalse(any(install.rglob("*mimalloc*")))
 
     def test_system_smoke(self):
         self.smoke("SYSTEM")

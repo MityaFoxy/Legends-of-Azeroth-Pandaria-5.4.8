@@ -1,9 +1,9 @@
 # Server allocator
 
-The bundled jemalloc is no longer built or linked. Its historical source directory
-is retained for provenance; it has no active CMake references.
+The obsolete bundled jemalloc source was removed after its lack of active CMake
+references and server linkage was verified.
 
-`-DALLOCATOR=AUTO` selects mimalloc 3.5.3 on Linux without sanitizer flags and
+`-DALLOCATOR=AUTO` selects mimalloc 3.6.0 on Linux without sanitizer flags and
 the system allocator elsewhere. `SYSTEM` explicitly opts out of custom allocation;
 `MIMALLOC` explicitly enables the validated Linux integration. Invalid values and
 explicit mimalloc with sanitizer flags fail configuration. The deprecated
@@ -29,4 +29,4 @@ workload measurements; allocator replacement does not change database schemas.
 
 Official upstream documentation:
 https://microsoft.github.io/mimalloc/overrides.html
-https://github.com/microsoft/mimalloc/releases/tag/v3.5.3
+https://github.com/microsoft/mimalloc/releases/tag/v3.6.0

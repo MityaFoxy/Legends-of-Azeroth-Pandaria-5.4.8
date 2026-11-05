@@ -69,7 +69,20 @@ if(allocator_selected STREQUAL "MIMALLOC")
   FetchContent_Declare(loa_mimalloc
     URL https://codeload.github.com/microsoft/mimalloc/tar.gz/refs/tags/v3.6.0
     URL_HASH SHA256=c663101ba193b5b823c8541c1b719ab67e3ebf9976e425a02359a5cad5e52990)
-  FetchContent_MakeAvailable(loa_mimalloc)
+  # Keep mimalloc's development package and install rules out of the server
+  # deployment. Only its object target is an implementation detail here.
+  FetchContent_GetProperties(loa_mimalloc)
+  if(NOT loa_mimalloc_POPULATED)
+    if(POLICY CMP0169)
+      cmake_policy(PUSH)
+      cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(loa_mimalloc)
+    if(POLICY CMP0169)
+      cmake_policy(POP)
+    endif()
+  endif()
+  add_subdirectory(${loa_mimalloc_SOURCE_DIR} ${loa_mimalloc_BINARY_DIR} EXCLUDE_FROM_ALL)
   # The object precedes archives; an archive-only link can silently lose overrides.
   target_link_libraries(server_allocator INTERFACE mimalloc-obj $<TARGET_OBJECTS:mimalloc-obj>)
   # These are PUBLIC on the upstream static target, but not on its object target.

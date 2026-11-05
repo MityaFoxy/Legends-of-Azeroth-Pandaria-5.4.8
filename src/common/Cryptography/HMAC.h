@@ -23,6 +23,11 @@
 #include "Define.h"
 #include "Errors.h"
 #include <array>
+#include <openssl/opensslv.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#include <openssl/params.h>
+#endif
 #include <string>
 #include <string_view>
 
@@ -55,30 +60,54 @@ namespace Trinity::Impl
                 return hash.GetDigest();
             }
 
-            GenericHMAC(uint8 const* seed, size_t len) : _ctx(GenericHashImpl::MakeCTX()), _key(EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, nullptr, seed, len))
+            GenericHMAC(uint8 const* seed, size_t len)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                : _ctx(CreateContext(seed, len))
+#else
+                : _ctx(GenericHashImpl::MakeCTX()), _key(EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, nullptr, seed, len))
+#endif
             {
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+                ASSERT(_ctx);
+                ASSERT(_key);
                 int result = EVP_DigestSignInit(_ctx, nullptr, HashCreator(), nullptr, _key);
                 ASSERT(result == 1);
+#endif
             }
             template <typename Container>
-            GenericHMAC(Container const& container) : GenericHMAC(std::data(container), std::size(container)) {}
+            GenericHMAC(Container const& container)
+                : GenericHMAC(reinterpret_cast<uint8 const*>(std::data(container)), std::size(container)) {}
 
-            GenericHMAC(GenericHMAC const& right) : _ctx(GenericHashImpl::MakeCTX())
+            GenericHMAC(GenericHMAC const& right)
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                : _ctx(EVP_MAC_CTX_dup(right._ctx)), _digest(right._digest)
+#else
+                : _ctx(GenericHashImpl::MakeCTX()), _key(nullptr)
+#endif
             {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                ASSERT(_ctx);
+#else
                 *this = right;
+#endif
             }
 
             GenericHMAC(GenericHMAC&& right) noexcept
-            {
-                *this = std::move(right);
-            }
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                : _ctx(std::exchange(right._ctx, nullptr)), _digest(std::exchange(right._digest, Digest{})) {}
+#else
+                : _ctx(std::exchange(right._ctx, nullptr)), _key(std::exchange(right._key, nullptr)),
+                  _digest(std::exchange(right._digest, Digest{})) {}
+#endif
 
             ~GenericHMAC()
             {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                EVP_MAC_CTX_free(_ctx);
+#else
                 GenericHashImpl::DestroyCTX(_ctx);
-                _ctx = nullptr;
                 EVP_PKEY_free(_key);
-                _key = nullptr;
+#endif
             }
 
             GenericHMAC& operator=(GenericHMAC const& right)
@@ -86,10 +115,23 @@ namespace Trinity::Impl
                 if (this == &right)
                     return *this;
 
-                int result = EVP_MD_CTX_copy_ex(_ctx, right._ctx);
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                EVP_MAC_CTX* context = EVP_MAC_CTX_dup(right._ctx);
+                ASSERT(context);
+                EVP_MAC_CTX_free(_ctx);
+                _ctx = context;
+#else
+                EVP_MD_CTX* context = GenericHashImpl::MakeCTX();
+                ASSERT(context);
+                int result = EVP_MD_CTX_copy_ex(context, right._ctx);
                 ASSERT(result == 1);
-                _key = right._key;      // EVP_PKEY uses reference counting internally, just copy the pointer
-                EVP_PKEY_up_ref(_key);  // Bump reference count for PKEY, as every instance of this class holds two references to PKEY and destructor decrements it twice
+                result = EVP_PKEY_up_ref(right._key);
+                ASSERT(result == 1);
+                GenericHashImpl::DestroyCTX(_ctx);
+                EVP_PKEY_free(_key);
+                _ctx = context;
+                _key = right._key;
+#endif
                 _digest = right._digest;
                 return *this;
             }
@@ -99,35 +141,76 @@ namespace Trinity::Impl
                 if (this == &right)
                     return *this;
 
-                _ctx = std::exchange(right._ctx, GenericHashImpl::MakeCTX());
-                _key = std::exchange(right._key, EVP_PKEY_new());
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                EVP_MAC_CTX_free(_ctx);
+                _ctx = std::exchange(right._ctx, nullptr);
+#else
+                GenericHashImpl::DestroyCTX(_ctx);
+                EVP_PKEY_free(_key);
+                _ctx = std::exchange(right._ctx, nullptr);
+                _key = std::exchange(right._key, nullptr);
+#endif
                 _digest = std::exchange(right._digest, Digest{});
                 return *this;
             }
 
             void UpdateData(uint8 const* data, size_t len)
             {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                int result = EVP_MAC_update(_ctx, data, len);
+#else
                 int result = EVP_DigestSignUpdate(_ctx, data, len);
+#endif
                 ASSERT(result == 1);
             }
             void UpdateData(std::string_view str) { UpdateData(reinterpret_cast<uint8 const*>(str.data()), str.size()); }
             void UpdateData(std::string const& str) { UpdateData(std::string_view(str)); } /* explicit overload to avoid using the container template */
             void UpdateData(char const* str) { UpdateData(std::string_view(str)); } /* explicit overload to avoid using the container template */
             template <typename Container>
-            void UpdateData(Container const& c) { UpdateData(std::data(c), std::size(c)); }
+            void UpdateData(Container const& c)
+            {
+                UpdateData(reinterpret_cast<uint8 const*>(std::data(c)), std::size(c));
+            }
 
             void Finalize()
             {
                 size_t length = DIGEST_LENGTH;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                int result = EVP_MAC_final(_ctx, _digest.data(), &length, _digest.size());
+#else
                 int result = EVP_DigestSignFinal(_ctx, _digest.data(), &length);
+#endif
                 ASSERT(result == 1);
                 ASSERT(length == DIGEST_LENGTH);
             }
 
             Digest const& GetDigest() const { return _digest; }
         private:
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+            static EVP_MAC_CTX* CreateContext(uint8 const* seed, size_t len)
+            {
+                EVP_MAC* mac = EVP_MAC_fetch(nullptr, "HMAC", "provider=default");
+                ASSERT(mac);
+                EVP_MAC_CTX* context = EVP_MAC_CTX_new(mac);
+                EVP_MAC_free(mac);
+                ASSERT(context);
+
+                char const* digestName = EVP_MD_get0_name(HashCreator());
+                OSSL_PARAM params[] =
+                {
+                    OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, const_cast<char*>(digestName), 0),
+                    OSSL_PARAM_construct_end()
+                };
+                int result = EVP_MAC_init(context, seed, len, params);
+                ASSERT(result == 1);
+                return context;
+            }
+
+            EVP_MAC_CTX* _ctx;
+#else
             EVP_MD_CTX* _ctx;
             EVP_PKEY* _key;
+#endif
             Digest _digest = { };
     };
 }

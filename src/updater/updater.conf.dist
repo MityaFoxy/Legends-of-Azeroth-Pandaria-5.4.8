@@ -9,6 +9,9 @@ LoginDatabaseInfo     = "127.0.0.1;3306;user;pass;database"
 WorldDatabaseInfo     = "127.0.0.1;3306;user;pass;database"
 CharacterDatabaseInfo = "127.0.0.1;3306;user;pass;database"
 
+Database.ConnectionRetryAttempts = 30
+Database.ConnectionRetryInterval = 1
+
 LogsDir = "./"
 Log.Main.File = "detail.log"
 Log.Main.Mode = "w"

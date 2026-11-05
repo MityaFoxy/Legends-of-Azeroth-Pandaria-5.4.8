@@ -40,8 +40,8 @@ This is a personal, actively maintained server-development branch for the **Mist
 | CMake | **3.16+** |
 | Compiler | GCC **13+**, Clang **12+**, or Visual Studio **2019 16.4+** |
 | Database | MySQL **5.7**, **8.0–8.1**, or **8.4 LTS**; MariaDB Server is not supported |
-| OpenSSL | **1.1.1** or **3.0–3.1.1**; OpenSSL 3.2 is not supported with newer MySQL |
-| Boost | **1.85+** recommended |
+| OpenSSL | **1.1.1** or **3.0–3.5.x**; **3.5 LTS** is the recommended Linux baseline |
+| Boost | **1.85+** required on Linux; **1.81+** on Windows |
 | Windows SDK | 10.0.22621 or newer recommended |
 | Client data | MoP 5.4.8 build 18414; **enUS DBC** is required for player bots |
 
@@ -76,6 +76,10 @@ cmake --build build-debug --parallel
 | `-DBUILD_DEPLOY=1` | ON on Unix | Produce deployable Unix layout |
 
 > When running player bots, disabling Eluna is strongly recommended: `-DELUNA=0`.
+
+OpenSSL 3.x installations must include the `legacy` provider because the MoP
+5.4.8 session protocol still uses RC4. Startup now fails with an explicit error
+if that provider or cipher is unavailable.
 
 ## Database and first launch
 

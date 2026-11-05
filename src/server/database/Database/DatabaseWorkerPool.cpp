@@ -142,12 +142,22 @@ uint32 DatabaseWorkerPool<T>::Open()
     uint32 error = OpenConnections(IDX_ASYNC, _async_threads);
 
     if (error)
+    {
+        _connections[IDX_ASYNC].clear();
+        _connections[IDX_SYNCH].clear();
+        _ioContext.reset();
         return error;
+    }
 
     error = OpenConnections(IDX_SYNCH, _synch_threads);
 
     if (error)
+    {
+        _connections[IDX_ASYNC].clear();
+        _connections[IDX_SYNCH].clear();
+        _ioContext.reset();
         return error;
+    }
 
     for (std::unique_ptr<T> const& connection : _connections[IDX_ASYNC])
         connection->StartWorkerThread(_ioContext.get());
