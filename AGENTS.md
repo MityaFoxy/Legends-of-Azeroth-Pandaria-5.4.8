@@ -23,7 +23,7 @@ Debug builds: `cmake .. -DCMAKE_BUILD_TYPE=Debug`
 ## Requirements
 
 - **Compiler**: GCC ≥ 13 or Clang ≥ 12 (Windows: MSVC ≥ 2019 v16.4)
-- **CMake** ≥ 3.16 (README says 3.27.2)
+- **CMake** ≥ 3.16; the verified Ubuntu 26.04 stack uses 4.2.3
 - **MySQL** 5.7, 8.0-8.1, or 8.4 LTS; MariaDB Server is not supported
 - **Boost** ≥ 1.85 (Linux), ≥ 1.81 MSVC
 - **OpenSSL** 1.1.1 or 3.0–3.5.x; 3.5.5 LTS is recommended, while 3.6.x is not supported yet
@@ -85,7 +85,7 @@ To enable bots beyond building:
 
 ## CI
 
-- Linux GCC: `.github/workflows/linux_gcc.yml` — GCC 13, Ubuntu 24.04
+- Linux GCC/Clang: Ubuntu 26.04 containers on Ubuntu 24.04 runners; the verified GCC stack uses 15.2
 - Windows: `.github/workflows/windows-build-release.yml` — VS 2022, Boost 1.87, OpenSSL 3.1.1
 - SQL changes are ignored in CI (`paths-ignore: sql/**`)
 - Travis CI (`build/` dir, `cmake .. -DSCRIPTS=1 -DTOOLS=1`) is legacy

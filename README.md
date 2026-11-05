@@ -45,6 +45,27 @@ This is a personal, actively maintained server-development branch for the **Mist
 | Windows SDK | 10.0.22621 or newer recommended |
 | Client data | MoP 5.4.8 build 18414; **enUS DBC** is required for player bots |
 
+### Verified Linux baseline
+
+The current Linux runtime is built and tested with the following reproducible
+stack. These are the verified versions, not additional minimum requirements:
+
+| Component | Verified version / mode |
+| --- | --- |
+| Base image | Ubuntu **26.04** |
+| Compiler / CMake | GCC **15.2** / CMake **4.2.3** |
+| OpenSSL | **3.5.5 LTS**, including the `legacy` provider |
+| Boost | **1.90.0** |
+| MySQL | client **8.4.11**, server **8.4.13** |
+| Allocator | mimalloc **3.6.0** for normal Linux builds; system allocator for Debug and sanitizer builds |
+| Server options | `PLAYERBOTS=1`, `ELUNA=0`, `RelWithDebInfo` |
+
+The container recipe is
+[`contrib/containers/Containerfile.loa-build`](contrib/containers/Containerfile.loa-build).
+The validated build compiles `authserver`, `worldserver`, scripts and
+Playerbots. Crypto, allocator and bounded MySQL startup-retry regressions are
+part of the Linux validation path.
+
 ## Build
 
 Clone with submodules, then configure an out-of-source build:
@@ -79,7 +100,8 @@ cmake --build build-debug --parallel
 
 OpenSSL 3.x installations must include the `legacy` provider because the MoP
 5.4.8 session protocol still uses RC4. Startup now fails with an explicit error
-if that provider or cipher is unavailable.
+if that provider or cipher is unavailable. OpenSSL 3 builds use `EVP_MAC` for
+HMAC; OpenSSL 3.6.x is intentionally rejected until it is validated.
 
 ## Database and first launch
 
