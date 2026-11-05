@@ -103,6 +103,14 @@ private:
     void LogAction(char const* format, ...);
     void LogValues();
 
+    bool behaviorLogEnabled = false;
+    uint32 behaviorLogInterval = 60000;
+    uint32 lastBehaviorLog = 0;
+    bool hasBehaviorLog = false;
+    std::string lastBehaviorAction = "none";
+    uint32 behaviorActionsOk = 0;
+    uint32 behaviorActionsFailed = 0;
+
     ActionExecutionListeners actionExecutionListeners;
 
 protected:

@@ -85,7 +85,7 @@ target_link_libraries(authserver
   common
   shared
   database
-  jemalloc
+  server_allocator
   mysql
   openssl
   threads

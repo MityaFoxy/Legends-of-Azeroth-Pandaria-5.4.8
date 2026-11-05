@@ -41,9 +41,6 @@
 ###################################################################################################
 Respawn.GuidWarnLevel = 12000000
 Respawn.GuidAlertLevel = 16000000
-mmap.AllowReuseOfPreviousPathSegments = 1
-AuthServer.Process =
-AuthServer.Command =
 DEBUG_LFG_QUEUE_SAVE_PREV_STATE = 0
 Arena.BonusReward.GamesCount.2v2 = 0
 Arena.BonusReward.Item.2v2 = 0
@@ -353,11 +350,7 @@ GridCleanUpDelay = 300000
 MinWorldUpdateTime = 1
 
 #
-#    MapUpdateInterval
-#        Description: Time (milliseconds) for map update interval.
-#        Default:     10 - (0.01 second)
-
-MapUpdateInterval = 10
+# Map updates are fixed at 200 ms in the core because lower intervals caused mmap instability.
 
 #
 #    ChangeWeatherInterval
@@ -779,6 +772,7 @@ MinPetName = 2
 #
 #    MaxWhoListReturns
 #        Description: Set the max number of players returned in the /who list and interface.
+#        Range:       1-49
 #        Default:     49 - (stable)
 
 MaxWhoListReturns = 49
@@ -881,8 +875,7 @@ SkipCinematics = 0
 #
 #    MaxPlayerLevel
 #        Description: Maximum level that can be reached by players.
-#        Important:   Levels beyond 100 are not recommended at all.
-#        Range:       1-255
+#        Range:       1-90 (hard player limit for MoP, including GM commands)
 #        Default:     90
 
 MaxPlayerLevel = 90
@@ -1345,8 +1338,8 @@ Updates.AutoSetup   = 0
 #
 #    Warden.Enabled
 #        Description: Enable Warden anticheat system.
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
+#        Default:     1 - (Enabled)
+#        Options:     0 - (Disabled)
 
 Warden.Enabled = 1
 
@@ -1819,6 +1812,7 @@ GM.InWhoList.Level = 3
 #
 #    GM.StartLevel
 #        Description: GM character starting level.
+#        Range:       StartPlayerLevel-90
 #        Default:     1
 
 GM.StartLevel = 1
@@ -2040,13 +2034,6 @@ Rate.Auction.Cut     = 1
 #        Default:     1
 
 Rate.Honor = 1
-
-#
-#    Rate.Talent
-#        Description: Talent point rate.
-#        Default:     1
-
-Rate.Talent = 1
 
 #
 #    Rate.Reputation.Gain
@@ -2287,7 +2274,7 @@ Battleground.CastDeserter = 1
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
-Battleground.QueueAnnouncer.Enable = 1
+Battleground.QueueAnnouncer.Enable = 0
 
 #
 #    Battleground.QueueAnnouncer.PlayerOnly
@@ -2450,28 +2437,12 @@ Arena.RatingDiscardTimer = 600000
 Arena.RatedUpdateTimer = 5000
 
 #
-#    Arena.AutoDistributePoints
-#        Description: Automatically distribute arena points.
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
-
-Arena.AutoDistributePoints = 0
-
-#
-#    Arena.AutoDistributeInterval
-#        Description: Time (in days) how often arena points should be distributed if automatic
-#                     distribution is enabled.
-#        Default:     7 - (Weekly)
-
-Arena.AutoDistributeInterval = 7
-
-#
 #    Arena.QueueAnnouncer.Enable
 #        Description: Announce arena queue status to chat.
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
-Arena.QueueAnnouncer.Enable = 1
+Arena.QueueAnnouncer.Enable = 0
 
 #
 #    Arena.QueueAnnouncer.PlayerOnly
@@ -3515,6 +3486,10 @@ Logger.server=3,Console Server
 Logger.commands.gm=3,Console GM
 Logger.sql.sql=5,Console DBErrors
 
+# Playerbot navigation recovery/fallback summaries (rate limited per bot).
+# Level 2 additionally logs each path query; level 3 is recommended for normal operation.
+Logger.playerbots.navigation=3,Console Server
+
 #Logger.achievement=3,Console Server
 #Logger.auctionHouse=3,Console Server
 #Logger.bg.arena=3,Console Server
@@ -4392,9 +4367,6 @@ CONFIGSPECPALADINRETRIBUTION = 100.0
 CONFIGSPECWARRIORARMS = 100.0
 CONFIGSPECWARRIORFURY = 100.0
 CONFIGSPECWARRIORPROTECTION = 100.0
-CONFIGSPECPETFEROCITY = 100.0
-CONFIGSPECPETCUNNING = 100.0
-CONFIGSPECPETTENACITY = 100.0
 CONFIGSPECDRUIDBALANCE = 100.0
 CONFIGSPECDRUIDFERAL = 100.0
 CONFIGSPECDRUIDGUARDIAN = 100.0
@@ -4434,9 +4406,6 @@ HEALCONFIGSPECPALADINRETRIBUTION = 100.0
 HEALCONFIGSPECWARRIORARMS = 100.0
 HEALCONFIGSPECWARRIORFURY = 100.0
 HEALCONFIGSPECWARRIORPROTECTION = 100.0
-HEALCONFIGSPECPETFEROCITY = 100.0
-HEALCONFIGSPECPETCUNNING = 100.0
-HEALCONFIGSPECPETTENACITY = 100.0
 HEALCONFIGSPECDRUIDBALANCE = 100.0
 HEALCONFIGSPECDRUIDFERAL = 100.0
 HEALCONFIGSPECDRUIDGUARDIAN = 100.0
@@ -4492,7 +4461,7 @@ GuarderSight = 50
 
 Channel.ConstantLocale = 0
 
-Battleground.IgnoreFaction = 1
+Battleground.IgnoreFaction = 0
 Battleground.HugeBgStartTime = 20
 Battleground.HugeBgEndTime = 22
 Battleground.DtBgEnabled = 1
@@ -4606,12 +4575,6 @@ Rate.Modw.InGame = 1
 #        Default: 1 (Enabled)
 #                 0 (Disabled)
 #
-#   Eluna.TraceBack
-#       Description: Sets whether to use debug.traceback function on a lua error or not.
-#                    Notice that you can redefine the function.
-#       Default:    false - (use default error output)
-#                   true  - (use debug.traceback function)
-#
 #   Eluna.ScriptPath
 #       Description: Sets the location of the script folder to load scripts from
 #                    The path can be relative or absolute.
@@ -4623,7 +4586,6 @@ Rate.Modw.InGame = 1
 ###################################################################################################################
 
 Eluna.Enabled = 0
-Eluna.TraceBack = false
 Eluna.ScriptPath = "lua_scripts"
 
 ###############################################################################

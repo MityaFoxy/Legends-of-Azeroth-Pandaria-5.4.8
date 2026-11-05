@@ -19,8 +19,10 @@
 #define ObjectGuid_h__
 
 #include "Define.h"
+#include "StringFormatFwd.h"
 #include <array>
 #include <deque>
+#include <atomic>
 #include <functional>
 #include <list>
 #include <set>
@@ -117,12 +119,12 @@ GUID_TRAIT_GLOBAL(HighGuid::Player);
 GUID_TRAIT_GLOBAL(HighGuid::Item);
 GUID_TRAIT_GLOBAL(HighGuid::Transport);
 GUID_TRAIT_GLOBAL(HighGuid::Guild);
+GUID_TRAIT_GLOBAL(HighGuid::Corpse);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::Unit);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::Vehicle);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::Pet);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::GameObject);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::DynamicObject);
-GUID_TRAIT_MAP_SPECIFIC(HighGuid::Corpse);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::AreaTrigger);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::Scenario);
 GUID_TRAIT_MAP_SPECIFIC(HighGuid::Vignette);
@@ -328,15 +330,15 @@ class TC_GAME_API ObjectGuidGeneratorBase
     public:
         ObjectGuidGeneratorBase(ObjectGuid::LowType start = 1) : _nextGuid(start) { }
 
-        virtual void Set(ObjectGuid::LowType val) { _nextGuid = val; }
+        virtual void Set(ObjectGuid::LowType val) { _nextGuid.store(val); }
         virtual ObjectGuid::LowType Generate() = 0;
-        ObjectGuid::LowType GetNextAfterMaxUsed() const { return _nextGuid; }
+        ObjectGuid::LowType GetNextAfterMaxUsed() const { return _nextGuid.load(); }
         virtual ~ObjectGuidGeneratorBase() { }
 
     protected:
         static void HandleCounterOverflow(HighGuid high);
         static void CheckGuidTrigger(ObjectGuid::LowType guid);
-        ObjectGuid::LowType _nextGuid;
+        std::atomic<ObjectGuid::LowType> _nextGuid;
 };
 
 template<HighGuid high>
@@ -347,13 +349,14 @@ class ObjectGuidGenerator : public ObjectGuidGeneratorBase
 
         ObjectGuid::LowType Generate() override
         {
-            if (_nextGuid >= ObjectGuid::GetMaxCounter(high) - 1)
+            ObjectGuid::LowType guid = _nextGuid.fetch_add(1);
+            if (guid >= ObjectGuid::GetMaxCounter(high) - 1)
                 HandleCounterOverflow(high);
 
             if (high == HighGuid::Unit || high == HighGuid::GameObject)
-                CheckGuidTrigger(_nextGuid);
+                CheckGuidTrigger(guid);
 
-            return _nextGuid++;
+            return guid;
         }
 };
 
@@ -376,5 +379,12 @@ namespace std
             }
     };
 }
+
+template <>
+struct fmt::formatter<ObjectGuid, char, void> : Trinity::NoArgFormatterBase
+{
+    template <typename FormatContext>
+    auto format(ObjectGuid const& guid, FormatContext& ctx) const -> decltype(ctx.out());
+};
 
 #endif // ObjectGuid_h__

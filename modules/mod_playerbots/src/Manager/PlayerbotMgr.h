@@ -13,6 +13,8 @@
 #include "QueryResult.h"
 
 #include <unordered_set>
+#include <unordered_map>
+#include <memory>
 
 class ChatHandler;
 class PlayerbotAI;
@@ -31,6 +33,7 @@ public:
 
     void AddPlayerBot(ObjectGuid guid, uint32 masterAccountId);
     void HandlePlayerBotLoginCallback(PlayerbotLoginQueryHolder const& holder);
+    void InitializeBotOnLogin(ObjectGuid guid, uint32 level);
 
     void LogoutPlayerBot(ObjectGuid guid);
     void DisablePlayerBot(ObjectGuid guid);
@@ -61,6 +64,7 @@ protected:
 
     PlayerBotMap playerBots;
     std::unordered_set<ObjectGuid> botLoading;
+    std::unordered_map<ObjectGuid, uint32> botInitializationLevels;
 };
 
 class PlayerbotMgr : public PlayerbotHolder
@@ -112,8 +116,8 @@ public:
     PlayerbotMgr* GetPlayerbotMgr(Player* player);
 
 private:
-    std::unordered_map<ObjectGuid, PlayerbotAIBase*> _playerbotsAIMap;
-    std::unordered_map<ObjectGuid, PlayerbotAIBase*> _playerbotsMgrMap;
+    std::unordered_map<ObjectGuid, std::unique_ptr<PlayerbotAIBase>> _playerbotsAIMap;
+    std::unordered_map<ObjectGuid, std::unique_ptr<PlayerbotAIBase>> _playerbotsMgrMap;
 };
 
 #define sPlayerbotsMgr PlayerbotsMgr::instance()

@@ -310,8 +310,12 @@ class spell_common_smart_heal_one_target : public spell_smart_heal
 
     void Register() override
     {
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_one_target::FilterTargets, EFFECT_ALL, TARGET_UNIT_CASTER_AREA_RAID);
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_one_target::FilterTargets, EFFECT_ALL, TARGET_UNIT_DEST_AREA_ALLY);
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(m_scriptSpellId);
+        Targets targetType = TARGET_UNIT_DEST_AREA_ALLY;
+        for (SpellEffectInfo const& effect : spellInfo->Effects)
+            if (effect.TargetA.GetTarget() == TARGET_UNIT_CASTER_AREA_RAID || effect.TargetB.GetTarget() == TARGET_UNIT_CASTER_AREA_RAID)
+                targetType = TARGET_UNIT_CASTER_AREA_RAID;
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_one_target::FilterTargets, EFFECT_ALL, targetType);
     }
 };
 
@@ -331,8 +335,12 @@ class spell_common_smart_heal_six_targets : public spell_smart_heal
 
     void Register() override
     {
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_six_targets::FilterTargets, EFFECT_ALL, TARGET_UNIT_DEST_AREA_ALLY);
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_six_targets::FilterTargets, EFFECT_ALL, TARGET_UNIT_SRC_AREA_ALLY);
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(m_scriptSpellId);
+        Targets targetType = TARGET_UNIT_SRC_AREA_ALLY;
+        for (SpellEffectInfo const& effect : spellInfo->Effects)
+            if (effect.TargetA.GetTarget() == TARGET_UNIT_DEST_AREA_ALLY || effect.TargetB.GetTarget() == TARGET_UNIT_DEST_AREA_ALLY)
+                targetType = TARGET_UNIT_DEST_AREA_ALLY;
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_common_smart_heal_six_targets::FilterTargets, EFFECT_ALL, targetType);
     }
 };
 

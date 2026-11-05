@@ -1,5 +1,5 @@
 /*
-* This file is part of the Pandaria 5.4.8 Project. See THANKS file for Copyright information
+* This file is part of the Legends of Azeroth Pandaria Project. See THANKS file for Copyright information
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms of the GNU General Public License as published by the
@@ -244,6 +244,7 @@ class TC_GAME_API SmartAI : public CreatureAI
 
         uint32 mDespawnTime;
         uint32 mDespawnState;
+        bool mAppearedOnce = false;   // JustAppeared ran since the AI was created
         void UpdateDespawn(const uint32 diff);
         uint32 mEscortInvokerCheckTimer;
 

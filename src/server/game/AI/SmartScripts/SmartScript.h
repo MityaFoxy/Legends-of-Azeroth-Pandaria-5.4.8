@@ -26,6 +26,7 @@
 #include "GridNotifiers.h"
 
 #include "SmartScriptMgr.h"
+#include <memory>
 //#include "SmartAI.h"
 
 class SmartScript
@@ -91,7 +92,8 @@ class SmartScript
         void DoFindFriendlyMissingBuff(std::list<Creature*>& list, float range, uint32 spellid);
         Unit* DoFindClosestFriendlyInRange(float range, bool playerOnly);
 
-        void StoreTargetList(ObjectList* targets, uint32 id)
+        // Copies GUIDs; does not take ownership of the input list or objects.
+        void StoreTargetList(ObjectList const* targets, uint32 id)
         {
             if (!targets)
                 return;
@@ -113,7 +115,7 @@ class SmartScript
                 smart = false;
 
             if (!smart)
-                TC_LOG_ERROR("sql.sql", "SmartScript: Action target Creature (GUID: %u Entry: %u) is not using SmartAI, action skipped to prevent crash.", c ? c->GetDBTableGUIDLow() : (me ? me->GetDBTableGUIDLow() : 0), c ? c->GetEntry() : (me ? me->GetEntry() : 0));
+                TC_LOG_ERROR("sql.sql", "SmartScript: Action target Creature (GUID: {} Entry: {}) is not using SmartAI, action skipped to prevent crash.", c ? c->GetDBTableGUIDLow() : (me ? me->GetDBTableGUIDLow() : 0), c ? c->GetEntry() : (me ? me->GetEntry() : 0));
 
             return smart;
         }
@@ -127,12 +129,13 @@ class SmartScript
             if (!go || go->GetAIName() != "SmartGameObjectAI")
                 smart = false;
             if (!smart)
-                TC_LOG_ERROR("sql.sql", "SmartScript: Action target GameObject (GUID: %u Entry: %u) is not using SmartGameObjectAI, action skipped to prevent crash.", g ? g->GetDBTableGUIDLow() : (go ? go->GetDBTableGUIDLow() : 0), g ? g->GetEntry() : (go ? go->GetEntry() : 0));
+                TC_LOG_ERROR("sql.sql", "SmartScript: Action target GameObject (GUID: {} Entry: {}) is not using SmartGameObjectAI, action skipped to prevent crash.", g ? g->GetDBTableGUIDLow() : (go ? go->GetDBTableGUIDLow() : 0), g ? g->GetEntry() : (go ? go->GetEntry() : 0));
 
             return smart;
         }
 
-        ObjectList* GetTargetList(uint32 id, WorldObject const* scriptTrigger = nullptr);
+        // Caller owns the temporary list, not the WorldObjects it references.
+        std::unique_ptr<ObjectList> GetTargetList(uint32 id, WorldObject const* scriptTrigger = nullptr);
 
         void StoreCounter(uint32 id, uint32 value, uint32 reset)
         {
@@ -237,8 +240,8 @@ class SmartScript
                 DecPhase(abs(p));
         }
 
-        void DecPhase(int32 p = 1) { mEventPhase  -= (mEventPhase < (uint32)p ? (uint32)p - mEventPhase : (uint32)p); }
-        bool IsInPhase(uint32 p) const { return (1 << (mEventPhase - 1)) & p; }
+        void DecPhase(int32 p = 1) { if (p > 0) mEventPhase = mEventPhase > uint32(p) ? mEventPhase - uint32(p) : 0; }
+        bool IsInPhase(uint32 p) const { return (MakeOneBasedMask32(mEventPhase) & p) != 0; }
         void SetPhase(uint32 p = 0) { mEventPhase = p; }
 
         SmartAIEventList mEvents;

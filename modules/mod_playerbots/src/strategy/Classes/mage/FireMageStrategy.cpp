@@ -29,7 +29,7 @@ private:
     {
         return new ActionNode("fireball",
             /*P*/ nullptr,
-            /*A*/ nullptr,
+            /*A*/ NextAction::array(0, new NextAction("frostfire bolt"), nullptr),
             /*C*/ nullptr);
     }
     static ActionNode* dragon_breath([[maybe_unused]] PlayerbotAI* botAI)
@@ -57,7 +57,7 @@ private:
     {
         return new ActionNode("scorch",
             /*P*/ nullptr,
-            /*A*/ nullptr,
+            /*A*/ NextAction::array(0, new NextAction("fireball"), nullptr),
             /*C*/ nullptr);
     }
     static ActionNode* flamestrike([[maybe_unused]] PlayerbotAI* botAI)

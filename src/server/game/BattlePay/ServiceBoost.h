@@ -77,14 +77,12 @@ struct BoostItems
     uint32 slot;
     uint32 itemId;
 };
-typedef std::vector<BoostItems*> BoostItemsVector;
+typedef std::vector<BoostItems> BoostItemsVector;
 
 typedef std::map<uint8 /*slot*/, uint32 /*ItemId*/> PreparedItemsMap;
 
 void LoadBoostItems();
 void SetBoosting(WorldSession* session, uint32 accountId, bool boost);
-
-static BoostItemsVector mBoostItemsMap;
 
 class CharacterBooster
 {

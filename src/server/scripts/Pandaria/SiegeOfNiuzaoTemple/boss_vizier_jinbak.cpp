@@ -424,7 +424,8 @@ class spell_sap_residue : public SpellScriptLoader
 
             void Register() override
             {
-                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_sap_residue_SpellScript::FilterTargets, EFFECT_1, TARGET_UNIT_CASTER);
+                Targets targetType = m_scriptSpellId == 119941 ? TARGET_UNIT_SRC_AREA_ENEMY : TARGET_UNIT_SRC_AREA_ENTRY;
+                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_sap_residue_SpellScript::FilterTargets, EFFECT_0, targetType);
             }
         };
 

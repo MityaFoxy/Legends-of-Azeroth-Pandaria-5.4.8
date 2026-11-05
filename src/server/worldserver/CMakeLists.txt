@@ -81,7 +81,7 @@ endif()
 
 add_dependencies(worldserver revision.h)
 
-if( UNIX AND NOT NOJEM )
+if( UNIX )
   set(worldserver_LINK_FLAGS "-pthread -lncurses ${worldserver_LINK_FLAGS}")
 endif()
 
@@ -93,7 +93,7 @@ target_link_libraries(worldserver
     scripts
     game
     gsoap
-    jemalloc
+    server_allocator
     readline
     boost
     threads

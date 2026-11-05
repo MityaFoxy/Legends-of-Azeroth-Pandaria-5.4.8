@@ -1627,7 +1627,7 @@ SpellCastResult SpellInfo::CheckShapeshift(uint32 form) const
         shapeInfo = sSpellShapeshiftFormStore.LookupEntry(form);
         if (!shapeInfo)
         {
-            TC_LOG_ERROR("spells", "GetErrorAtShapeshiftedCast: unknown shapeshift %u", form);
+            TC_LOG_ERROR("spells", "GetErrorAtShapeshiftedCast: unknown shapeshift {}", form);
             return SPELL_CAST_OK;
         }
         actAsShifted = !(shapeInfo->flags1 & 1);            // shapeshift acts as normal form for spells
@@ -2185,32 +2185,32 @@ SpellSchoolMask SpellInfo::GetSchoolMask() const
 uint32 SpellInfo::GetAllEffectsMechanicMask() const
 {
     uint32 mask = 0;
-    if (Mechanic)
-        mask |= 1 << Mechanic;
+    if (Mechanic && Mechanic < 32)
+        mask |= uint32(1) << Mechanic;
     for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
-        if (Effects[i].IsEffect() && Effects[i].Mechanic)
-            mask |= 1 << Effects[i].Mechanic;
+        if (Effects[i].IsEffect() && Effects[i].Mechanic && Effects[i].Mechanic < 32)
+            mask |= uint32(1) << Effects[i].Mechanic;
     return mask;
 }
 
 uint32 SpellInfo::GetEffectMechanicMask(uint8 effIndex) const
 {
     uint32 mask = 0;
-    if (Mechanic)
-        mask |= 1 << Mechanic;
-    if (Effects[effIndex].IsEffect() && Effects[effIndex].Mechanic)
-        mask |= 1 << Effects[effIndex].Mechanic;
+    if (Mechanic && Mechanic < 32)
+        mask |= uint32(1) << Mechanic;
+    if (Effects[effIndex].IsEffect() && Effects[effIndex].Mechanic && Effects[effIndex].Mechanic < 32)
+        mask |= uint32(1) << Effects[effIndex].Mechanic;
     return mask;
 }
 
 uint32 SpellInfo::GetSpellMechanicMaskByEffectMask(uint32 effectMask) const
 {
     uint32 mask = 0;
-    if (Mechanic)
-        mask |= 1 << Mechanic;
+    if (Mechanic && Mechanic < 32)
+        mask |= uint32(1) << Mechanic;
     for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
-        if ((effectMask & (1 << i)) && Effects[i].Mechanic)
-            mask |= 1 << Effects[i].Mechanic;
+        if ((effectMask & (uint32(1) << i)) && Effects[i].Mechanic && Effects[i].Mechanic < 32)
+            mask |= uint32(1) << Effects[i].Mechanic;
     return mask;
 }
 
@@ -2649,7 +2649,7 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
         // Else drain all power
         if (power < MAX_POWERS)
             return caster->GetPower(Powers(power));
-        TC_LOG_ERROR("spells", "SpellInfo::CalcPowerCost: Unknown power type '%d' in spell %d", power, Id);
+        TC_LOG_ERROR("spells", "SpellInfo::CalcPowerCost: Unknown power type '{}' in spell {}", power, Id);
         return 0;
     }
 
@@ -2689,10 +2689,14 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
                 TC_LOG_DEBUG("spells", "CalculateManaCost: Not implemented yet!");
                 break;
             default:
-                TC_LOG_ERROR("spells", "CalculateManaCost: Unknown power type '%d' in spell %d", power, Id);
+                TC_LOG_ERROR("spells", "CalculateManaCost: Unknown power type '{}' in spell {}", power, Id);
                 return 0;
         }
     }
+
+    // Health is a special power value (-2), not a bit in a 32-bit power mask.
+    // Keep its cost and spell modifiers, but do not shift by that value.
+    uint32 const powerMask = power < 32 ? uint32(1) << power : 0;
 
     // Flat mod from caster auras by spell school and power type
     Unit::AuraEffectList const& auras = caster->GetAuraEffectsByType(SPELL_AURA_MOD_POWER_COST_SCHOOL);
@@ -2700,7 +2704,7 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
     {
         if (!((*i)->GetMiscValue() & schoolMask))
             continue;
-        if (!((*i)->GetMiscValueB() & (1 << power)))
+        if (!(uint32((*i)->GetMiscValueB()) & powerMask))
             continue;
         powerCost += (*i)->GetAmount();
     }
@@ -2752,7 +2756,7 @@ int32 SpellInfo::CalcPowerCost(Unit const* caster, SpellSchoolMask schoolMask, i
     {
         if (!((*i)->GetMiscValue() & schoolMask))
             continue;
-        if (!((*i)->GetMiscValueB() & (1 << power)))
+        if (!(uint32((*i)->GetMiscValueB()) & powerMask))
             continue;
         powerCost += CalculatePct(powerCost, (*i)->GetAmount());
     }

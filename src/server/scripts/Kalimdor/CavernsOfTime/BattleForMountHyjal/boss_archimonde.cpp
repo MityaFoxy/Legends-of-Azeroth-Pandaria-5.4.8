@@ -636,7 +636,8 @@ public:
 
             DoMeleeAttackIfReady();
         }
-        void WaypointReached(uint32 /*waypointId*/) override { }
+        void MovementInform(uint32 type, uint32 waypointId) override {
+            EscortAI::MovementInform(type, waypointId); }
     };
 };
 
@@ -684,5 +685,5 @@ void AddSC_boss_archimonde()
     new npc_doomfire();
     new npc_doomfire_targetting();
     new npc_ancient_wisp();
-    new spell_protection_of_elune();
+    // Legacy binding is archived; do not allocate an unregistered AuraScript.
 }

@@ -29,6 +29,7 @@
 #include "RogueAiObjectContext.h"
 #include "ShamanAiObjectContext.h"
 #include "MageAiObjectContext.h"
+#include "MonkAiObjectContext.h"
 #include "WarriorAIObjectContext.h"
 #include "WarlockAiObjectContext.h"
 
@@ -56,8 +57,8 @@ AiObjectContext* AiFactory::createAiObjectContext(Player* player, PlayerbotAI* b
             return new RogueAiObjectContext(botAI);
         case CLASS_DEATH_KNIGHT:
             return new DKAiObjectContext(botAI);
-        //case CLASS_MONK:
-            //return new MonkAiObjectContext(botAI);
+        case CLASS_MONK:
+            return new MonkAiObjectContext(botAI);
     }
 
     return new BotAiObjectContext(botAI);

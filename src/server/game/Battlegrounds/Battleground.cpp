@@ -43,6 +43,8 @@
 #include "BattlegroundTOK.h"
 #include "Realm.h"
 
+#include <set>
+
 namespace Trinity
 {
     class BattlegroundChatBuilder
@@ -229,6 +231,11 @@ Battleground::Battleground()
 
 Battleground::~Battleground()
 {
+    // GroupMgr may destroy these raids after the BG, especially at shutdown.
+    // Detach both sides while the BG is still alive; GroupMgr retains ownership.
+    SetBgRaid(ALLIANCE, nullptr);
+    SetBgRaid(HORDE, nullptr);
+
     // remove objects and creatures
     // (this is done automatically in mapmanager update, when the instance is reset after the reset time)
     uint32 size = uint32(BgCreatures.size());
@@ -326,7 +333,7 @@ void Battleground::CheckSafePositions(uint32 diff)
                 GetTeamStartLoc(player->GetBGTeam(), x, y, z, o);
                 if (pos.GetExactDistSq(x, y, z) > maxDist)
                 {
-                    TC_LOG_DEBUG("bg.battleground", "BATTLEGROUND: Sending %s back to start location (map: %u) (possible exploit)", player->GetName().c_str(), GetMapId());
+                    TC_LOG_DEBUG("bg.battleground", "BATTLEGROUND: Sending {} back to start location (map: {}) (possible exploit)", player->GetName().c_str(), GetMapId());
                     player->TeleportTo(GetMapId(), x, y, z, o);
                 }
             }
@@ -527,16 +534,24 @@ void Battleground::ProcessRessurect(uint32 diff)
     }
     else if (m_LastResurrectTime > 500)    // Resurrect players only half a second later, to see spirit heal effect on NPC
     {
-        for (std::vector<ObjectGuid>::const_iterator itr = m_ResurrectQueue.begin(); itr != m_ResurrectQueue.end(); ++itr)
+        // Own this wave locally before aura callbacks can remove players from
+        // the shared queues (for example when a player leaves the BG).
+        std::vector<ObjectGuid> resurrecting;
+        resurrecting.swap(m_ResurrectQueue);
+        for (ObjectGuid guid : resurrecting)
         {
-            Player* player = ObjectAccessor::FindPlayer(*itr);
+            Player* player = ObjectAccessor::FindPlayer(guid);
             if (!player)
                 continue;
             player->ResurrectPlayer(1.0f);
+            // The wave already consumed m_ReviveQueue. Clear its waiting aura
+            // too, or the next death still looks queued to the client/bot.
+            // Aura removal calls RemovePlayerFromResurrectQueue; the shared
+            // queue is already empty and the visual delay stays intact.
+            player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
             player->CastSpell(player, SPELL_SPIRIT_HEAL_MANA, true);
             player->SpawnCorpseBones(false);
         }
-        m_ResurrectQueue.clear();
     }
 }
 
@@ -626,7 +641,7 @@ void Battleground::ProcessJoin(uint32 diff)
 
         if (!FindBgMap())
         {
-            TC_LOG_ERROR("bg.battleground", "Battleground::_ProcessJoin: map (map id: %u, instance id: %u) is not created!", m_MapId, m_InstanceID);
+            TC_LOG_ERROR("bg.battleground", "Battleground::_ProcessJoin: map (map id: {}, instance id: {}) is not created!", m_MapId, m_InstanceID);
             EndNow();
             return;
         }
@@ -786,7 +801,7 @@ inline Player* Battleground::_GetPlayer(ObjectGuid guid, bool offlineRemove, cha
     {
         player = ObjectAccessor::FindPlayer(guid);
         if (!player)
-            TC_LOG_ERROR("bg.battleground", "Battleground::%s: player (GUID: %u) not found for BG (map: %u, instance id: %u)!",
+            TC_LOG_ERROR("bg.battleground", "Battleground::{}: player (GUID: {}) not found for BG (map: {}, instance id: {})!",
                 context, guid.GetCounter(), m_MapId, m_InstanceID);
     }
     return player;
@@ -953,6 +968,7 @@ void Battleground::EndBattleground(uint32 winner)
 
     BattlegroundStatus oldstatus = GetStatus();
     SetStatus(STATUS_WAIT_LEAVE);
+    FinalizeAchievementWorldStates(winner);
 
     //we must set it this way, because end time is sent in packet!
     SetRemainingTime(TIME_AUTOCLOSE_BATTLEGROUND);
@@ -1004,14 +1020,14 @@ void Battleground::EndBattleground(uint32 winner)
                 case ARENA_NORMAL:
                     winnerMatchmakerChange = winnerArenaTeam->WonAgainst(winnerMatchmakerRating, loserMatchmakerRating, winnerChange);
                     loserMatchmakerChange = loserArenaTeam->LostAgainst(loserMatchmakerRating, winnerMatchmakerRating, loserChange);
-                    TC_LOG_DEBUG("bg.arena", "match Type: %u --- Winner: old rating: %u, rating gain: %d, old MMR: %u, MMR gain: %d --- Loser: old rating: %u, rating loss: %d, old MMR: %u, MMR loss: %d ---", m_ArenaType, winnerTeamRating, winnerChange, winnerMatchmakerRating,
+                    TC_LOG_DEBUG("bg.arena", "match Type: {} --- Winner: old rating: {}, rating gain: {}, old MMR: {}, MMR gain: {} --- Loser: old rating: {}, rating loss: {}, old MMR: {}, MMR loss: {} ---", m_ArenaType, winnerTeamRating, winnerChange, winnerMatchmakerRating,
                         winnerMatchmakerChange, loserTeamRating, loserChange, loserMatchmakerRating, loserMatchmakerChange);
                     if (sWorld->getBoolConfig(CONFIG_ARENA_LOG_EXTENDED_INFO))
                     {
                         for (Battleground::BattlegroundScoreMap::const_iterator itr = GetPlayerScoresBegin(); itr != GetPlayerScoresEnd(); ++itr)
                             if (Player* player = ObjectAccessor::FindPlayer(itr->first))
                             {
-                                TC_LOG_DEBUG("bg.arena", "Statistics match Type: %u for %s (GUID: " UI64FMTD ", IP: %s): %u damage, %u healing, %u killing blows",
+                                TC_LOG_DEBUG("bg.arena", "Statistics match Type: {} for {} (GUID: " "{}" ", IP: {}): {} damage, {} healing, {} killing blows",
                                     m_ArenaType, player->GetName().c_str(), itr->first.GetRawValue(), player->GetSession()->GetRemoteAddress().c_str(), itr->second->DamageDone, itr->second->HealingDone,
                                     itr->second->KillingBlows);
                             }
@@ -1372,7 +1388,7 @@ void Battleground::RemovePlayerAtLeave(ObjectGuid guid, bool Transport, bool Sen
 
         player->RemoveAurasDueToSpell(SPELL_DAMPENING);
 
-        if (!player->IsAlive())                              // resurrect on exit
+        if (!player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST)) // resurrect on exit
         {
             player->ResurrectPlayer(1.0f);
             player->SpawnCorpseBones();
@@ -1484,7 +1500,7 @@ void Battleground::RemovePlayerAtLeave(ObjectGuid guid, bool Transport, bool Sen
         if (Transport)
             player->TeleportToBGEntryPoint();
 
-        TC_LOG_DEBUG("bg.battleground", "Removed player %s from Battleground.", player->GetName().c_str());
+        TC_LOG_DEBUG("bg.battleground", "Removed player {} from Battleground.", player->GetName().c_str());
     }
 
     //battleground object will be deleted next Battleground::Update() call
@@ -1501,7 +1517,7 @@ void Battleground::Reset()
     m_Events = 0;
 
     if (m_InvitedAlliance > 0 || m_InvitedHorde > 0)
-        TC_LOG_ERROR("bg.battleground", "Battleground::Reset: one of the counters is not 0 (alliance: %u, horde: %u) for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::Reset: one of the counters is not 0 (alliance: {}, horde: {}) for BG (map: {}, instance id: {})!",
             m_InvitedAlliance, m_InvitedHorde, m_MapId, m_InstanceID);
 
     m_InvitedAlliance = 0;
@@ -1562,6 +1578,12 @@ void Battleground::AddPlayer(Player* player)
     player->GetSession()->SendPacket(&data);
 
     player->RemoveAurasByType(SPELL_AURA_MOUNTED);
+    player->RemoveAurasByType(SPELL_AURA_FLY);
+    player->RemoveAurasByType(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED);
+    if (player->CanFly())
+        player->SetCanFly(false);
+    if (player->IsGravityDisabled())
+        player->SetDisableGravity(false);
 
     // add arena specific auras
     if (IsArena())
@@ -1853,7 +1875,7 @@ void Battleground::UpdatePlayerScore(Player* Source, uint32 type, uint32 value, 
             itr->second->SpellsPrecast += value;
             break;
         default:
-            TC_LOG_ERROR("bg.battleground", "Battleground::UpdatePlayerScore: unknown score type (%u) for BG (map: %u, instance id: %u)!",
+            TC_LOG_ERROR("bg.battleground", "Battleground::UpdatePlayerScore: unknown score type ({}) for BG (map: {}, instance id: {})!",
                 type, m_MapId, m_InstanceID);
             break;
     }
@@ -1872,41 +1894,65 @@ void Battleground::AddPlayerToResurrectQueue(ObjectGuid npc_guid, ObjectGuid pla
 
 void Battleground::RemovePlayerFromResurrectQueue(ObjectGuid player_guid)
 {
+    bool removed = false;
     for (std::map<ObjectGuid, std::vector<ObjectGuid> >::iterator itr = m_ReviveQueue.begin(); itr != m_ReviveQueue.end(); ++itr)
     {
-        for (std::vector<ObjectGuid>::iterator itr2 = (itr->second).begin(); itr2 != (itr->second).end(); ++itr2)
-        {
-            if (*itr2 == player_guid)
-            {
-                (itr->second).erase(itr2);
-                if (Player* player = ObjectAccessor::FindPlayer(player_guid))
-                    player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
-                return;
-            }
-        }
+        std::vector<ObjectGuid>& queue = itr->second;
+        size_t oldSize = queue.size();
+        queue.erase(std::remove(queue.begin(), queue.end(), player_guid), queue.end());
+        removed |= queue.size() != oldSize;
     }
+
+    size_t oldSize = m_ResurrectQueue.size();
+    m_ResurrectQueue.erase(std::remove(m_ResurrectQueue.begin(), m_ResurrectQueue.end(), player_guid),
+        m_ResurrectQueue.end());
+    removed |= m_ResurrectQueue.size() != oldSize;
+
+    // Aura 2584 calls this method from its removal handler. Only initiate the
+    // aura removal when this invocation actually owned a queue entry, so the
+    // callback cannot recurse indefinitely.
+    if (removed)
+        if (Player* player = ObjectAccessor::FindPlayer(player_guid))
+            player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
 }
 
 void Battleground::RelocateDeadPlayers(ObjectGuid queueIndex)
 {
     // Those who are waiting to resurrect at this node are taken to the closest own node's graveyard
-    std::vector<ObjectGuid>& ghostList = m_ReviveQueue[queueIndex];
-    if (!ghostList.empty())
+    auto queue = m_ReviveQueue.find(queueIndex);
+    if (queue == m_ReviveQueue.end())
+        return;
+
+    // Aura 2584 removal calls RemovePlayerFromResurrectQueue. Detach the whole
+    // list first so callbacks cannot invalidate this iteration or erase new work.
+    std::vector<ObjectGuid> ghosts;
+    ghosts.swap(queue->second);
+    m_ReviveQueue.erase(queue);
+
+    WorldSafeLocsEntry const* closestGrave = nullptr;
+    std::set<ObjectGuid> relocated;
+    for (ObjectGuid guid : ghosts)
     {
-        WorldSafeLocsEntry const* closestGrave = NULL;
-        for (std::vector<ObjectGuid>::const_iterator itr = ghostList.begin(); itr != ghostList.end(); ++itr)
-        {
-            Player* player = ObjectAccessor::FindPlayer(*itr);
-            if (!player)
-                continue;
+        // Duplicate requests must not cancel a fresh registration after transfer.
+        if (!relocated.insert(guid).second)
+            continue;
+        Player* player = ObjectAccessor::FindPlayer(guid);
+        if (!player || player->GetBattleground() != this)
+            continue;
 
-            if (!closestGrave)
-                closestGrave = GetClosestGraveYard(player);
+        // The old registration is gone. Let the player/bot register normally at
+        // the new spirit guide instead of keeping a stale waiting aura forever.
+        player->RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
+        if (player->IsAlive())
+            continue;
 
-            if (closestGrave)
-                player->TeleportTo(GetMapId(), closestGrave->x, closestGrave->y, closestGrave->z, player->GetOrientation());
-        }
-        ghostList.clear();
+        if (!closestGrave)
+            closestGrave = GetClosestGraveYard(player);
+
+        bool transferred = closestGrave && player->TeleportTo(GetMapId(), closestGrave->x, closestGrave->y, closestGrave->z, player->GetOrientation());
+        TC_LOG_INFO("bg.resurrection", "BG relocation GUID={} map={} instance={} old_guide={} grave_found={} transferred={} waiting_resurrect={}",
+            guid.GetCounter(), GetMapId(), GetInstanceID(), queueIndex.GetCounter(),
+            closestGrave != nullptr, transferred, player->HasAura(SPELL_WAITING_FOR_RESURRECT));
     }
 }
 
@@ -1938,9 +1984,9 @@ bool Battleground::AddObject(uint32 type, uint32 entry, float x, float y, float 
     GameObject* go = new GameObject;
     if (!go->Create(m_Map->GenerateLowGuid<HighGuid::GameObject>(), entry, GetBgMap(), PHASEMASK_NORMAL, x, y, z, o, rotation, 100, goState))
     {
-        TC_LOG_ERROR("sql.sql", "Battleground::AddObject: cannot create gameobject (entry: %u) for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("sql.sql", "Battleground::AddObject: cannot create gameobject (entry: {}) for BG (map: {}, instance id: {})!",
                 entry, m_MapId, m_InstanceID);
-        TC_LOG_ERROR("bg.battleground", "Battleground::AddObject: cannot create gameobject (entry: %u) for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::AddObject: cannot create gameobject (entry: {}) for BG (map: {}, instance id: {})!",
                 entry, m_MapId, m_InstanceID);
         delete go;
         return false;
@@ -1994,7 +2040,7 @@ void Battleground::DoorClose(uint32 type)
         }
     }
     else
-        TC_LOG_ERROR("bg.battleground", "Battleground::DoorClose: door gameobject (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::DoorClose: door gameobject (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
             type, BgObjects[type].GetCounter(), m_MapId, m_InstanceID);
 }
 
@@ -2006,7 +2052,7 @@ void Battleground::DoorOpen(uint32 type)
         obj->SetGoState(GO_STATE_ACTIVE);
     }
     else
-        TC_LOG_ERROR("bg.battleground", "Battleground::DoorOpen: door gameobject (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::DoorOpen: door gameobject (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
             type, BgObjects[type].GetCounter(), m_MapId, m_InstanceID);
 }
 
@@ -2014,7 +2060,7 @@ GameObject* Battleground::GetBGObject(uint32 type)
 {
     GameObject* obj = GetBgMap()->GetGameObject(BgObjects[type]);
     if (!obj)
-        TC_LOG_ERROR("bg.battleground", "Battleground::GetBGObject: gameobject (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::GetBGObject: gameobject (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
             type, BgObjects[type].GetCounter(), m_MapId, m_InstanceID);
     return obj;
 }
@@ -2023,7 +2069,7 @@ Creature* Battleground::GetBGCreature(uint32 type)
 {
     Creature* creature = GetBgMap()->GetCreature(BgCreatures[type]);
     if (!creature)
-        TC_LOG_ERROR("bg.battleground", "Battleground::GetBGCreature: creature (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::GetBGCreature: creature (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
             type, BgCreatures[type].GetCounter(), m_MapId, m_InstanceID);
     return creature;
 }
@@ -2065,9 +2111,9 @@ Creature* Battleground::AddCreature(uint32 entry, uint32 type, uint32 teamval, f
     }
 
     Creature* creature = new Creature;
-    if (!creature->Create(map->GenerateLowGuid<HighGuid::Unit>(), map, PHASEMASK_NORMAL, entry, 0, teamval, x, y, z, o))
+    if (!creature->Create(map->GenerateLowGuid<HighGuid::Unit>(), map, PHASEMASK_NORMAL, entry, 0, teamval, x, y, z, o, nullptr, true))
     {
-        TC_LOG_ERROR("bg.battleground", "Battleground::AddCreature: cannot create creature (entry: %u) for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::AddCreature: cannot create creature (entry: {}) for BG (map: {}, instance id: {})!",
             entry, m_MapId, m_InstanceID);
         delete creature;
         return NULL;
@@ -2078,7 +2124,7 @@ Creature* Battleground::AddCreature(uint32 entry, uint32 type, uint32 teamval, f
     CreatureTemplate const* cinfo = sObjectMgr->GetCreatureTemplate(entry);
     if (!cinfo)
     {
-        TC_LOG_ERROR("bg.battleground", "Battleground::AddCreature: creature template (entry: %u) does not exist for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::AddCreature: creature template (entry: {}) does not exist for BG (map: {}, instance id: {})!",
             entry, m_MapId, m_InstanceID);
         delete creature;
         return NULL;
@@ -2116,7 +2162,7 @@ bool Battleground::DelCreature(uint32 type)
         return true;
     }
 
-    TC_LOG_ERROR("bg.battleground", "Battleground::DelCreature: creature (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+    TC_LOG_ERROR("bg.battleground", "Battleground::DelCreature: creature (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
         type, BgCreatures[type].GetCounter(), m_MapId, m_InstanceID);
     BgCreatures[type].Clear();
     return false;
@@ -2140,7 +2186,7 @@ bool Battleground::DelObject(uint32 type)
         BgObjects[type].Clear();
         return true;
     }
-    TC_LOG_ERROR("bg.battleground", "Battleground::DelObject: gameobject (type: %u, GUID: %u) not found for BG (map: %u, instance id: %u)!",
+    TC_LOG_ERROR("bg.battleground", "Battleground::DelObject: gameobject (type: {}, GUID: {}) not found for BG (map: {}, instance id: {})!",
         type, BgObjects[type].GetCounter(), m_MapId, m_InstanceID);
     BgObjects[type].Clear();
     return false;
@@ -2167,7 +2213,7 @@ bool Battleground::AddSpiritGuide(uint32 type, float x, float y, float z, float 
         //creature->CastSpell(creature, SPELL_SPIRIT_HEAL_CHANNEL, true);
         return true;
     }
-    TC_LOG_ERROR("bg.battleground", "Battleground::AddSpiritGuide: cannot create spirit guide (type: %u, entry: %u) for BG (map: %u, instance id: %u)!",
+    TC_LOG_ERROR("bg.battleground", "Battleground::AddSpiritGuide: cannot create spirit guide (type: {}, entry: {}) for BG (map: {}, instance id: {})!",
         type, entry, m_MapId, m_InstanceID);
     EndNow();
     return false;
@@ -2458,7 +2504,7 @@ void Battleground::HandleTriggerBuff(ObjectGuid go_guid)
         index--;
     if (index < 0)
     {
-        TC_LOG_ERROR("bg.battleground", "Battleground::HandleTriggerBuff: cannot find buff gameobject (GUID: %u, entry: %u, type: %u) in internal data for BG (map: %u, instance id: %u)!",
+        TC_LOG_ERROR("bg.battleground", "Battleground::HandleTriggerBuff: cannot find buff gameobject (GUID: {}, entry: {}, type: {}) in internal data for BG (map: {}, instance id: {})!",
             go_guid.GetCounter(), obj->GetEntry(), obj->GetGoType(), m_MapId, m_InstanceID);
         return;
     }
@@ -2582,7 +2628,7 @@ int32 Battleground::GetObjectType(ObjectGuid guid)
     for (uint32 i = 0; i < BgObjects.size(); ++i)
         if (BgObjects[i] == guid)
             return i;
-    TC_LOG_ERROR("bg.battleground", "Battleground::GetObjectType: player used gameobject (GUID: %u) which is not in internal data for BG (map: %u, instance id: %u), cheating?",
+    TC_LOG_ERROR("bg.battleground", "Battleground::GetObjectType: player used gameobject (GUID: {}) which is not in internal data for BG (map: {}, instance id: {}), cheating?",
         guid.GetCounter(), m_MapId, m_InstanceID);
     return -1;
 }
@@ -2647,19 +2693,19 @@ uint32 Battleground::GetTeamScore(uint32 teamId) const
     if (teamId == TEAM_ALLIANCE || teamId == TEAM_HORDE)
         return m_TeamScores[teamId];
 
-    TC_LOG_ERROR("bg.battleground", "GetTeamScore with wrong Team %u for BG %u", teamId, GetTypeID());
+    TC_LOG_ERROR("bg.battleground", "GetTeamScore with wrong Team {} for BG {}", teamId, GetTypeID());
     return 0;
 }
 
 void Battleground::HandleAreaTrigger(Player* player, uint32 trigger, bool /*entered*/)
 {
-    TC_LOG_DEBUG("bg.battleground", "Unhandled AreaTrigger %u in Battleground %u. Player coords (x: %f, y: %f, z: %f)",
+    TC_LOG_DEBUG("bg.battleground", "Unhandled AreaTrigger {} in Battleground {}. Player coords (x: {}, y: {}, z: {})",
                    trigger, player->GetMapId(), player->GetPositionX(), player->GetPositionY(), player->GetPositionZ());
 }
 
 bool Battleground::CheckAchievementCriteriaMeet(uint32 criteriaId, Player const* /*source*/, Unit const* /*target*/, uint32 /*miscvalue1*/)
 {
-    TC_LOG_ERROR("bg.battleground", "Battleground::CheckAchievementCriteriaMeet: No implementation for criteria %u", criteriaId);
+    TC_LOG_ERROR("bg.battleground", "Battleground::CheckAchievementCriteriaMeet: No implementation for criteria {}", criteriaId);
     return false;
 }
 
@@ -2741,8 +2787,6 @@ void Battleground::RemovePlayer(Player* player, ObjectGuid guid, uint32 team)
     {
         player->setFactionForRace(player->GetRace());
         player->InitDisplayIds();
-        player->RemoveAurasDueToSpell(200002);
-        player->RemoveAurasDueToSpell(200003);
     }
 }
 

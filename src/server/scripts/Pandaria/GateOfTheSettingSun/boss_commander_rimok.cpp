@@ -389,30 +389,26 @@ class spell_rimok_saboteur_bombard : public SpellScriptLoader
             }
         };
 
-        class spell_bombard_rimok_SpellScript : public SpellScript
-        {
-            PrepareSpellScript(spell_bombard_rimok_SpellScript);
-
-            void FilterTargets(std::list<WorldObject*>& targets)
-            {
-                targets.remove_if (PlayerTargetSelector());
-            }
-
-            void Register() override
-            {
-                OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_bombard_rimok_SpellScript::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
-            }
-        };
-
-        SpellScript* GetSpellScript() const override
-        {
-            return new spell_bombard_rimok_SpellScript();
-        }
-
         AuraScript* GetAuraScript() const override
         {
             return new spell_rimok_saboteur_bombard_AuraScript();
         }
+};
+
+// 120202 - Saboteur Bombard damage
+class spell_rimok_saboteur_bombard_effect : public SpellScript
+{
+    PrepareSpellScript(spell_rimok_saboteur_bombard_effect);
+
+    void FilterTargets(std::list<WorldObject*>& targets)
+    {
+        targets.remove_if(PlayerTargetSelector());
+    }
+
+    void Register() override
+    {
+        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_rimok_saboteur_bombard_effect::FilterTargets, EFFECT_0, TARGET_UNIT_SRC_AREA_ENTRY);
+    }
 };
 
 class spell_rimok_viscous_fluid : public SpellScriptLoader
@@ -450,5 +446,6 @@ void AddSC_boss_commander_rimok()
     new npc_krikthik_saboteur();
     new npc_add_generator();
     new spell_rimok_saboteur_bombard();
+    new spell_script<spell_rimok_saboteur_bombard_effect>("spell_rimok_saboteur_bombard_effect");
     new spell_rimok_viscous_fluid();
 }

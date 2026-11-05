@@ -1158,6 +1158,7 @@ public:
     bool IsWithinMeleeRange(const Unit* obj, float dist = NOMINAL_MELEE_RANGE) const;
     bool IsWithinRangedMeleeRange(Unit const* obj, float dist) const;
     void GetRandomContactPoint(const Unit* target, float &x, float &y, float &z, float distance2dMin, float distance2dMax) const;
+    bool GetMeleeRepositionPoint(Unit const* attacker, Position& position) const;
     uint32 m_extraAttacks;
     bool m_canDualWield;
 

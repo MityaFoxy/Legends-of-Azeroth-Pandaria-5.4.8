@@ -32,14 +32,16 @@ void WorldSession::HandeSetTalentSpecialization(WorldPacket& recvData)
     uint32 specializationTabId;
     recvData >> specializationTabId;
 
-    if (specializationTabId > MAX_TALENT_TABS)
+    auto const specializations = dbc::GetClassSpecializations(_player->GetClass());
+    if (specializationTabId >= specializations.size())
         return;
 
     if (_player->GetTalentSpecialization(_player->GetActiveSpec()) && !_player->GetSession()->IsBot())
         return;
 
-    uint32 specializationId = dbc::GetClassSpecializations(_player->GetClass())[specializationTabId];
-    uint32 specializationSpell = 0;
+    uint32 specializationId = specializations[specializationTabId];
+    if (specializationId == Specializations::SPEC_NONE)
+        return;
 
     _player->SetTalentSpecialization(_player->GetActiveSpec(), Specializations(specializationId));
     _player->SetUInt32Value(PLAYER_FIELD_CURRENT_SPEC_ID, specializationId);

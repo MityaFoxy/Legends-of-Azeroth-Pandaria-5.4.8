@@ -20,6 +20,7 @@
 
 #include "Common.h"
 #include <atomic>
+#include <memory>
 
 enum RidingSpells
 {
@@ -82,6 +83,7 @@ enum ItemDeletingType
 
 struct RetroactiveFix
 {
+    virtual ~RetroactiveFix() = default;
     virtual char const* GetDescription() const = 0;
     virtual bool IsActive() { return true; }
     virtual bool IsApplicable(Player* player) { return true; }
@@ -165,7 +167,7 @@ private:
     static void SetExecuted(uint32 id);
 
     // Retroactive player fixes
-    static std::vector<RetroactiveFix*> _retroactiveFixes;
+    static std::vector<std::unique_ptr<RetroactiveFix>> _retroactiveFixes;
 
     typedef void (ServiceMgr::*ServiceHandler)(Player*, uint32, uint32, uint32, std::string const&);
     static ServiceHandler _serviceMethods[ISERVICE_END];

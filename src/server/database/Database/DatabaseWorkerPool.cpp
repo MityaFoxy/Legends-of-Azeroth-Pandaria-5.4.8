@@ -45,8 +45,6 @@
 #define MIN_MYSQL_CLIENT_VERSION 50700u
 #define MIN_MYSQL_CLIENT_VERSION_STRING "5.7"
 
-#define MIN_MARIADB_SERVER_VERSION 100209u
-#define MIN_MARIADB_SERVER_VERSION_STRING "10.2.9"
 #define MIN_MARIADB_CLIENT_VERSION 30003u
 #define MIN_MARIADB_CLIENT_VERSION_STRING "3.0.3"
 
@@ -135,8 +133,8 @@ uint32 DatabaseWorkerPool<T>::Open()
 {
     WPFatal(_connectionInfo.get(), "Connection info was not set!");
 
-    TC_LOG_INFO("sql.driver", "Opening DatabasePool '%s'. "
-        "Asynchronous connections: %u, synchronous connections: %u.",
+    TC_LOG_INFO("sql.driver", "Opening DatabasePool '{}'. "
+        "Asynchronous connections: {}, synchronous connections: {}.",
         GetDatabaseName(), _async_threads, _synch_threads);
 
     _ioContext = std::make_unique<Trinity::Asio::IoContext>(_async_threads);
@@ -154,8 +152,7 @@ uint32 DatabaseWorkerPool<T>::Open()
     for (std::unique_ptr<T> const& connection : _connections[IDX_ASYNC])
         connection->StartWorkerThread(_ioContext.get());
 
-    TC_LOG_INFO("sql.driver", "DatabasePool '%s' opened successfully. " SZFMTD
-                    " total connections running.", GetDatabaseName(),
+    TC_LOG_INFO("sql.driver", "DatabasePool '{}' opened successfully. " "{}" " total connections running.", GetDatabaseName(),
                     (_connections[IDX_SYNCH].size() + _connections[IDX_ASYNC].size()));
 
     return 0;
@@ -164,7 +161,7 @@ uint32 DatabaseWorkerPool<T>::Open()
 template <class T>
 void DatabaseWorkerPool<T>::Close()
 {
-    TC_LOG_INFO("sql.driver", "Closing down DatabasePool '%s'.", GetDatabaseName());
+    TC_LOG_INFO("sql.driver", "Closing down DatabasePool '{}'.", GetDatabaseName());
 
      if (_ioContext)
         _ioContext->stop();
@@ -174,7 +171,7 @@ void DatabaseWorkerPool<T>::Close()
 
     _ioContext.reset();
 
-    TC_LOG_INFO("sql.driver", "Asynchronous connections on DatabasePool '%s' terminated. "
+    TC_LOG_INFO("sql.driver", "Asynchronous connections on DatabasePool '{}' terminated. "
                 "Proceeding with synchronous connections.",
         GetDatabaseName());
 
@@ -184,7 +181,7 @@ void DatabaseWorkerPool<T>::Close()
     //! meaning there can be no concurrent access at this point.
     _connections[IDX_SYNCH].clear();
 
-    TC_LOG_INFO("sql.driver", "All connections on DatabasePool '%s' closed.", GetDatabaseName());
+    TC_LOG_INFO("sql.driver", "All connections on DatabasePool '{}' closed.", GetDatabaseName());
 }
 
 template <class T>
@@ -441,18 +438,9 @@ uint32 DatabaseWorkerPool<T>::OpenConnections(InternalIndex type, uint8 numConne
             _connections[type].clear();
             return error;
         }
-#ifndef LIBMARIADB
         else if (connection->GetServerVersion() < MIN_MYSQL_SERVER_VERSION)
-#else
-        else if (connection->GetServerVersion() < MIN_MARIADB_SERVER_VERSION)
-#endif
         {
-#ifndef LIBMARIADB
-            TC_LOG_ERROR("sql.driver", "TrinityCore does not support MySQL versions below " MIN_MYSQL_SERVER_VERSION_STRING " (found id %u, need id >= %u), please update your MySQL server", connection->GetServerVersion(), MIN_MYSQL_SERVER_VERSION);
-#else
-            TC_LOG_ERROR("sql.driver", "TrinityCore does not support MariaDB versions below " MIN_MARIADB_SERVER_VERSION_STRING " (found id %u, need id >= %u), please update your MySQL server", connection->GetServerVersion(), MIN_MARIADB_SERVER_VERSION);
-#endif
-
+            TC_LOG_ERROR("sql.driver", "TrinityCore does not support MySQL versions below " MIN_MYSQL_SERVER_VERSION_STRING " (found id {}, need id >= {}), please update your MySQL server", connection->GetServerVersion(), MIN_MYSQL_SERVER_VERSION);
             return 1;
         }
         else
@@ -488,7 +476,7 @@ T* DatabaseWorkerPool<T>::GetFreeConnection()
     {
         std::ostringstream ss;
         ss << boost::stacktrace::stacktrace();
-        TC_LOG_WARN("sql.performances", "Sync query at:\n%s", ss.str().c_str());
+        TC_LOG_WARN("sql.performances", "Sync query at:\n{}", ss.str().c_str());
     }
 #endif
 

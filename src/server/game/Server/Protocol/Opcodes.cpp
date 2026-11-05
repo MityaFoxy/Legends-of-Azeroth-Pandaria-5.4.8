@@ -83,20 +83,20 @@ void OpcodeTable::ValidateAndSetClientOpcode(OpcodeClient opcode, char const* na
 {
     if (uint32(opcode) == NULL_OPCODE)
     {
-        TC_LOG_ERROR("network", "Opcode %s does not have a value", name);
+        TC_LOG_ERROR("network", "Opcode {} does not have a value", name);
         return;
     }
 
     if (uint32(opcode) >= NUM_OPCODE_HANDLERS)
     {
         // Shaohao: temp disable spam
-        //TC_LOG_ERROR("network", "Tried to set handler for an invalid opcode %d", opcode);
+        //TC_LOG_ERROR("network", "Tried to set handler for an invalid opcode {}", opcode);
         return;
     }
 
     if (_internalTableClient[opcode] != nullptr)
     {
-        TC_LOG_ERROR("network", "Tried to override client handler of %s with %s (opcode %u)", opcodeTable[opcode]->Name, name, opcode);
+        TC_LOG_ERROR("network", "Tried to override client handler of {} with {} (opcode {})", opcodeTable[opcode]->Name, name, opcode);
         return;
     }
 
@@ -107,20 +107,20 @@ void OpcodeTable::ValidateAndSetServerOpcode(OpcodeServer opcode, char const* na
 {
     if (uint32(opcode) == NULL_OPCODE)
     {
-        TC_LOG_ERROR("network", "Opcode %s does not have a value", name);
+        TC_LOG_ERROR("network", "Opcode {} does not have a value", name);
         return;
     }
 
     if (uint32(opcode) >= NUM_OPCODE_HANDLERS)
     {
         // Shaohao: temp disable spam
-        //TC_LOG_ERROR("network", "Tried to set handler for an invalid opcode %d", opcode);
+        //TC_LOG_ERROR("network", "Tried to set handler for an invalid opcode {}", opcode);
         return;
     }
 
     if (_internalTableServer[opcode] != nullptr)
     {
-        TC_LOG_ERROR("network", "Tried to override server handler of %s with %s (opcode %u)", opcodeTable[opcode]->Name, name, opcode);
+        TC_LOG_ERROR("network", "Tried to override server handler of {} with {} (opcode {})", opcodeTable[opcode]->Name, name, opcode);
         return;
     }
 
@@ -1291,6 +1291,9 @@ void OpcodeTable::Initialize()
     ValidateAndSetServerOpcode(OpcodeServer(opcode), #opcode, status); \
     ValidateAndSetClientOpcode<decltype(handler), handler>(OpcodeClient(opcode), #opcode, status, processing)
 
+#define DEFINE_CLIENT_OPCODE_HANDLER(opcode, status, processing, handler) \
+    ValidateAndSetClientOpcode<decltype(handler), handler>(OpcodeClient(opcode), #opcode, status, processing)
+
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_FALL_LAND, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_HEARTBEAT, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_JUMP, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
@@ -1299,11 +1302,11 @@ void OpcodeTable::Initialize()
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_SET_RUN_MODE, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_SET_WALK_MODE, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_ASCEND, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
-    DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_BACKWARD, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
+    DEFINE_CLIENT_OPCODE_HANDLER(MSG_MOVE_START_BACKWARD, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_DESCEND, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
-    DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_FORWARD, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
+    DEFINE_CLIENT_OPCODE_HANDLER(MSG_MOVE_START_FORWARD, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_PITCH_DOWN, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
-    DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_PITCH_UP, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
+    DEFINE_CLIENT_OPCODE_HANDLER(MSG_MOVE_START_PITCH_UP, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_STRAFE_LEFT, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_STRAFE_RIGHT, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
     DEFINE_MSG_OPCODE_HANDLER(MSG_MOVE_START_SWIM, STATUS_LOGGEDIN, PROCESS_THREADSAFE, &WorldSession::HandleMovementOpcodes); // 5.4.8 18414
@@ -1320,6 +1323,7 @@ void OpcodeTable::Initialize()
     DEFINE_MSG_OPCODE_HANDLER(MSG_VERIFY_CONNECTIVITY, STATUS_UNHANDLED, PROCESS_INPLACE, &WorldSession::Handle_EarlyProccess); // Not an opcode
 
 #undef DEFINE_MSG_OPCODE_HANDLER
+#undef DEFINE_CLIENT_OPCODE_HANDLER
 
     /*
     //UNHANDLED

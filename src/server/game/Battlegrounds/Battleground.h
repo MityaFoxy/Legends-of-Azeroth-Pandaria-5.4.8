@@ -629,6 +629,9 @@ class Battleground
         void RewardSolo();
 
     protected:
+        // Called for normal and premature finishes, before awarding WIN_BG criteria.
+        virtual void FinalizeAchievementWorldStates(uint32 /*winner*/) { }
+
         // this method is called, when BG cannot spawn its own spirit guide, or something is wrong, It correctly ends Battleground
         void EndNow();
         void PlayerAddedToBGCheckIfBGIsRunning(Player* player);

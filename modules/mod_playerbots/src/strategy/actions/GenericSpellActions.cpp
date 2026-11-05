@@ -86,7 +86,7 @@ bool CastSpellAction::isPossible()
     {
         //if (!sPlayerbotAIConfig->logInGroupOnly || (bot->GetGroup() && botAI->HasRealPlayerMaster()))
         {
-            TC_LOG_DEBUG("playerbots", "Can cast spell failed. Vehicle. - bot name: %s", bot->GetName().c_str());
+            TC_LOG_DEBUG("playerbots", "Can cast spell failed. Vehicle. - bot name: {}", bot->GetName().c_str());
         }
         return false;
     }
@@ -98,7 +98,7 @@ bool CastSpellAction::isPossible()
     {
         //if (!sPlayerbotAIConfig->logInGroupOnly || (bot->GetGroup() && botAI->HasRealPlayerMaster()))
         {
-            TC_LOG_DEBUG("playerbots", "Can cast spell failed. Mount. - bot name: %s", bot->GetName().c_str());
+            TC_LOG_DEBUG("playerbots", "Can cast spell failed. Mount. - bot name: {}", bot->GetName().c_str());
         }
         bot->Dismount();
         return false;
@@ -280,7 +280,14 @@ Value<Unit*>* CastSpellOnEnemyHealerAction::GetTargetValue()
     return context->GetValue<Unit*>("enemy healer target", spell);
 }
 
-Value<Unit*>* CastSnareSpellAction::GetTargetValue() { return context->GetValue<Unit*>("snare target", spell); }
+Value<Unit*>* CastSnareSpellAction::GetTargetValue()
+{
+    // Contexts without a specialized snare selector still have a combat target.
+    // Preserve an available selector, including its explicit no-target result.
+    if (Value<Unit*>* target = context->GetValue<Unit*>("snare target", spell))
+        return target;
+    return context->GetValue<Unit*>("current target");
+}
 
 Value<Unit*>* CastCrowdControlSpellAction::GetTargetValue() { return context->GetValue<Unit*>("cc target", getName()); }
 

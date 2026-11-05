@@ -12,6 +12,7 @@ class PlayerbotAIBase
 {
 public:
     PlayerbotAIBase(bool isBotAI);
+    virtual ~PlayerbotAIBase() = default;
 
     bool CanUpdateAI();
     void SetNextCheckDelay(uint32 const delay);

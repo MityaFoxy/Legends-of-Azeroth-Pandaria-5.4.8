@@ -2138,8 +2138,8 @@ void AddBattlegroundScripts()
 void AddSC_npc_teleport();
 void AddSC_wow_token();
 void AddSC_custom_reward();
-void AddSC_boost_profession();
-void AddSC_custom_items();
+void AddSC_Boost_Profession();
+void AddSC_Custom_Items();
 void AddSC_solocraft_system();
 
 void AddCustomScripts()
@@ -2147,11 +2147,11 @@ void AddCustomScripts()
 #ifdef SCRIPTS
     /* This is where custom scripts should be added. */
 //AddSC_npc_teleport();
-//AddSC_wow_token();
+    AddSC_wow_token();
 //AddSC_custom_reward();
-//AddSC_boost_profession();
-//AddSC_custom_items();
-	AddSC_solocraft_system();
+    AddSC_Boost_Profession();
+    AddSC_Custom_Items();
+    AddSC_solocraft_system();
 
 #endif
     AddSC_Anticheat();

@@ -113,7 +113,7 @@ WayPoint* SmartAI::GetNextWayPoint()
         mLastWP = (*itr).second;
         if (mLastWP->id != mCurrentWPID)
         {
-            TC_LOG_ERROR("misc", "SmartAI::GetNextWayPoint: Got not expected waypoint id %u, expected %u", mLastWP->id, mCurrentWPID);
+            TC_LOG_ERROR("misc", "SmartAI::GetNextWayPoint: Got not expected waypoint id {}, expected {}", mLastWP->id, mCurrentWPID);
         }
         return (*itr).second;
     }
@@ -124,7 +124,7 @@ void SmartAI::StartPath(bool run/* = false*/, uint32 pathId/* = 0*/, bool repeat
 {
     if (me->IsInCombat())// no wp movement in combat
     {
-        TC_LOG_ERROR("misc", "SmartAI::StartPath: Creature entry %u wanted to start waypoint movement while in combat, ignoring.", me->GetEntry());
+        TC_LOG_ERROR("misc", "SmartAI::StartPath: Creature entry {} wanted to start waypoint movement while in combat, ignoring.", me->GetEntry());
         return;
     }
 
@@ -137,7 +137,9 @@ void SmartAI::StartPath(bool run/* = false*/, uint32 pathId/* = 0*/, bool repeat
     }
  
     if (!mWayPoints || mWayPoints->empty())
+    {
         return;
+    }
 
     AddEscortState(SMART_ESCORT_ESCORTING);
     mCanRepeatPath = repeat;
@@ -174,7 +176,7 @@ void SmartAI::PausePath(uint32 delay, bool forced)
         return;
     if (HasEscortState(SMART_ESCORT_PAUSED))
     {
-        TC_LOG_ERROR("misc", "SmartAI::StartPath: Creature entry %u wanted to pause waypoint movement while already paused, ignoring.", me->GetEntry());
+        TC_LOG_ERROR("misc", "SmartAI::StartPath: Creature entry {} wanted to pause waypoint movement while already paused, ignoring.", me->GetEntry());
         return;
     }
     mForcedPaused = forced;
@@ -222,7 +224,7 @@ void SmartAI::EndPath(bool fail)
     else
         GetScript()->SetPathId(0);
 
-    ObjectList* targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
+    auto targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
     if (targets && mEscortQuestID)
     {
         if (targets->size() == 1 && GetScript()->IsPlayer((*targets->begin())))
@@ -327,7 +329,9 @@ void SmartAI::UpdatePath(const uint32 diff)
         }
     }
     if ((!me->HasReactState(REACT_PASSIVE) && me->IsInCombat()) || HasEscortState(SMART_ESCORT_PAUSED | SMART_ESCORT_RETURNING))
+    {
         return;
+    }
     // handle next wp
     if (mWPReached)//reached WP
     {
@@ -396,7 +400,7 @@ void SmartAI::UpdateAI(uint32 diff)
 
 bool SmartAI::IsEscortInvokerInRange()
 {
-    ObjectList* targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
+    auto targets = GetScript()->GetTargetList(SMART_ESCORT_TARGETS);
     if (targets)
     {
         if (targets->size() == 1 && GetScript()->IsPlayer((*targets->begin())))
@@ -464,7 +468,7 @@ void SmartAI::RemoveAuras()
     }
 }
 
-void SmartAI::EnterEvadeMode(EvadeReason why)
+void SmartAI::EnterEvadeMode(EvadeReason /*why*/)
 {
     if (!me->IsAlive() || me->IsInEvadeMode())
         return;
@@ -474,6 +478,12 @@ void SmartAI::EnterEvadeMode(EvadeReason why)
         GetScript()->ProcessEventsFor(SMART_EVENT_EVADE);
         return;
     }
+
+    // This override performs its own reset rather than _EnterEvadeMode.
+    // Finish engagement too, otherwise UpdateVictim starts evade again as
+    // soon as the creature reaches home. Keep disabled-evade scripts intact.
+    if (IsEngaged())
+        EngagementOver();
 
     RemoveAuras();
 
@@ -593,21 +603,19 @@ void SmartAI::JustAppeared()
     if (me->isDead())
         return;
 
-    mDespawnTime = 0;
-    mDespawnState = 0;
-    mEscortState = SMART_ESCORT_NONE;
-    me->SetVisible(true);
-    if (me->GetFaction() != me->GetCreatureTemplate()->faction)
-        me->RestoreFaction();
+    // A respawn: the AI object survives it, and with it the despawn state of a forced despawn of a
+    // living creature - it then despawned itself again at every respawn, invisible, until a restart. Not on the first appearance:
+    // InitializeAI just ran, and a summon may have been told to despawn after a delay in the tick it was created.
+    if (mAppearedOnce)
+    {
+        mDespawnTime = 0;
+        mDespawnState = 0;
+        me->SetVisible(true);
+    }
+    mAppearedOnce = true;
+
     GetScript()->ProcessEventsFor(SMART_EVENT_RESPAWN);
     Reset();
-    mFollowGuid.Clear();//do not reset follower on Reset(), we need it after combat evade
-    mFollowDist = 0;
-    mFollowAngle = 0;
-    mFollowCredit = 0;
-    mFollowArrivedTimer = 1000;
-    mFollowArrivedEntry = 0;
-    mFollowCreditType = 0;
 }
 
 int32 SmartAI::Permissible(const Creature* creature)
@@ -739,9 +747,18 @@ void SmartAI::PassengerBoarded(Unit* who, int8 seatId, bool apply)
 void SmartAI::InitializeAI()
 {
     GetScript()->OnInitialize(me);
-    if (!me->isDead())
-        Reset();
-    GetScript()->ProcessEventsFor(SMART_EVENT_RESPAWN);
+
+    mAppearedOnce = false;
+    mDespawnTime = 0;
+    mDespawnState = 0;
+    mEscortState = SMART_ESCORT_NONE;
+    mFollowGuid.Clear();//do not reset follower on Reset(), we need it after combat evade
+    mFollowDist = 0;
+    mFollowAngle = 0;
+    mFollowCredit = 0;
+    mFollowArrivedTimer = 1000;
+    mFollowArrivedEntry = 0;
+    mFollowCreditType = 0;
 }
 
 void SmartAI::OnCharmed(bool apply)
@@ -1099,7 +1116,7 @@ class SmartTrigger : public AreaTriggerScript
             if (!player->IsAlive())
                 return false;
 
-            TC_LOG_DEBUG("scripts.ai", "AreaTrigger %u is using SmartTrigger script", trigger->ID);
+            TC_LOG_DEBUG("scripts.ai", "AreaTrigger {} is using SmartTrigger script", trigger->ID);
             SmartScript script;
             script.OnInitialize(NULL, trigger);
             script.ProcessEventsFor(SMART_EVENT_AREATRIGGER_ONTRIGGER, player, trigger->ID);

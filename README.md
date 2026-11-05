@@ -39,7 +39,7 @@ This is a personal, actively maintained server-development branch for the **Mist
 | C++ standard | C++20 |
 | CMake | **3.16+** |
 | Compiler | GCC **13+**, Clang **12+**, or Visual Studio **2019 16.4+** |
-| Database | MySQL **5.7** or **8.0–8.1** |
+| Database | MySQL **5.7**, **8.0–8.1**, or **8.4 LTS**; MariaDB Server is not supported |
 | OpenSSL | **1.1.1** or **3.0–3.1.1**; OpenSSL 3.2 is not supported with newer MySQL |
 | Boost | **1.85+** recommended |
 | Windows SDK | 10.0.22621 or newer recommended |

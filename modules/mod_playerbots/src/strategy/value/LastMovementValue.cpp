@@ -24,10 +24,16 @@ LastMovement::LastMovement(LastMovement& other)
     lastMoveShort = other.lastMoveShort;
     nextTeleport = other.nextTeleport;
     priority = other.priority;
+    navigationLogTime = other.navigationLogTime;
+    navigationLogSuppressed = other.navigationLogSuppressed;
+    navigationLogStarted = other.navigationLogStarted;
+    navigationLogWarning = other.navigationLogWarning;
+    groundMovement = other.groundMovement;
 }
 
 void LastMovement::clear()
 {
+    groundMovement = {};
     lastMoveShort = WorldPosition();
     lastMoveToMapId = 0;
     lastMoveToX = 0;

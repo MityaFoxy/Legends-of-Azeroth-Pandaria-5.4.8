@@ -36,6 +36,7 @@
 
 #include <bitset>
 #include <list>
+#include <memory>
 
 class Unit;
 
@@ -69,7 +70,8 @@ struct ScriptAction
     ObjectGuid sourceGUID;
     ObjectGuid targetGUID;
     ObjectGuid ownerGUID;                                   ///> owner of source if source is item
-    ScriptInfo const* script;                               ///> pointer to static script data
+    ScriptInfo const* script = nullptr;                     ///> static DB data or ownedScript.get()
+    std::shared_ptr<ScriptInfo const> ownedScript;           ///> snapshot for ScriptCommandStart, survives queue copies
 };
 
 /// Represents a map magic value of 4 bytes (used in versions)
@@ -826,6 +828,7 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         std::unordered_map<uint32/*cellId*/, std::unordered_set<Corpse*>> _corpsesByCell;
         std::unordered_map<ObjectGuid, Corpse*> _corpsesByPlayer;
         std::unordered_set<Corpse*> _corpseBones;
+        void UnloadCorpseData();
 
         std::unordered_map<uint32 /*dbGUID*/, time_t> _creatureRespawnTimes;
         std::unordered_map<uint32 /*dbGUID*/, time_t> _goRespawnTimes;

@@ -95,7 +95,7 @@ namespace ChatCommands
                 auto it = current->find(tokens[i]);
                 if (it == current->end())
                 {
-                    TC_LOG_ERROR("sql.sql", "Table `command` have not existed command '%s', skip.", name.c_str());
+                    TC_LOG_ERROR("sql.sql", "Table `command` have not existed command '{}', skip.", name.c_str());
                     found = false;
                     break;
                 }
@@ -293,7 +293,7 @@ namespace ChatCommands
         }
 
         std::string fullCmd(fullCommand);
-        sLog->outCommand(session->GetAccountId(), "Command: %s [Player: %s (Guid: %u) (Account: %u) X: %f Y: %f Z: %f Map: %u (%s) Area: %u (%s) Zone: %s Selected %s: %s (GUID: %u)]",
+        sLog->OutCommand(session->GetAccountId(), "Command: {} [Player: {} (Guid: {}) (Account: {}) X: {} Y: {} Z: {} Map: {} ({}) Area: {} ({}) Zone: {} Selected {}: {} (GUID: {})]",
             fullCmd.c_str(), player->GetName().c_str(), player->GetGUID().GetCounter(),
             session->GetAccountId(), player->GetPositionX(), player->GetPositionY(),
             player->GetPositionZ(), player->GetMapId(),

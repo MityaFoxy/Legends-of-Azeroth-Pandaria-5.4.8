@@ -47,6 +47,7 @@
 #include "Containers.h"
 #include "ItemSpec.h"
 #include <atomic>
+#include <mutex>
 #include "Hash.h"
 
 class AreaTrigger;
@@ -57,18 +58,18 @@ struct AccessRequirement;
 struct PlayerLevelInfo;
 struct DeclinedName;
 
-// GCC have alternative #pragma pack(N) syntax and old gcc version not support pack(push, N), also any gcc version not support it at some platform
-#if defined(__GNUC__)
-#pragma pack(1)
-#else
-#pragma pack(push, 1)
-#endif
-
 struct PageText
 {
     std::string Text;
     uint16 NextPage;
 };
+
+// Only the memcmp key needs packing, not STL-containing runtime records.
+#if defined(__GNUC__)
+#pragma pack(1)
+#else
+#pragma pack(push, 1)
+#endif
 
 /// Key for storing temp summon data in TempSummonDataContainer
 struct TempSummonGroupKey
@@ -1813,6 +1814,7 @@ class ObjectMgr
         template<HighGuid high>
         inline ObjectGuidGeneratorBase& GetGuidSequenceGenerator()
         {
+            std::lock_guard<std::mutex> guard(_guidGeneratorsLock);
             auto itr = _guidGenerators.find(high);
             if (itr == _guidGenerators.end())
                 itr = _guidGenerators.insert(std::make_pair(high, std::unique_ptr<ObjectGuidGenerator<high>>(new ObjectGuidGenerator<high>()))).first;
@@ -1821,6 +1823,7 @@ class ObjectMgr
         }
 
         std::map<HighGuid, std::unique_ptr<ObjectGuidGeneratorBase>> _guidGenerators;
+        std::mutex _guidGeneratorsLock;
 
         QuestMap _questTemplates;
         QuestObjectivesByIdContainer _questObjectives;

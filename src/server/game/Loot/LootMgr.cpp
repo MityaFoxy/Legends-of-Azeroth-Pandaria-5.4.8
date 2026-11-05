@@ -145,7 +145,7 @@ uint32 LootStore::LoadLootTable()
     Clear();
 
     //                                                  0     1            2               3             4         5             6
-    QueryResult result = WorldDatabase.PQuery("SELECT entry, item, ChanceOrQuestChance, lootmode+0, groupid, mincountOrRef, maxcount FROM %s", GetName());
+    QueryResult result = WorldDatabase.PQuery("SELECT entry, item, ChanceOrQuestChance, lootmode+0, groupid, mincountOrRef, maxcount FROM {}", GetName());
 
     if (!result)
         return 0;
@@ -167,19 +167,19 @@ uint32 LootStore::LoadLootTable()
 
         if (type == LOOT_ITEM_TYPE_ITEM && maxcount > std::numeric_limits<uint8>::max())
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: maxcount value (%u) to large. must be less %u - skipped", GetName(), entry, item, maxcount, std::numeric_limits<uint8>::max());
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: maxcount value ({}) to large. must be less {} - skipped", GetName(), entry, item, maxcount, std::numeric_limits<uint8>::max());
             continue;                                   // error already printed to log/console.
         }
 
         if (type == LOOT_ITEM_TYPE_CURRENCY && mincountOrRef < 0)
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: has type LOOT_ITEM_TYPE_CURRENCY and mincountOrRef < 0 (%i) - skipped", GetName(), entry, item, mincountOrRef);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: has type LOOT_ITEM_TYPE_CURRENCY and mincountOrRef < 0 ({}) - skipped", GetName(), entry, item, mincountOrRef);
             continue;
         }
 
         if (group >= 1 << 7)                                     // it stored in 7 bit field
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: group (%u) must be less %u - skipped", GetName(), entry, item, group, 1 << 7);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: group ({}) must be less {} - skipped", GetName(), entry, item, group, 1 << 7);
             return false;
         }
 
@@ -286,12 +286,12 @@ void LootStore::ReportUnusedIds(LootIdSet const& lootIdSet) const
 {
     // all still listed ids isn't referenced
     for (LootIdSet::const_iterator itr = lootIdSet.begin(); itr != lootIdSet.end(); ++itr)
-        TC_LOG_ERROR("sql.sql", "Table '%s' entry %d isn't %s and not referenced from loot, and then useless.", GetName(), *itr, GetEntryName());
+        TC_LOG_ERROR("sql.sql", "Table '{}' entry {} isn't {} and not referenced from loot, and then useless.", GetName(), *itr, GetEntryName());
 }
 
 void LootStore::ReportNotExistedId(uint32 id) const
 {
-    TC_LOG_ERROR("sql.sql", "Table '%s' entry %d (%s) does not exist but used as loot id in DB.", GetName(), id, GetEntryName());
+    TC_LOG_ERROR("sql.sql", "Table '{}' entry {} ({}) does not exist but used as loot id in DB.", GetName(), id, GetEntryName());
 }
 
 //
@@ -325,13 +325,13 @@ bool LootStoreItem::IsValid(LootStore const& store, uint32 entry) const
 {
     if (group && type == LOOT_ITEM_TYPE_CURRENCY)
     {
-        TC_LOG_ERROR("sql.sql", "Table '%s' entry %d currency %d: group is set, but currencies must not have group %d - skipped", store.GetName(), entry, itemid, group);
+        TC_LOG_ERROR("sql.sql", "Table '{}' entry {} currency {}: group is set, but currencies must not have group {} - skipped", store.GetName(), entry, itemid, group);
         return false;
     }
 
     if (mincountOrRef == 0)
     {
-        TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: wrong mincountOrRef (%d) - skipped", store.GetName(), entry, itemid, mincountOrRef);
+        TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: wrong mincountOrRef ({}) - skipped", store.GetName(), entry, itemid, mincountOrRef);
         return false;
     }
 
@@ -342,7 +342,7 @@ bool LootStoreItem::IsValid(LootStore const& store, uint32 entry) const
             ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemid);
             if (!proto)
             {
-                TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: item entry not listed in `item_template` - skipped", store.GetName(), entry, itemid);
+                TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: item entry not listed in `item_template` - skipped", store.GetName(), entry, itemid);
                 return false;
             }
         }
@@ -351,42 +351,42 @@ bool LootStoreItem::IsValid(LootStore const& store, uint32 entry) const
             CurrencyTypesEntry const* currency = sCurrencyTypesStore.LookupEntry(itemid);
             if (!currency)
             {
-                TC_LOG_ERROR("sql.sql", "Table '%s' entry %d: currency entry %u not exists - skipped", store.GetName(), entry, itemid);
+                TC_LOG_ERROR("sql.sql", "Table '{}' entry {}: currency entry {} not exists - skipped", store.GetName(), entry, itemid);
                 return false;
             }
         }
         else
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d: has unknown item %u with type %u - skipped", store.GetName(), entry, itemid, type);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {}: has unknown item {} with type {} - skipped", store.GetName(), entry, itemid, type);
             return false;
         }
 
         if (chance == 0 && group == 0)                      // Zero chance is allowed for grouped entries only
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: equal-chanced grouped entry, but group not defined - skipped", store.GetName(), entry, itemid);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: equal-chanced grouped entry, but group not defined - skipped", store.GetName(), entry, itemid);
             return false;
         }
 
         if (chance != 0 && chance < 0.000001f)             // loot with low chance
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: low chance (%f) - skipped",
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: low chance ({}) - skipped",
                 store.GetName(), entry, itemid, chance);
             return false;
         }
 
         if (int32(maxcount) < mincountOrRef)                       // wrong max count
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: max count (%u) less that min count (%i) - skipped", store.GetName(), entry, itemid, int32(maxcount), mincountOrRef);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: max count ({}) less that min count ({}) - skipped", store.GetName(), entry, itemid, int32(maxcount), mincountOrRef);
             return false;
         }
     }
     else                                                    // mincountOrRef < 0
     {
         if (needs_quest)
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: quest chance will be treated as non-quest chance", store.GetName(), entry, itemid);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: quest chance will be treated as non-quest chance", store.GetName(), entry, itemid);
         else if (chance == 0)                              // no chance for the reference
         {
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %d item %d: zero chance is specified for a reference, skipped", store.GetName(), entry, itemid);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} item {}: zero chance is specified for a reference, skipped", store.GetName(), entry, itemid);
             return false;
         }
     }
@@ -443,11 +443,13 @@ LootItem::LootItem(WorldDropLootItem const& item)
     is_counted = false;
     is_looted = false;
     freeforall = true;
+    is_underthreshold = false;
     is_world_drop = true;
     itemid = item.Item;
     needs_quest = false;
     type = LOOT_ITEM_TYPE_ITEM;
     personal = false;
+    canSave = true;
 
     ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemid);
     randomSuffix = GenerateEnchSuffixFactor(itemid);
@@ -667,7 +669,7 @@ bool Loot::FillLoot(Object* source, uint32 lootId, LootStore const& store, Playe
     if (!tab)
     {
         if (!noEmptyError)
-            TC_LOG_ERROR("sql.sql", "Table '%s' loot id #%u used but it doesn't have records.", store.GetName(), lootId);
+            TC_LOG_ERROR("sql.sql", "Table '{}' loot id #{} used but it doesn't have records.", store.GetName(), lootId);
         return false;
     }
 
@@ -1460,7 +1462,7 @@ void LootItem::WriteBasicDataPart(uint8 slot, ByteBuffer* buff)
         if (auto const* itemTemplate = sObjectMgr->GetItemTemplate(itemid))
             displayId = itemTemplate->DisplayInfoID;
         else
-            TC_LOG_ERROR("shitlog", "LootItem::WriteBasicDataPart, possible corrupted memory: %u %u", itemid, uint32(type));
+            TC_LOG_ERROR("shitlog", "LootItem::WriteBasicDataPart, possible corrupted memory: {} {}", itemid, uint32(type));
         *buff << uint32(displayId);
     }
 }
@@ -1890,7 +1892,7 @@ LootStoreItem const* LootTemplate::LootGroup::Roll(Loot& loot, uint32 lootmode, 
     }
 
     if (guaranteedLoot)
-        TC_LOG_ERROR("shitlog", "LootTemplate::LootGroup::Roll %u", loot.sourceEntry);
+        TC_LOG_ERROR("shitlog", "LootTemplate::LootGroup::Roll {}", loot.sourceEntry);
 
     possibleLoot = EqualChanced;
     possibleLoot.remove_if(LootGroupInvalidSelector(loot, lootmode, player));
@@ -1979,10 +1981,10 @@ void LootTemplate::LootGroup::Verify(LootStore const& lootstore, uint32 id, uint
     {
         float chance = RawTotalChance(it);
         if (chance > 101.0f)                                    /// @todo replace with 100% when DBs will be ready
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %u group %d has total chance > 100%% (%f)", lootstore.GetName(), id, group_id, chance);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} group {} has total chance > 100% ({})", lootstore.GetName(), id, group_id, chance);
 
         if (chance >= 100.0f && !EqualChanced.empty())
-            TC_LOG_ERROR("sql.sql", "Table '%s' entry %u group %d has items with chance=0%% but group total chance >= 100%% (%f)", lootstore.GetName(), id, group_id, chance);
+            TC_LOG_ERROR("sql.sql", "Table '{}' entry {} group {} has items with chance=0% but group total chance >= 100% ({})", lootstore.GetName(), id, group_id, chance);
     }
 }
 
@@ -2229,11 +2231,21 @@ bool LootTemplate::addConditionItem(Condition* cond)
         return false;
     }
 
+    auto matches = [cond](LootStoreItem const* item)
+    {
+        if (cond->SourceEntry < 0)
+            return item->type == LOOT_ITEM_TYPE_CURRENCY
+                && item->itemid == uint32(-int64(cond->SourceEntry));
+
+        return item->type == LOOT_ITEM_TYPE_ITEM
+            && item->itemid == uint32(cond->SourceEntry);
+    };
+
     if (!Entries.empty())
     {
         for (LootStoreItemList::iterator i = Entries.begin(); i != Entries.end(); ++i)
         {
-            if ((*i)->itemid == uint32(cond->SourceEntry))
+            if (matches(*i))
             {
                 (*i)->conditions.push_back(cond);
                 return true;
@@ -2254,7 +2266,7 @@ bool LootTemplate::addConditionItem(Condition* cond)
             {
                 for (LootStoreItemList::iterator i = itemList->begin(); i != itemList->end(); ++i)
                 {
-                    if ((*i)->itemid == uint32(cond->SourceEntry))
+                    if (matches(*i))
                     {
                         (*i)->conditions.push_back(cond);
                         return true;
@@ -2267,7 +2279,7 @@ bool LootTemplate::addConditionItem(Condition* cond)
             {
                 for (LootStoreItemList::iterator i = itemList->begin(); i != itemList->end(); ++i)
                 {
-                    if ((*i)->itemid == uint32(cond->SourceEntry))
+                    if (matches(*i))
                     {
                         (*i)->conditions.push_back(cond);
                         return true;
@@ -2279,10 +2291,40 @@ bool LootTemplate::addConditionItem(Condition* cond)
     return false;
 }
 
-bool LootTemplate::isReference(uint32 id)
+bool LootTemplate::isReference(int32 id)
 {
+    if (id < 0)
+    {
+        uint32 currencyId = uint32(-int64(id));
+
+        auto containsCurrency = [currencyId](LootStoreItemList const& items)
+        {
+            for (LootStoreItem const* item : items)
+                if (item->type == LOOT_ITEM_TYPE_CURRENCY && item->itemid == currencyId)
+                    return true;
+
+            return false;
+        };
+
+        if (containsCurrency(Entries))
+            return true;
+
+        for (LootGroup* group : Groups)
+        {
+            if (!group)
+                continue;
+
+            if (containsCurrency(*group->GetExplicitlyChancedItemList())
+                || containsCurrency(*group->GetEqualChancedItemList()))
+                return true;
+        }
+
+        return false;
+    }
+
     for (LootStoreItemList::const_iterator ieItr = Entries.begin(); ieItr != Entries.end(); ++ieItr)
-        if ((*ieItr)->itemid == id && (*ieItr)->mincountOrRef < 0)
+        if ((*ieItr)->type == LOOT_ITEM_TYPE_ITEM && (*ieItr)->itemid == uint32(id)
+            && (*ieItr)->mincountOrRef < 0)
             return true;
 
     return false;//not found or not reference
@@ -2340,6 +2382,15 @@ void LoadLootTemplates_Creature()
     CreatureTemplateContainer const* ctc = sObjectMgr->GetCreatureTemplates();
     for (CreatureTemplateContainer::const_iterator itr = ctc->begin(); itr != ctc->end(); ++itr)
     {
+        // Open-world boss templates with personal loot deliberately have no
+        // conventional creature_loot_template. Their loot is awarded per-player instead.
+        if ((itr->second.type_flags & CREATURE_TYPEFLAGS_BOSS) && sLootMgr->GetPersonalLoot(itr->first))
+        {
+            if (uint32 lootid = itr->second.lootid)
+                lootIdSet.erase(lootid);
+            continue;
+        }
+
         if (uint32 lootid = itr->second.lootid)
         {
             if (lootIdSet.find(lootid) == lootIdSet.end())
@@ -2356,7 +2407,7 @@ void LoadLootTemplates_Creature()
     LootTemplates_Creature.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u creature loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} creature loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 creature loot templates. DB table `creature_loot_template` is empty");
 }
@@ -2390,7 +2441,7 @@ void LoadLootTemplates_Disenchant()
     LootTemplates_Disenchant.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u disenchanting loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} disenchanting loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 disenchanting loot templates. DB table `disenchant_loot_template` is empty");
 }
@@ -2414,7 +2465,7 @@ void LoadLootTemplates_Fishing()
     LootTemplates_Fishing.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u fishing loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} fishing loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 fishing loot templates. DB table `fishing_loot_template` is empty");
 }
@@ -2448,7 +2499,7 @@ void LoadLootTemplates_Gameobject()
     LootTemplates_Gameobject.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u gameobject loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} gameobject loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 gameobject loot templates. DB table `gameobject_loot_template` is empty");
 }
@@ -2472,7 +2523,7 @@ void LoadLootTemplates_Item()
     LootTemplates_Item.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u item loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} item loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 item loot templates. DB table `item_loot_template` is empty");
 }
@@ -2501,7 +2552,7 @@ void LoadLootTemplates_Milling()
     LootTemplates_Milling.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u milling loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} milling loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 milling loot templates. DB table `milling_loot_template` is empty");
 }
@@ -2535,7 +2586,7 @@ void LoadLootTemplates_Pickpocketing()
     LootTemplates_Pickpocketing.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u pickpocketing loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} pickpocketing loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 pickpocketing loot templates. DB table `pickpocketing_loot_template` is empty");
 }
@@ -2564,7 +2615,7 @@ void LoadLootTemplates_Prospecting()
     LootTemplates_Prospecting.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u prospecting loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} prospecting loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 prospecting loot templates. DB table `prospecting_loot_template` is empty");
 }
@@ -2588,7 +2639,7 @@ void LoadLootTemplates_Mail()
     LootTemplates_Mail.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u mail loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} mail loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 mail loot templates. DB table `mail_loot_template` is empty");
 }
@@ -2622,7 +2673,7 @@ void LoadLootTemplates_Skinning()
     LootTemplates_Skinning.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u skinning loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} skinning loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 skinning loot templates. DB table `skinning_loot_template` is empty");
 }
@@ -2664,7 +2715,7 @@ void LoadLootTemplates_Spell()
     LootTemplates_Spell.ReportUnusedIds(lootIdSet);
 
     if (count)
-        TC_LOG_INFO("server.loading", ">> Loaded %u spell loot templates in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("server.loading", ">> Loaded {} spell loot templates in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     else
         TC_LOG_ERROR("server.loading", ">> Loaded 0 spell loot templates. DB table `spell_loot_template` is empty");
 }
@@ -2695,7 +2746,7 @@ void LoadLootTemplates_Reference()
     // output error for any still listed ids (not referenced from any loot table)
     LootTemplates_Reference.ReportUnusedIds(lootIdSet);
 
-    TC_LOG_INFO("server.loading", ">> Loaded refence loot templates in %u ms", GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("server.loading", ">> Loaded refence loot templates in {} ms", GetMSTimeDiffToNow(oldMSTime));
 }
 
 uint32 BonusLootTemplate::GetLootIdForDifficulty(Difficulty difficulty) const
@@ -2776,13 +2827,45 @@ void PersonalLoot::Reward(Player* player)
         Item* item = Item::CreateItem(itemId, 1, player);
         player->SendDisplayToast(item, 0, 0, TOAST_TYPE_ITEM, TOAST_DISPLAY_TYPE_ITEM);
         player->StoreNewItem(item);
-
-        uint32 questId = m_loot->QuestTracker ? m_loot->QuestTracker : 0;
-        if (questId)
-            if (player->GetQuestStatus(questId) != QUEST_STATUS_REWARDED)
-                if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
-                    player->RewardQuest(quest, 0, player, false);
     }
+
+    // Open-world bosses use personal loot and never expose their conventional
+    // corpse loot. Keep quest-start and quest-required items from that loot
+    // template on the same per-player reward path, including their conditions.
+    if (LootTemplate const* questLootTemplate = LootTemplates_Creature.GetLootFor(m_loot->Entry))
+    {
+        Loot questLoot;
+        uint32 lootMode = 1 << player->GetMap()->GetDifficulty();
+        questLootTemplate->Process(questLoot, LootTemplates_Creature.IsRatesAllowed(), lootMode, 0, player);
+
+        auto rewardQuestItems = [player](std::vector<LootItem> const& items)
+        {
+            for (LootItem const& lootItem : items)
+            {
+                ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(lootItem.itemid);
+                if (!itemTemplate || (!lootItem.needs_quest && !itemTemplate->StartQuest))
+                    continue;
+
+                if (!lootItem.AllowedForPlayer(player, nullptr))
+                    continue;
+
+                if (Item* item = Item::CreateItem(lootItem.itemid, lootItem.count, player))
+                {
+                    player->SendDisplayToast(item, lootItem.itemid, lootItem.count, TOAST_TYPE_ITEM, TOAST_DISPLAY_TYPE_ITEM);
+                    player->StoreNewItem(item);
+                }
+            }
+        };
+
+        rewardQuestItems(questLoot.items);
+        rewardQuestItems(questLoot.quest_items);
+    }
+
+    uint32 questId = m_loot->QuestTracker ? m_loot->QuestTracker : 0;
+    if (questId)
+        if (player->GetQuestStatus(questId) != QUEST_STATUS_REWARDED)
+            if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
+                player->RewardQuest(quest, 0, player, false);
 }
 
 BonusLoot::BonusLoot(uint32 lootId, Difficulty difficulty)
@@ -2850,7 +2933,7 @@ void BonusLoot::Reward(Player* player)
     {
         if (m_currency->mincountOrRef < 0 || uint32(m_currency->mincountOrRef) > m_currency->maxcount)
         {
-            TC_LOG_ERROR("shitlog", "BonusLoot::Reward you are messed up with bonus roll %u", m_lootTemplate->LootIdPersonal);
+            TC_LOG_ERROR("shitlog", "BonusLoot::Reward you are messed up with bonus roll {}", m_lootTemplate->LootIdPersonal);
             return;
         }
         uint32 count = urand(m_currency->mincountOrRef, m_currency->maxcount);
@@ -3084,9 +3167,9 @@ void LootMgr::RewardLegendaryQuestLoot(Player* player, uint32 entry)
 
 void LootMgr::LoadFromDB()
 {
+    LoadPersonalLoot();
     LoadLootTables();
     LoadCreatureLootCurrency();
-    LoadPersonalLoot();
     LoadBonusLoot();
     LoadWorldDrop();
 }
@@ -3110,7 +3193,7 @@ void LootMgr::LoadCreatureLootCurrency()
         uint32 creature = fields[0].GetUInt32();
         if (!sObjectMgr->GetCreatureTemplate(creature))
         {
-            TC_LOG_ERROR("sql.sql", "LootMgr::LoadCreatureLootCurrency, not existed creature entry (%u), skipped", creature);
+            TC_LOG_ERROR("sql.sql", "LootMgr::LoadCreatureLootCurrency, not existed creature entry ({}), skipped", creature);
             continue;
         }
 
@@ -3121,14 +3204,14 @@ void LootMgr::LoadCreatureLootCurrency()
 
         if (currencyTemplate.Currency && !sCurrencyTypesStore.LookupEntry(currencyTemplate.Currency))
         {
-            TC_LOG_ERROR("sql.slq", "LootMgr::LoadCreatureLootCurrency, not existed currency %u for creature %u", currencyTemplate.Currency, creature);
+            TC_LOG_ERROR("sql.slq", "LootMgr::LoadCreatureLootCurrency, not existed currency {} for creature {}", currencyTemplate.Currency, creature);
             continue;
         }
 
         m_lootCurrncy[creature].push_back(currencyTemplate);
     } while (result->NextRow());
 
-    TC_LOG_INFO("server.loading", ">> Loaded %u creature loot currency templates in %u ms.", uint32(m_lootCurrncy.size()), GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("server.loading", ">> Loaded {} creature loot currency templates in {} ms.", uint32(m_lootCurrncy.size()), GetMSTimeDiffToNow(oldMSTime));
 }
 
 void LootMgr::LoadPersonalLoot()
@@ -3146,19 +3229,20 @@ void LootMgr::LoadPersonalLoot()
             Field* fields = result->Fetch();
             PersonalLootTemplate loot;
             uint32 entry = fields[0].GetUInt32();
+            loot.Entry = entry;
             loot.MoneyBag  = fields[1].GetUInt32();
             loot.MoneyBagFlex = fields[2].GetUInt32();
             loot.QuestTracker = fields[3].GetUInt32();
 
             if (!sObjectMgr->GetItemTemplate(loot.MoneyBag))
             {
-                TC_LOG_ERROR("sql.sql", "Table personal_loot_template has entry for non existing item %u", loot.MoneyBag);
+                TC_LOG_ERROR("sql.sql", "Table personal_loot_template has entry for non existing item {}", loot.MoneyBag);
                 continue;
             }
 
             if (loot.MoneyBagFlex && !sObjectMgr->GetItemTemplate(loot.MoneyBagFlex))
             {
-                TC_LOG_ERROR("sql.sql", "Table personal_loot_template has entry for non existing item %u", loot.MoneyBagFlex);
+                TC_LOG_ERROR("sql.sql", "Table personal_loot_template has entry for non existing item {}", loot.MoneyBagFlex);
                 continue;
             }
 
@@ -3169,7 +3253,7 @@ void LootMgr::LoadPersonalLoot()
             if (questLootType != LegendaryQuestLootType::None)
             {
                 if (questLootType >= LegendaryQuestLootType::Max)
-                    TC_LOG_ERROR("sql.sql", "Table bonus_loot_template invalid legendary loot for entry %u", entry);
+                    TC_LOG_ERROR("sql.sql", "Table bonus_loot_template invalid legendary loot for entry {}", entry);
                 else
                     m_legendaryQuestLoot[entry] = questLootType;
             }
@@ -3187,15 +3271,16 @@ void LootMgr::LoadPersonalLoot()
             uint32 item = fields[1].GetUInt32();
             if (!sObjectMgr->GetItemTemplate(item))
             {
-                TC_LOG_ERROR("sql.sql", "Table personal_loot_item has entry for non existing item %u", item);
+                TC_LOG_ERROR("sql.sql", "Table personal_loot_item has entry for non existing item {}", item);
                 continue;
             }
             auto& loot = m_personalLoot[entry];
+            loot.Entry = entry;
             loot.Items.push_back(item);
         } while (result->NextRow());
     }
 
-    TC_LOG_INFO("server.loading", "Loaded %u personal loot templates in %u ms", uint32(m_personalLoot.size()), GetMSTimeDiffToNow(starttime));
+    TC_LOG_INFO("server.loading", "Loaded {} personal loot templates in {} ms", uint32(m_personalLoot.size()), GetMSTimeDiffToNow(starttime));
 }
 
 void LootMgr::LoadBonusLoot()
@@ -3222,17 +3307,17 @@ void LootMgr::LoadBonusLoot()
             auto spellInfo = sSpellMgr->GetSpellInfo(loot.Spell);
             if (!spellInfo || !spellInfo->HasAura(SPELL_AURA_BONUS_ROLL_TRIGGER))
             {
-                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template has invalid spell for entry %u", entry);
+                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template has invalid spell for entry {}", entry);
                 continue;
             }
             if (!sCurrencyTypesStore.LookupEntry(loot.Currency))
             {
-                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template has invalid currency for %u", entry);
+                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template has invalid currency for {}", entry);
                 continue;
             }
             if (loot.Source != BonusLootTemplate::Creautre && loot.Source != BonusLootTemplate::GameObject)
             {
-                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template invalid loot source for entry %u", entry);
+                TC_LOG_ERROR("sql.sql", "Table bonus_loot_template invalid loot source for entry {}", entry);
                 continue;
             }
             loot.LootIdPersonal = GetPersonalLoot(entry) ? entry : 0;   // Yep
@@ -3241,7 +3326,7 @@ void LootMgr::LoadBonusLoot()
         } while (result->NextRow());
     }
 
-    TC_LOG_INFO("server.loading", "Loaded %u bonus loot templates in %u ms", uint32(m_bonusLoot.size()), GetMSTimeDiffToNow(starttime));
+    TC_LOG_INFO("server.loading", "Loaded {} bonus loot templates in {} ms", uint32(m_bonusLoot.size()), GetMSTimeDiffToNow(starttime));
 }
 
 void LootMgr::LoadWorldDrop()
@@ -3261,7 +3346,7 @@ void LootMgr::LoadWorldDrop()
             Expansions expansion = Expansions(fields[0].GetUInt8());
             if (expansion >= MAX_EXPANSIONS)
             {
-                TC_LOG_ERROR("sql.sql", "LootMgr::LoadWorldDrop invalid expansion for item %u: %u", fields[1].GetUInt32(), expansion);
+                TC_LOG_ERROR("sql.sql", "LootMgr::LoadWorldDrop invalid expansion for item {}: {}", fields[1].GetUInt32(), expansion);
                 continue;
             }
 
@@ -3270,7 +3355,7 @@ void LootMgr::LoadWorldDrop()
             {
                 if (itr->second.Group != fields[5].GetUInt32())
                 {
-                    TC_LOG_ERROR("sql.sql", "LootMgr::LoadWorldDrop item %u has different groups (in one expansion)", fields[1].GetUInt32());
+                    TC_LOG_ERROR("sql.sql", "LootMgr::LoadWorldDrop item {} has different groups (in one expansion)", fields[1].GetUInt32());
                     continue;
                 }
                 itr->second.AddDrop(fields[3].GetUInt8(), fields[4].GetUInt8(), fields[2].GetFloat());
@@ -3287,5 +3372,5 @@ void LootMgr::LoadWorldDrop()
         } while (result->NextRow());
     }
 
-    TC_LOG_INFO("server.loading", "Loaded %u world drop loot templates in %u ms", count, GetMSTimeDiffToNow(starttime));
+    TC_LOG_INFO("server.loading", "Loaded {} world drop loot templates in {} ms", count, GetMSTimeDiffToNow(starttime));
 }

@@ -4,6 +4,7 @@
 #include "MovementActions.h"
 
 class PlayerbotAI;
+class WorldLocation;
 
 class FollowAction : public MovementAction
 {
@@ -13,6 +14,11 @@ public:
     bool Execute(Event event) override;
     bool isUseful() override;
     bool CanDeadFollow(Unit* target);
+
+private:
+    bool UseGroupFollowFormation();
+    bool CanMoveInGroupFormation();
+    WorldLocation GetGroupFollowLocation();
 };
 
 class FleeToMasterAction : public FollowAction

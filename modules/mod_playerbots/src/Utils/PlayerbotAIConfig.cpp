@@ -18,6 +18,7 @@
 #include "PlayerbotAIConfig.h"
 
 #include <iostream>
+#include <algorithm>
 
 #include "Config.h"
 #include "Helper.h"
@@ -80,6 +81,16 @@ bool PlayerbotAIConfig::Initialize()
     maxWaitForMove = sConfigMgr->GetIntDefault("AiPlayerbot.MaxWaitForMove", 5000);
     disableMoveSplinePath = sConfigMgr->GetIntDefault("AiPlayerbot.DisableMoveSplinePath", 0);
     maxMovementSearchTime = sConfigMgr->GetIntDefault("AiPlayerbot.MaxMovementSearchTime", 3);
+    navigationMaxAttempts = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.NavigationMaxAttempts", 7), 1, 10);
+    navigationLogInterval = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.NavigationLogInterval", 30000), 1000, 600000);
+    stuckTimeout = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckTimeout", 4000), 2000, 30000);
+    stuckMaxAttempts = std::clamp(sConfigMgr->GetIntDefault("AiPlayerbot.StuckMaxAttempts", 3), 1, 5);
+    battlegroundTest = sConfigMgr->GetBoolDefault("AiPlayerbot.BattlegroundTest", false);
+    randomBotJoinBG = sConfigMgr->GetBoolDefault("AiPlayerbot.RandomBotJoinBG", true);
+    randomBotAutoJoinBG = sConfigMgr->GetBoolDefault("AiPlayerbot.RandomBotAutoJoinBG", false);
+    randomBotAutoJoinBGABCount = std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.RandomBotAutoJoinBGABCount", 1));
+    LoadSet<std::set<uint32>>(sConfigMgr->GetStringDefault("AiPlayerbot.RandomBotAutoJoinABBrackets", "16"),
+        randomBotAutoJoinABBrackets);
     expireActionTime = sConfigMgr->GetIntDefault("AiPlayerbot.ExpireActionTime", 5000);
     dispelAuraDuration = sConfigMgr->GetIntDefault("AiPlayerbot.DispelAuraDuration", 7000);
     reactDelay = sConfigMgr->GetIntDefault("AiPlayerbot.ReactDelay", 100);
@@ -143,6 +154,7 @@ bool PlayerbotAIConfig::Initialize()
     minRandomBots = sConfigMgr->GetIntDefault("AiPlayerbot.MinRandomBots", 50);
     maxRandomBots = sConfigMgr->GetIntDefault("AiPlayerbot.MaxRandomBots", 200);
     disableRandomLevels = sConfigMgr->GetBoolDefault("AiPlayerbot.DisableRandomLevels", true);
+    randomBotStartingLevel = sConfigMgr->GetIntDefault("AiPlayerbot.RandombotStartingLevel", 5);
     randomBotMaxLevel = sConfigMgr->GetIntDefault("AiPlayerbot.RandomBotMaxLevel", 90);
     randomBotMinLevel = sConfigMgr->GetIntDefault("AiPlayerbot.RandomBotMinLevel", 1);
     randomBotMaxLevelChance = sConfigMgr->GetFloatDefault("AiPlayerbot.RandomBotMaxLevelChance", 0.25f);
@@ -178,43 +190,6 @@ bool PlayerbotAIConfig::Initialize()
 
     sRandomPlayerbotMgr->PrepareAddclassCache();
     sRandomPlayerbotMgr->PrepareTeleportCache();
-
-    TC_LOG_INFO("server.loading", "---------------------------------------");
-    TC_LOG_INFO("server.loading", "          Loading TalentSpecs          ");
-    TC_LOG_INFO("server.loading", "---------------------------------------");
-    for (uint32 cls = 1; cls < MAX_CLASSES; ++cls)
-    {
-        for (uint32 spec = 0; spec < MAX_SPECIALIZATIONS; ++spec)
-        {
-            std::ostringstream os;
-            os << "AiPlayerbot.PremadeSpecName." << cls << "." << spec;
-            std::string loadSpec = sConfigMgr->GetStringDefault(os.str().c_str(), "", false);
-            if (!loadSpec.empty())
-            {
-                std::string premadeSpecLinkLoader[MAX_CLASSES][MAX_SPECIALIZATIONS];
-                premadeSpecName[cls][spec] = loadSpec;
-
-                os.str("");
-                os.clear();
-                os << "AiPlayerbot.PremadeSpecLink." << cls << "." << spec;
-
-                premadeSpecLinkLoader[cls][spec] = sConfigMgr->GetStringDefault(os.str().c_str(), "", true);
-                std::vector<std::string> splitSpec = split(premadeSpecLinkLoader[cls][spec], ',');
-                for (std::string& split : splitSpec)
-                {
-                    if (split.size() != 0)
-                    {
-                        premadeSpecLink[cls][spec].push_back(atoi(split.c_str()));
-                    }
-                }
-
-                TC_LOG_DEBUG("playerbots", "Premade spec loaded: %s - %s", loadSpec.c_str(), premadeSpecLinkLoader[cls][spec].c_str());
-            }
-            os.str("");
-            os.clear();
-        }
-    }
-
 
     TC_LOG_INFO("server.loading", "---------------------------------------");
     TC_LOG_INFO("server.loading", "        AI Playerbots initialized       ");

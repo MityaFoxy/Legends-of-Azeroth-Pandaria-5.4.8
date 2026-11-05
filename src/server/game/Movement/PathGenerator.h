@@ -23,6 +23,7 @@
 #include "DetourNavMeshQuery.h"
 #include "MapDefines.h"
 #include "MoveSplineInitArgs.h"
+#include <memory>
 
 class Unit;
 
@@ -55,12 +56,16 @@ enum PathType
 class TC_GAME_API PathGenerator
 {
     public:
-        explicit PathGenerator(WorldObject const* owner);
+        // Zero retains the core's shared query. Explicit private searches are
+        // bounded to 1024..4096 nodes and owned only for this generator's lifetime.
+        explicit PathGenerator(WorldObject const* owner, uint32 privateQueryNodes = 0);
         ~PathGenerator();
 
         // Calculate the path from owner to given destination
         // return: true if new path was calculated, false otherwise (no change needed)
-        bool CalculatePath(float destX, float destY, float destZ, bool forceDest = false, bool straightLine = false, bool assumeSourceOnGround = false);
+        // startPosition is for planning a continuation without relocating the source.
+        bool CalculatePath(float destX, float destY, float destZ, bool forceDest = false, bool straightLine = false,
+            bool assumeSourceOnGround = false, G3D::Vector3 const* startPosition = nullptr);
         bool IsInvalidDestinationZ(Unit const* target) const;
         static bool IsWalkableClimb(float x, float y, float z, float destX, float destY, float destZ, float sourceHeight);
         static float GetRequiredHeightToClimb(float x, float y, float z, float destX, float destY, float destZ, float sourceHeight);
@@ -69,6 +74,9 @@ class TC_GAME_API PathGenerator
         void SetUseStraightPath(bool useStraightPath) { _useStraightPath = useStraightPath; }
         void SetPathLengthLimit(float distance) { _pointPathLimit = std::min<uint32>(uint32(distance/SMOOTH_PATH_STEP_SIZE), MAX_POINT_PATH_LENGTH); }
         void SetUseRaycast(bool useRaycast) { _useRaycast = useRaycast; }
+        void SetUseWaterShortcut(bool enabled) { _useWaterShortcut = enabled; }
+        // Relative travel time, normalized to keep Detour's distance heuristic admissible.
+        void SetTravelSpeeds(float runSpeed, float swimSpeed);
 
         // result getters
         G3D::Vector3 const& GetStartPosition() const { return _startPosition; }
@@ -81,6 +89,10 @@ class TC_GAME_API PathGenerator
 
         void SetPathType(PathType type) { _type = type; } // For hacks todo
         PathType GetPathType() const { return _type; }
+        char const* GetPathFailureReason() const { return _failureReason ? _failureReason : "none"; }
+        bool HasNavigationData() const { return _navMesh && _navMeshQuery; }
+        uint32 GetPathQueryStatus() const { return _queryStatus; }
+        uint32 GetPathQueryNodeLimit() const { return _queryNodeLimit; }
 
         // shortens the path until the destination is the specified distance from the target point
         void ShortenPathUntilDist(G3D::Vector3 const& point, float dist);
@@ -129,6 +141,7 @@ class TC_GAME_API PathGenerator
         bool _forceDestination; // when set, we will always arrive at given point
         uint32 _pointPathLimit; // limit point path size; min(this, MAX_POINT_PATH_LENGTH)
         bool _useRaycast;       // use raycast if true for a straight line path
+        bool _useWaterShortcut = true;
 
         G3D::Vector3 _startPosition;        // {x, y, z} of current location
         G3D::Vector3 _endPosition;          // {x, y, z} of the destination
@@ -137,6 +150,14 @@ class TC_GAME_API PathGenerator
         WorldObject const* const _source;       // the object that is moving
         dtNavMesh const* _navMesh;              // the nav mesh
         dtNavMeshQuery const* _navMeshQuery;    // the nav mesh query used to find the path
+        struct QueryDeleter
+        {
+            void operator()(dtNavMeshQuery* query) const { dtFreeNavMeshQuery(query); }
+        };
+        std::unique_ptr<dtNavMeshQuery, QueryDeleter> _privateQuery;
+        uint32 _queryNodeLimit = 0;
+        char const* _failureReason = nullptr;
+        uint32 _queryStatus = 0;
 
         dtQueryFilter _filter;  // use single filter for all movements, update it when needed
 

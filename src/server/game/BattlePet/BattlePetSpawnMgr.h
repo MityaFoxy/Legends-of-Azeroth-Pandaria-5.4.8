@@ -20,11 +20,12 @@
 
 #include "BattlePet.h"
 #include "Common.h"
+#include <memory>
 
 #define BATTLE_PET_SPAWN_MGR_UPDATE 2000
 
 //          replacement  
-typedef std::map<ObjectGuid, BattlePet*> BattlePetInfoStore;
+typedef std::map<ObjectGuid, std::unique_ptr<BattlePet>> BattlePetInfoStore;
 //             replaced  replacement
 typedef std::map<ObjectGuid, ObjectGuid> CreatureReplacedRelationStore;
 //         toBeReplaced
@@ -49,7 +50,7 @@ typedef std::vector<BattlePetSpawnTemplate> WildBattlePetSpawnVec;
 class BattlePetSpawnZoneMgr
 {
 public:
-    void AddTemplate(BattlePetSpawnTemplate spawnTemplate) { m_spawnTemplates.push_back(spawnTemplate); }
+    void AddTemplate(BattlePetSpawnTemplate spawnTemplate) { m_spawnTemplates.push_back(std::move(spawnTemplate)); }
 
     void PopulateZone(Map* map);
     void DepopulateZone(Map* map);
@@ -91,7 +92,7 @@ public:
     void LeftBattle(Creature* creature, bool killed);
 
     void PopulateWorld();
-    void DepopulateMap(uint32 map);
+    void DepopulateMap(Map* map);
 
 private:
     WildBattlePetMapPool m_battlePetMapPools;

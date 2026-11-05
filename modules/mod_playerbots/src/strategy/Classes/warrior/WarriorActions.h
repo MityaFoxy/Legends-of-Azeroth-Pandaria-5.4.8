@@ -42,6 +42,7 @@ class CastHeroicLeapAction : public CastSpellAction
 {
 public:
     CastHeroicLeapAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "heroic leap") {}
+    bool Execute(Event event) override;
     ActionThreatType getThreatType() override { return ActionThreatType::Aoe; }
     bool isUseful() override;
 };

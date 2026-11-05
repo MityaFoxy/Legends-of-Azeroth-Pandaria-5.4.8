@@ -9,3 +9,5 @@ build/
 /bin
 bin/
 obj/
+wow_mop_codex_handoff/
+__pycache__/

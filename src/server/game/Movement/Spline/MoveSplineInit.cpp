@@ -23,6 +23,7 @@
 #include "Vehicle.h"
 #include "WorldPacket.h"
 #include "Opcodes.h"
+#include <string>
 
 namespace Movement
 {
@@ -181,6 +182,13 @@ namespace Movement
             if (result && !(path.GetPathType() & PATHFIND_NOPATH))
             {
                 MovebyPath(path.GetPath());
+                return;
+            }
+            // A collision veto must not become an unchecked straight segment.
+            std::string const reason = path.GetPathFailureReason();
+            if (reason == "path-body-obstructed" || reason == "path-start-obstructed")
+            {
+                args.path.clear();
                 return;
             }
         }

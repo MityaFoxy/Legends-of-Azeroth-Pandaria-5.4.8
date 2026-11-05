@@ -1875,7 +1875,7 @@ class spell_sha_windfury_weapon : public AuraScript
         SpellInfo const* windfurySpellInfo = sSpellMgr->GetSpellInfo(8232);
         if (!windfurySpellInfo)
         {
-            TC_LOG_ERROR("server", "spell_sha_windfurry_weapon::HandleProc Windfury (%u) spell not found", spellId);
+            TC_LOG_ERROR("server", "spell_sha_windfurry_weapon::HandleProc Windfury ({}) spell not found", spellId);
             return;
         }
 
@@ -2934,7 +2934,9 @@ struct npc_sha_earth_elemental : public ScriptedAI
             ctx.Repeat(Milliseconds(5000));
 
             if (Unit* target = me->GetVictim())
-                if (target->GetThreatManager().GetCurrentVictim())
+                // Players and player-controlled summons do not own a threat
+                // list. Querying their victim would enter Creature-only AI.
+                if (target->GetThreatManager().CanHaveThreatList())
                     if (Unit* tank = target->GetThreatManager().GetCurrentVictim())
                         if (tank->GetTypeId() == TYPEID_PLAYER && tank->ToPlayer()->GetRoleForGroup() == ROLES_TANK)
                             return;

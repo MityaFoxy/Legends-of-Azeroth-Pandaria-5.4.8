@@ -31,6 +31,7 @@
 
 #include <map>
 #include <fstream>
+#include <vector>
 
 typedef std::map<uint16, uint32> AreaFlagByAreaID;
 typedef std::map<uint32, uint32> AreaFlagByMapID;
@@ -65,7 +66,6 @@ DBCStorage <ChrClassesEntry> sChrClassesStore(ChrClassesEntryfmt);
 DBCStorage <ChrRacesEntry> sChrRacesStore(ChrRacesEntryfmt);
 DBCStorage <ChrPowerTypesEntry> sChrPowerTypesStore(ChrClassesXPowerTypesfmt);
 DBCStorage <ChrSpecializationEntry> sChrSpecializationStore(ChrSpecializationfmt);
-DBCStorage <CharSectionsEntry> sChrSectionStore(CharSectionsEntryfmt);
 DBCStorage <CinematicCameraEntry> sCinematicCameraStore(CinematicCameraEntryfmt);
 DBCStorage <CinematicSequencesEntry> sCinematicSequencesStore(CinematicSequencesEntryfmt);
 DBCStorage <CreatureDisplayInfoEntry> sCreatureDisplayInfoStore(CreatureDisplayInfofmt);
@@ -280,18 +280,9 @@ PhaseGroupContainer sPhasesByGroup;
 static std::map<uint32, std::vector<SkillLineAbilityEntry const*>> sSpellsBySkill;
 static std::multimap<uint32, uint32> sItemSpecOverrideByItemId;
 
-struct SpellEffect
-{
-    SpellEffect()
-    {
-        for (auto&& it : effects)
-            std::fill(std::begin(it), std::end(it), nullptr);
-    }
-
-    SpellEffectEntry const* effects[MAX_DIFFICULTY][MAX_SPELL_EFFECTS];
-};
-
-typedef std::unordered_map<uint32, SpellEffect> SpellEffectMap;
+// Most spells have only a few effects. Store the existing DBC entries instead
+// of reserving every difficulty/effect combination for every spell.
+typedef std::unordered_map<uint32, std::vector<SpellEffectEntry const*>> SpellEffectMap;
 SpellEffectMap sSpellEffectMap;
 
 static std::multimap<uint32, SpellPowerEntry const*> sSpellPowerMap;
@@ -308,7 +299,7 @@ DBCManager& DBCManager::Instance()
 
 static bool LoadDBC_assert_print(uint32 fsize, uint32 rsize, const std::string& filename)
 {
-    TC_LOG_ERROR("misc", "Size of '%s' set by format string (%u) not equal size of C++ structure (%u).", filename.c_str(), fsize, rsize);
+    TC_LOG_ERROR("misc", "Size of '{}' set by format string ({}) not equal size of C++ structure ({}).", filename.c_str(), fsize, rsize);
 
     // ASSERT must fail after function call
     return false;
@@ -833,7 +824,7 @@ void DBCManager::LoadDBCStores(const std::string& dataPath, uint32 defaultLocale
     {
         if (SpellEffectEntry const *spellEffect = sSpellEffectStore.LookupEntry(i))
         {
-            sSpellEffectMap[spellEffect->EffectSpellId].effects[spellEffect->EffectDifficulty][spellEffect->EffectIndex] = spellEffect;
+            sSpellEffectMap[spellEffect->EffectSpellId].push_back(spellEffect);
         }
     }
 
@@ -909,7 +900,7 @@ void DBCManager::LoadDBCStores(const std::string& dataPath, uint32 defaultLocale
     // error checks
     if (bad_dbc_files.size() >= DBCFileCount)
     {
-        TC_LOG_ERROR("misc", "Incorrect DataDir value in worldserver.conf or ALL required *.dbc files (%d) not found by path: %sdbc", DBCFileCount, dataPath.c_str());
+        TC_LOG_ERROR("misc", "Incorrect DataDir value in worldserver.conf or ALL required *.dbc files ({}) not found by path: {}dbc", DBCFileCount, dataPath.c_str());
         exit(1);
     }
     else if (!bad_dbc_files.empty())
@@ -918,7 +909,7 @@ void DBCManager::LoadDBCStores(const std::string& dataPath, uint32 defaultLocale
         for (StoreProblemList::iterator i = bad_dbc_files.begin(); i != bad_dbc_files.end(); ++i)
             str += *i + "\n";
 
-        TC_LOG_ERROR("misc", "Some required *.dbc files (%u from %d) not found or not compatible:\n%s", (uint32)bad_dbc_files.size(), DBCFileCount, str.c_str());
+        TC_LOG_ERROR("misc", "Some required *.dbc files ({} from {}) not found or not compatible:\n{}", (uint32)bad_dbc_files.size(), DBCFileCount, str.c_str());
         exit(1);
     }
 
@@ -933,7 +924,7 @@ void DBCManager::LoadDBCStores(const std::string& dataPath, uint32 defaultLocale
         exit(1);
     }
 
-    TC_LOG_INFO("server.loading", ">> Initialized %d DBC data stores in %u ms", DBCFileCount, GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("server.loading", ">> Initialized {} DBC data stores in {} ms", DBCFileCount, GetMSTimeDiffToNow(oldMSTime));
 }
 
 std::string const& DBCManager::GetRandomCharacterName(uint8 race, uint8 gender)
@@ -966,10 +957,22 @@ SpellEffectEntry const* GetSpellEffectEntry(uint32 spellId, uint32 effect, uint3
     if (itr == sSpellEffectMap.end())
         return nullptr;
 
-    if (itr->second.effects[difficulty][effect])
-        return itr->second.effects[difficulty][effect];
+    SpellEffectEntry const* fallback = nullptr;
+    // Reverse iteration preserves the previous last-entry-wins behavior for
+    // duplicate difficulty/effect keys. This lookup is used to build SpellInfo.
+    for (auto entry = itr->second.rbegin(); entry != itr->second.rend(); ++entry)
+    {
+        if ((*entry)->EffectIndex != effect)
+            continue;
 
-    return itr->second.effects[REGULAR_DIFFICULTY][effect];
+        if ((*entry)->EffectDifficulty == difficulty)
+            return *entry;
+
+        if (!fallback && (*entry)->EffectDifficulty == REGULAR_DIFFICULTY)
+            fallback = *entry;
+    }
+
+    return fallback;
 }
 
 TalentSpellPos const* DBCManager::GetTalentSpellPos(uint32 spellId)

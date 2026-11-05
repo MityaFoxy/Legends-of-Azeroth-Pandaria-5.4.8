@@ -42,6 +42,15 @@ public:
     uint32 globalCoolDown, reactDelay, maxWaitForMove, disableMoveSplinePath, maxMovementSearchTime, expireActionTime,
         dispelAuraDuration, passiveDelay, repeatDelay, errorDelay, rpgDelay, sitDelay, returnDelay, lootDelay;
     bool dynamicReactDelay;
+    uint32 navigationMaxAttempts = 7;
+    uint32 navigationLogInterval = 30000;
+    uint32 stuckTimeout = 4000;
+    uint32 stuckMaxAttempts = 3;
+    bool battlegroundTest = false;
+    bool randomBotJoinBG = true;
+    bool randomBotAutoJoinBG = false;
+    uint32 randomBotAutoJoinBGABCount = 1;
+    std::set<uint32> randomBotAutoJoinABBrackets;
     float sightDistance, spellDistance, reactDistance, grindDistance, lootDistance, shootDistance, fleeDistance,
         tooCloseDistance, meleeDistance, followDistance, whisperDistance, contactDistance, aoeRadius, rpgDistance,
         targetPosRecalcDistance, farDistance, healDistance, aggroDistance;
@@ -56,6 +65,7 @@ public:
 
     uint32 openGoSpell;
     bool randomBotAutologin, disableRandomLevels;
+    uint32 randomBotStartingLevel;
     uint32 randomBotMaxLevel, randomBotMinLevel;
     float randomBotMaxLevelChance;
     uint32 minRandomBots, maxRandomBots, maxAddedBotsPerClass, maxAddedBots;
@@ -70,9 +80,6 @@ public:
     uint32 randomBotAccountCount;
     bool randomBotRandomPassword;
     std::vector<uint32> randomBotAccounts;
-
-    std::string premadeSpecName[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
-    std::vector<uint16> premadeSpecLink[MAX_CLASSES][MAX_SPECIALIZATIONS - 1];
 
     uint32 iterationsPerTick;
 

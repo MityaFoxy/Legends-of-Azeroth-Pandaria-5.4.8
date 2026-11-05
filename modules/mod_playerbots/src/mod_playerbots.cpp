@@ -21,6 +21,9 @@
 #include "RandomPlayerbotMgr.h"
 #include "RandomItemManager.h"
 #include "RandomPlayerbotBracketMgr.h"
+#include "BattlegroundTestController.h"
+#include "BattlegroundGraveyardRecovery.h"
+#include "ArathiBasinPlayerbot.h"
 
 #include "Authentication/AuthCrypt.h"
 #include "CharacterHandler.h"
@@ -62,27 +65,27 @@ public:
             std::string conf_file = boost::filesystem::absolute(_PLAYERBOT_CONFIG).generic_string();
 
             TC_LOG_INFO("playerbots", " ");
-            TC_LOG_INFO("playerbots", "Loading Playerbots Config at %s ...", conf_file.c_str());
+            TC_LOG_INFO("playerbots", "Loading Playerbots Config at {} ...", conf_file.c_str());
 
             std::string err;
             if (!sConfigMgr->LoadAdditionalFile(conf_file, true, err))
             {
-                TC_LOG_FATAL("playerbots", ">> Load playerbots failed, %s", err.c_str());
+                TC_LOG_FATAL("playerbots", ">> Load playerbots failed, {}", err.c_str());
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 sWorld->StopNow(1);
                 return;
             }
             sPlayerbotAIConfig->Initialize();
 
-            TC_LOG_INFO("playerbots", ">> Loaded playerbots config in %u ms", GetMSTimeDiffToNow(oldMSTime));
+            TC_LOG_INFO("playerbots", ">> Loaded playerbots config in {} ms", GetMSTimeDiffToNow(oldMSTime));
             TC_LOG_INFO("playerbots", " ");
 
             sRandomPlayerbotMgr->Reserve(sPlayerbotAIConfig->maxRandomBots);
             sRandomItemMgr->Init();
 
-            TC_LOG_INFO("playerbots", "Playerbots enabled: %s", sPlayerbotAIConfig->enabled ? "Yes" : "No");
-            TC_LOG_INFO("playerbots", "Playerbots min/max to load: %u/%u", sPlayerbotAIConfig->minRandomBots, sPlayerbotAIConfig->maxRandomBots);
-            TC_LOG_INFO("playerbots", "Playerbots autologin: %s", sPlayerbotAIConfig->randomBotAutologin ? "Yes" : "No");
+            TC_LOG_INFO("playerbots", "Playerbots enabled: {}", sPlayerbotAIConfig->enabled ? "Yes" : "No");
+            TC_LOG_INFO("playerbots", "Playerbots min/max to load: {}/{}", sPlayerbotAIConfig->minRandomBots, sPlayerbotAIConfig->maxRandomBots);
+            TC_LOG_INFO("playerbots", "Playerbots autologin: {}", sPlayerbotAIConfig->randomBotAutologin ? "Yes" : "No");
         }
     }
     void OnUpdate(uint32 diff) override
@@ -145,6 +148,9 @@ public:
     {
         sRandomPlayerbotMgr->UpdateAI(diff);
         sRandomPlayerbotMgr->UpdateSessions();
+        BattlegroundGraveyardRecovery::Update(diff);
+        ArathiBasinPlayerbot::Update(diff);
+        BattlegroundTest::Update(diff);
     }
 
     void OnPlayerbotUpdateSessions(Player* player) override
@@ -174,6 +180,15 @@ class PlayerbotsPlayerScript : public PlayerScript
 {
 public:
     PlayerbotsPlayerScript() : PlayerScript("PlayerbotsPlayerScript") {}
+
+    void OnLogout(Player* player) override
+    {
+        // LogoutPlayerBot may erase the holder entry before LogoutPlayer invokes
+        // DisablePlayerBot. Always release registry-owned state before Player
+        // is deleted, even when it is no longer present in a holder.
+        sPlayerbotsMgr->RemovePlayerBotData(player->GetGUID(), true);
+        sPlayerbotsMgr->RemovePlayerBotData(player->GetGUID(), false);
+    }
 
     void OnLogin(Player* player) override
     {

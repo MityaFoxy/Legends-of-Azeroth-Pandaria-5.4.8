@@ -7,13 +7,36 @@
 
 #include "DatabaseEnvFwd.h"
 #include "Battleground.h"
+#include "Creature.h"
 #include "Event.h"
 #include "ObjectDefines.h"
 #include "ObjectGuid.h"
 #include "Playerbots.h"
 #include "ServerFacade.h"
 #include "Corpse.h"
+#include "InstanceScript.h"
 #include "WorldPosition.h"
+
+namespace
+{
+bool CanReleaseDungeonSpirit(Player* bot)
+{
+    // Native release only: never use a wipe to bypass a running encounter.
+    if (InstanceScript* instance = bot->GetInstanceScript())
+        if (instance->IsEncounterInProgress())
+            return false;
+
+    if (Group* group = bot->GetGroup())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member->IsInWorld() && member->IsAlive() &&
+                member->GetMap() == bot->GetMap() && member->IsInCombat())
+                return false;
+        }
+    return true;
+}
+}
 
 bool ReleaseSpiritAction::Execute(Event event)
 {
@@ -44,7 +67,7 @@ bool ReleaseSpiritAction::Execute(Event event)
         context->GetValue<uint32>("death count")->Set(dCount + 1);
     }
 
-    TC_LOG_INFO("playerbots", "Bot %s %s:%u <%s> released", bot->GetGUID().ToString().c_str(),
+    TC_LOG_INFO("playerbots", "Bot {} {}:{} <{}> released", bot->GetGUID().ToString().c_str(),
              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     WorldPacket packet(CMSG_REPOP_REQUEST);
@@ -84,56 +107,70 @@ bool ReleaseSpiritAction::Execute(Event event)
 
 bool AutoReleaseSpiritAction::Execute(Event event)
 {
-    // Death Count to prevent skeleton piles
-    Player* master = GetMaster();
-    if (!master || (master && GET_PLAYERBOT_AI(master)))
+    if (bot->IsAlive() || bot->InArena())
+        return false;
+    if (!bot->InBattleground() && bot->GetMap() && bot->GetMap()->IsDungeon() &&
+        !CanReleaseDungeonSpirit(bot))
+        return false;
+    if (!bot->InBattleground() && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+        return false;
+
+    // Ghosts in BG still need the spirit-guide queue path below, but must not
+    // send another release request or increment death count on every tick.
+    if (!bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
     {
-        uint32 dCount = AI_VALUE(uint32, "death count");
-        context->GetValue<uint32>("death count")->Set(dCount + 1);
+        // Death Count to prevent skeleton piles
+        Player* master = GetMaster();
+        if (!master || (master && GET_PLAYERBOT_AI(master)))
+        {
+            uint32 dCount = AI_VALUE(uint32, "death count");
+            context->GetValue<uint32>("death count")->Set(dCount + 1);
+        }
+
+        TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> auto released", bot->GetGUID().ToString().c_str(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
+
+        WorldPacket packet(CMSG_REPOP_REQUEST);
+        packet << uint8(0);
+        bot->GetSession()->HandleRepopRequestOpcode(packet);
+
+        TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> releases spirit", bot->GetGUID().ToString().c_str(),
+                  bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
     }
 
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> auto released", bot->GetGUID().ToString().c_str(),
-              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
-
-    WorldPacket packet(CMSG_REPOP_REQUEST);
-    packet << uint8(0);
-    bot->GetSession()->HandleRepopRequestOpcode(packet);
-
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> releases spirit", bot->GetGUID().ToString().c_str(),
-              bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
-
-    if (bot->InBattleground() && (time(NULL) - bg_gossip_time >= 15 || !bot->HasAura(SPELL_WAITING_FOR_RESURRECT)))
+    if (bot->InBattleground() && bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)
+        && !bot->HasAura(SPELL_WAITING_FOR_RESURRECT))
     {
-        GuidVector npcs = AI_VALUE(GuidVector, "nearest npcs");
-        ObjectGuid guid;
-        Unit* unit;
-        for (GuidVector::iterator i = npcs.begin(); i != npcs.end(); i++)
+        uint32 entry = bot->GetBGTeam() == ALLIANCE
+            ? BG_CREATURE_ENTRY_A_SPIRITGUIDE : BG_CREATURE_ENTRY_H_SPIRITGUIDE;
+        Creature* guide = bot->FindNearestCreature(entry, sPlayerbotAIConfig->sightDistance, true);
+        if (!guide)
+            guide = bot->FindNearestCreature(entry, sPlayerbotAIConfig->sightDistance, false);
+        if (!guide || !guide->IsSpiritService())
+            return true;
+
+        if (!bot->IsWithinDistInMap(guide, INTERACTION_DISTANCE))
         {
-            unit = botAI->GetUnit(*i);
-            if (unit && unit->IsSpiritService())
+            if (!bot->isMoving())
             {
-                guid = unit->GetGUID();
-                break;
+                MotionMaster& mm = *bot->GetMotionMaster();
+                mm.Clear();
+                mm.MovePoint(guide->GetGUID().GetCounter(), guide->GetPositionX(),
+                    guide->GetPositionY(), guide->GetPositionZ(), true);
             }
         }
-        if (!guid)
+        else if (!botAI->IsRealPlayer())
         {
-            return true;
-        }
-        if (bot->GetDistance(unit) >= INTERACTION_DISTANCE)
-        {
-            // bot needs to actually click spirit-healer in BG to get res timer going
-            // and in IOC it's not within clicking range when they res in own base
-            MotionMaster& mm = *bot->GetMotionMaster();
-            mm.Clear();
-            mm.MovePoint(bot->GetMapId(), unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ(), true);
-        }
-        else if (!botAI->IsRealPlayer()) // below doesnt work properly on realplayer, but its also not needed
-        {
-            bg_gossip_time = time(NULL);
-            WorldPacket packet(CMSG_GOSSIP_HELLO);
-            packet << guid;
-            bot->GetSession()->HandleGossipHelloOpcode(packet);
+            if (bot->isMoving())
+                bot->StopMoving();
+            ObjectGuid guid = guide->GetGUID();
+            WorldPacket packet(CMSG_AREA_SPIRIT_HEALER_QUEUE);
+            for (uint8 index : {5, 4, 0, 2, 7, 1, 6, 3})
+                packet.WriteBit(guid[index]);
+            packet.FlushBits();
+            for (uint8 index : {1, 7, 6, 2, 4, 3, 0, 5})
+                packet.WriteByteSeq(guid[index]);
+            bot->GetSession()->HandleAreaSpiritHealerQueueOpcode(packet);
         }
     }
     botAI->SetNextCheckDelay(1000);
@@ -153,6 +190,10 @@ bool AutoReleaseSpiritAction::isUseful()
 
     if (bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
         return false;
+
+    // The master may already be alive at the entrance after a wipe.
+    if (bot->GetMap() && bot->GetMap()->IsDungeon())
+        return CanReleaseDungeonSpirit(bot);
 
     if (!bot->GetGroup())
         return true;
@@ -182,7 +223,7 @@ bool AutoReleaseSpiritAction::isUseful()
 
 bool RepopAction::Execute(Event event)
 {
-    TC_LOG_DEBUG("playerbots", "Bot %s %s:%u <%s> repops at graveyard", bot->GetGUID().ToString().c_str(),
+    TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> repops at graveyard", bot->GetGUID().ToString().c_str(),
               bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
     int64 deadTime;

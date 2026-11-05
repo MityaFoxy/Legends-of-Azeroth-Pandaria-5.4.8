@@ -596,7 +596,12 @@ bool GiveWaterTrigger::IsActive()
     return AI_VALUE(Unit*, "party member without water") && AI_VALUE2(uint32, "item count", item);
 }
 
-Value<Unit*>* SnareTargetTrigger::GetTargetValue() { return context->GetValue<Unit*>("snare target", spell); }
+Value<Unit*>* SnareTargetTrigger::GetTargetValue()
+{
+    if (Value<Unit*>* target = context->GetValue<Unit*>("snare target", spell))
+        return target;
+    return context->GetValue<Unit*>("current target");
+}
 
 bool StayTimeTrigger::IsActive()
 {

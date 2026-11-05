@@ -24,6 +24,7 @@
 #include "MoveSpline.h"
 #include "Player.h"
 #include "CreatureGroups.h"
+#include <algorithm>
 
 //----- Point Movement Generator
 template<class T>
@@ -38,7 +39,10 @@ bool PointMovementGenerator<T>::DoInitialize(T* unit)
         return true;
 
     Movement::MoveSplineInit init(unit);
-    init.MoveTo(i_x, i_y, i_z, m_generatePath);
+    if (_precomputedPath.empty())
+        init.MoveTo(i_x, i_y, i_z, m_generatePath);
+    else
+        init.MovebyPath(_precomputedPath);
     if (speed > 0.0f)
         init.SetVelocity(speed);
     init.Launch();
@@ -69,7 +73,17 @@ bool PointMovementGenerator<T>::DoUpdate(T* unit, uint32 /*diff*/)
     {
         i_recalculateSpeed = false;
         Movement::MoveSplineInit init(unit);
-        init.MoveTo(i_x, i_y, i_z, m_generatePath);
+        if (_precomputedPath.empty())
+            init.MoveTo(i_x, i_y, i_z, m_generatePath);
+        else
+        {
+            // Keep the selected corridor when speed changes. Drop passed segments
+            // instead of restarting the route or finding the original failed path.
+            size_t const passed = std::clamp<int32>(unit->movespline->currentPathIdx(), 0,
+                static_cast<int32>(_precomputedPath.size()) - 2);
+            _precomputedPath.erase(_precomputedPath.begin(), _precomputedPath.begin() + passed);
+            init.MovebyPath(_precomputedPath);
+        }
         if (speed > 0.0f) // Default value for point motion type is 0.0, if 0.0 spline will use GetSpeed on unit
             init.SetVelocity(speed);
         init.Launch();

@@ -21,7 +21,6 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
-#include "PlayerbotSpec.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotFactory.h"
 #include "RandomItemManager.h"
@@ -136,7 +135,7 @@ void BotFactory::Prepare()
  
 void BotFactory::Randomize(bool incremental)
 {
-    TC_LOG_INFO("playerbots", "%s randomizing %s (level %u class = %s)...", (incremental ? "Incremental" : "Full"),
+    TC_LOG_INFO("playerbots", "{} randomizing {} (level {} class = {})...", (incremental ? "Incremental" : "Full"),
             bot->GetName().c_str(), level, ClassToString((Classes)bot->GetClass()).c_str());
 
     Prepare();
@@ -144,6 +143,11 @@ void BotFactory::Randomize(bool incremental)
     {
         // -- Unlearn talents and spec
         bot->ResetTalents(true, true, true);
+
+        // Random bots are initialized through this path, not through the
+        // addclass flow. Rebuild their MoP specialization and talent tiers
+        // immediately after clearing the previous choices.
+        InitTalentsTree(false);
 
         // -- release pet
         bot->RemovePet(PetRemoveMode::PET_REMOVE_ABANDON, PetRemoveFlag::PET_REMOVE_FLAG_NONE);
@@ -159,6 +163,7 @@ void BotFactory::Randomize(bool incremental)
         }
     }
 
+    InitEquipment(incremental);
     InitPet();
  
     bot->SetMoney(urand(level * 100000, level * 5 * 100000));
@@ -228,7 +233,7 @@ void BotFactory::InitPet()
  
         if (ids.empty())
         {
-            TC_LOG_ERROR("playerbots", "No pets available for bot %s (%u level)", bot->GetName().c_str(), bot->GetLevel());
+            TC_LOG_ERROR("playerbots", "No pets available for bot {} ({} level)", bot->GetName().c_str(), bot->GetLevel());
             return;
         }
 
@@ -278,7 +283,7 @@ void BotFactory::InitPet()
     }
     else
     {
-        TC_LOG_ERROR("playerbots", "Cannot create pet for bot %s", bot->GetName().c_str());
+        TC_LOG_ERROR("playerbots", "Cannot create pet for bot {}", bot->GetName().c_str());
         return;
     }
  
@@ -300,57 +305,32 @@ void BotFactory::InitPet()
         pet->ToggleAutocast(spellInfo, true);
     }
 }
-#include <fstream>
 void BotFactory::InitTalentsTree(bool reset)
 {
-    /*std::map<uint32, std::list<const TalentEntry*>> talents_dbc;
-    for (auto entry = sTalentStore.begin(); entry != sTalentStore.end(); ++entry)
-    {
-        if (talents_dbc.find(entry->PlayerClass) == talents_dbc.end())
-            talents_dbc[entry->PlayerClass] = std::list<const TalentEntry*>();
-        talents_dbc[entry->PlayerClass].push_back(*entry);
-    }
-
-    for (auto& ref : talents_dbc)
-    {
-        ref.second.sort([](const TalentEntry* a, const TalentEntry* b)
-        {
-            return (a->Row < b->Row) || (a->Row == b->Row && a->Col < b->Col);
-        });
-    }
-
-    std::ofstream os("./talent_export.txt", std::ios::app);
-    for (const auto& ref : talents_dbc)
-    {
-        auto classe = ClassToString((Classes)ref.first);
-        os << classe << ":\n";
-        uint32 currentRow = 0;
-        for (const auto& tal : ref.second)
-        {
-            if (tal->Row != currentRow)
-            {
-                currentRow = tal->Row;
-                os << "\n";
-            }
-            os << tal->TalentID << "\t";
-        }
-        os << "\n";
-    }
-    os.close();*/
-
     // -- reset spec in case we down level
     if (reset)
-    {
         bot->ResetTalents(true, true, true);
-    }
-    
+
     // if no spec then pick one random (need to change that to balance)
     if (bot->GetSpecialization() == Specializations::SPEC_NONE)
     {
         // -- Select spec
         if (bot->GetLevel() >= 10)
         {
-            uint32 tab = std::rand() % 3;
+            auto const specializations = dbc::GetClassSpecializations(bot->GetClass());
+            std::vector<uint32> tabs;
+            for (uint32 tab = 0; tab < specializations.size(); ++tab)
+                if (specializations[tab] != Specializations::SPEC_NONE)
+                    tabs.push_back(tab);
+
+            if (tabs.empty())
+            {
+                TC_LOG_ERROR("playerbots", "No specializations found for bot {} (class {})",
+                    bot->GetName(), uint32(bot->GetClass()));
+                return;
+            }
+
+            uint32 tab = tabs[urand(0, uint32(tabs.size()) - 1)];
             WorldPacket p(CMSG_SET_PRIMARY_TALENT_TREE);
             p << tab;
             bot->GetSession()->HandeSetTalentSpecialization(p);
@@ -358,36 +338,56 @@ void BotFactory::InitTalentsTree(bool reset)
         }
     }
 
-    WorldPacket p(CMSG_LEARN_TALENT);
-    uint32 alreadyUsedPoints = bot->GetUsedTalentCount();
-    uint8 spec_tab = PlayerBotSpec::GetSpectab(bot);
-    uint32 availablepoints = bot->CalculateTalentsPoints() - bot->GetUsedTalentCount();
-    uint32 learnCount = 0;
+    constexpr uint32 MaxTalentTiers = 6;
+    uint32 unlockedTiers = bot->CalculateTalentsPoints();
+    if (unlockedTiers > MaxTalentTiers)
+        unlockedTiers = MaxTalentTiers;
 
-    if (!availablepoints || spec_tab == 99) return;
-
-    const std::vector<uint16>& talents = sPlayerbotAIConfig->premadeSpecLink[bot->GetClass()][spec_tab];
-    if (talents.empty()) return;
-
-    
-    std::vector<uint16> talent_to_learn;
-    for (size_t i = alreadyUsedPoints; i < talents.size() && availablepoints > 0; ++i)
+    bool learnedTalent = false;
+    for (uint32 tier = 0; tier < unlockedTiers; ++tier)
     {
-        uint16 talentId = talents[i];
-        if (!bot->HasTalent(talentId, bot->GetActiveSpec()))
+        std::vector<TalentEntry const*> candidates;
+        bool hasTalentInTier = false;
+
+        for (TalentEntry const* talent : sTalentStore)
         {
-            learnCount++;
-            talent_to_learn.push_back(talentId);
-            availablepoints--;
+            if (talent->PlayerClass != bot->GetClass() || talent->TierID != tier || !talent->SpellID)
+                continue;
+
+            if (bot->HasTalent(talent->SpellID, bot->GetActiveSpec()))
+            {
+                hasTalentInTier = true;
+                break;
+            }
+
+            candidates.push_back(talent);
+        }
+
+        if (hasTalentInTier)
+            continue;
+
+        if (candidates.empty())
+        {
+            TC_LOG_ERROR("playerbots", "No tier {} talents found for bot {} (class {})", tier,
+                bot->GetName().c_str(), uint32(bot->GetClass()));
+            continue;
+        }
+
+        uint32 candidateCount = uint32(candidates.size());
+        uint32 firstCandidate = urand(0, candidateCount - 1);
+        for (uint32 offset = 0; offset < candidateCount; ++offset)
+        {
+            TalentEntry const* talent = candidates[(firstCandidate + offset) % candidateCount];
+            if (bot->LearnTalent(talent->ID))
+            {
+                learnedTalent = true;
+                break;
+            }
         }
     }
-    if (learnCount > 0)
-    {
-        p.WriteBits(learnCount, 23);
-        for (const auto& c : talent_to_learn)
-            p << c;
-        bot->GetSession()->HandleLearnTalentOpcode(p);
-    }
+
+    if (learnedTalent)
+        bot->SendTalentsInfoData();
 }
 
 void BotFactory::ClearEverything()

@@ -324,7 +324,7 @@ class spell_omega_stance_spider : public SpellScriptLoader
 
             void Register() override
             {
-                OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_omega_stance_spider_SpellScript::SelectTargets, EFFECT_0, TARGET_DEST_DEST_RANDOM);
+                OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_omega_stance_spider_SpellScript::SelectTargets, EFFECT_0, TARGET_DEST_CASTER_RANDOM);
             }
 
             private:

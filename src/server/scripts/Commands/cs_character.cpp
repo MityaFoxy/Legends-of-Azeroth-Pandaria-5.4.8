@@ -31,6 +31,7 @@ EndScriptData */
 #include "ScriptMgr.h"
 #include "ServiceMgr.h"
 #include "ServiceBoost.h"
+#include "StringConvert.h"
 
 class character_commandscript : public CommandScript
 {
@@ -408,10 +409,10 @@ public:
             if (WorldSession* session = handler->GetSession())
             {
                 if (Player* player = session->GetPlayer())
-                    sLog->outCommand(session->GetAccountId(), "GM %s (Account: %u) forced rename %s to player %s (Account: %u)", player->GetName().c_str(), session->GetAccountId(), newName.c_str(), playerOldName.c_str(), sObjectMgr->GetPlayerAccountIdByGUID(targetGuid));
+                    sLog->OutCommand(session->GetAccountId(), "GM {} (Account: {}) forced rename {} to player {} (Account: {})", player->GetName().c_str(), session->GetAccountId(), newName.c_str(), playerOldName.c_str(), sObjectMgr->GetPlayerAccountIdByGUID(targetGuid));
             }
             else
-                sLog->outCommand(0, "CONSOLE forced rename '%s' to '%s' (GUID: %u)", playerOldName.c_str(), newName.c_str(), targetGuid.GetCounter());
+                sLog->OutCommand(0, "CONSOLE forced rename '{}' to '{}' (GUID: {})", playerOldName.c_str(), newName.c_str(), targetGuid.GetCounter());
         }
         else
         {
@@ -465,13 +466,19 @@ public:
             return false;
 
         int32 oldlevel = target ? target->GetLevel() : Player::GetLevelFromDB(targetGuid);
-        int32 newlevel = levelStr ? atoi(levelStr) : oldlevel;
+        int32 newlevel = oldlevel;
+        if (levelStr)
+        {
+            auto parsed = Trinity::StringTo<int32>(levelStr[0] == '+' ? levelStr + 1 : levelStr);
+            if (!parsed)
+                return false;
+            newlevel = *parsed;
+        }
 
         if (newlevel < 1)
             return false;                                       // invalid level
 
-        if (newlevel > STRONG_MAX_LEVEL)                         // hardcoded maximum level
-            newlevel = STRONG_MAX_LEVEL;
+        newlevel = std::min<int32>(newlevel, DEFAULT_MAX_LEVEL);
 
         HandleCharacterLevel(target, targetGuid, oldlevel, newlevel, handler);
         if (!handler->GetSession() || handler->GetSession()->GetPlayer() != target)      // including player == NULL
@@ -839,14 +846,16 @@ public:
             return false;
 
         int32 oldlevel = target ? target->GetLevel() : Player::GetLevelFromDB(targetGuid);
-        int32 addlevel = levelStr ? atoi(levelStr) : 1;
-        int32 newlevel = oldlevel + addlevel;
-
-        if (newlevel < 1)
-            newlevel = 1;
-
-        if (newlevel > STRONG_MAX_LEVEL)                         // hardcoded maximum level
-            newlevel = STRONG_MAX_LEVEL;
+        int32 addlevel = 1;
+        if (levelStr)
+        {
+            auto parsed = Trinity::StringTo<int32>(levelStr[0] == '+' ? levelStr + 1 : levelStr);
+            if (!parsed)
+                return false;
+            addlevel = *parsed;
+        }
+        // Widen before adding so even a valid INT32_MAX increment cannot wrap.
+        int32 newlevel = std::clamp<int64>(int64(oldlevel) + addlevel, 1, DEFAULT_MAX_LEVEL);
 
         HandleCharacterLevel(target, targetGuid, oldlevel, newlevel, handler);
 
@@ -1063,7 +1072,7 @@ public:
             z = target->m_homebindZ;
             zone = target->m_homebindAreaId;
         }
-        else if (QueryResult result = CharacterDatabase.PQuery("SELECT mapId, posX, posY, posZ, zoneId FROM character_homebind WHERE guid = %u;", targetGuid.GetCounter()))
+        else if (QueryResult result = CharacterDatabase.PQuery("SELECT mapId, posX, posY, posZ, zoneId FROM character_homebind WHERE guid = {};", targetGuid.GetCounter()))
         {
             Field *fields = result->Fetch();
             map = fields[0].GetUInt32();
@@ -1095,8 +1104,8 @@ public:
             target->TeleportTo(map, x, y, z, 0);
         else
         {
-            CharacterDatabase.PExecute("UPDATE characters SET map = %u, position_x = %f, position_y = %f, position_z = %f, zone = %u, "
-                "trans_x = 0, trans_y = 0,trans_z = 0, transguid = 0, taxi_path='', instance_id = 0 WHERE guid = %u",
+            CharacterDatabase.PExecute("UPDATE characters SET map = {}, position_x = {}, position_y = {}, position_z = {}, zone = {}, "
+                "trans_x = 0, trans_y = 0,trans_z = 0, transguid = 0, taxi_path='', instance_id = 0 WHERE guid = {}",
                 map, x, y, z, zone, guid);
         }
 
@@ -1166,10 +1175,10 @@ public:
         uint32 guid = tarGuid.GetCounter();
 
         // Sale from trade platform, character ban is still active.
-        if (CharacterDatabase.PQuery("SELECT * FROM `character_banned` WHERE `guid` = %u AND `active` = 1", guid))
-            CharacterDatabase.PExecute("DELETE FROM character_account_data WHERE guid = %u", guid);
+        if (CharacterDatabase.PQuery("SELECT * FROM `character_banned` WHERE `guid` = {} AND `active` = 1", guid))
+            CharacterDatabase.PExecute("DELETE FROM character_account_data WHERE guid = {}", guid);
 
-        CharacterDatabase.PExecute("UPDATE `characters` SET `account` = %u WHERE `guid` = %u", destAcc.GetCounter(), guid);
+        CharacterDatabase.PExecute("UPDATE `characters` SET `account` = {} WHERE `guid` = {}", destAcc.GetCounter(), guid);
         sWorld->UpdateCharacterNameDataAccount(tarGuid, destAcc);
 
         std::ostringstream oldAcc;
@@ -1285,7 +1294,7 @@ public:
             return false;
 
         target = ObjectAccessor::FindConnectedPlayer(targetGuid);  // Update it because player may be out of world.
-        QueryResult result = CharacterDatabase.PQuery("SELECT class, race, account FROM characters WHERE guid = %u", targetGuid.GetCounter());
+        QueryResult result = CharacterDatabase.PQuery("SELECT class, race, account FROM characters WHERE guid = {}", targetGuid.GetCounter());
         if (!result)
         {
             handler->SetSentErrorMessage(true);
@@ -1332,17 +1341,17 @@ public:
             return false;
         }
 
-        result = CharacterDatabase.PQuery("SELECT id, data1 FROM character_service WHERE guid = %u AND service = %u AND execution_date IS NULL", guid, ISERVICE_RECLASS);
+        result = CharacterDatabase.PQuery("SELECT id, data1 FROM character_service WHERE guid = {} AND service = {} AND execution_date IS NULL", guid, ISERVICE_RECLASS);
         if (result)
         {
-            CharacterDatabase.PExecute("UPDATE character_service SET execution_date = UNIX_TIMESTAMP() WHERE id = %u", (*result)[0].GetUInt32());
+            CharacterDatabase.PExecute("UPDATE character_service SET execution_date = UNIX_TIMESTAMP() WHERE id = {}", (*result)[0].GetUInt32());
             oldClass = (*result)[1].GetUInt32();
         }
 
         sServiceMgr->RemoveOldSkillsFromDB(guid, newClass);
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-        trans->PAppend("UPDATE characters SET at_login = at_login | '%u' WHERE guid = '%u'", AT_LOGIN_CHANGE_FACTION, guid);
-        trans->PAppend("UPDATE characters SET class = %u WHERE guid = %u", newClass, guid);
+        trans->PAppend("UPDATE characters SET at_login = at_login | '{}' WHERE guid = '{}'", AT_LOGIN_CHANGE_FACTION, guid);
+        trans->PAppend("UPDATE characters SET class = {} WHERE guid = {}", newClass, guid);
         CharacterDatabase.CommitTransaction(trans);
         ServiceEntry s{ ISERVICE_RECLASS };
         s.Data1 = oldClass;

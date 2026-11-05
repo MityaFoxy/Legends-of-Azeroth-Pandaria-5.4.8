@@ -22,6 +22,8 @@
 #include "ServiceMgr.h"
 #include "Realm.h"
 
+static BoostItemsVector mBoostItemsMap;
+
 void LoadBoostItems()
 {
     uint32 oldMSTime = getMSTime();
@@ -41,15 +43,15 @@ void LoadBoostItems()
     {
         Field* fields = result->Fetch();
 
-        BoostItems* items = new BoostItems();
+        BoostItems items;
 
-        items->spec = fields[0].GetUInt32();
-        items->slot = fields[1].GetUInt32();
-        items->itemId = fields[2].GetUInt32();
+        items.spec = fields[0].GetUInt32();
+        items.slot = fields[1].GetUInt32();
+        items.itemId = fields[2].GetUInt32();
 
-        if (!sObjectMgr->GetItemTemplate(items->itemId))
+        if (!sObjectMgr->GetItemTemplate(items.itemId))
         {
-            TC_LOG_ERROR("sql.sql", "Item %u specified in `battle_pay_boost_items` does not exist, skipped.", items->itemId);
+            TC_LOG_ERROR("sql.sql", "Item {} specified in `battle_pay_boost_items` does not exist, skipped.", items.itemId);
             continue;
         }
 
@@ -57,7 +59,7 @@ void LoadBoostItems()
         count++;
     } while (result->NextRow());
 
-    TC_LOG_INFO("server.loading", ">> Loaded %u boost items in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("server.loading", ">> Loaded {} boost items in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
 CharacterBooster::CharacterBooster(WorldSession* session) : m_session(session), m_timer(0), m_boosting(false), m_sendPacket(false) { }
@@ -135,9 +137,9 @@ void CharacterBooster::_GetCharBoostItems(PreparedItemsMap& itemsToMail, Prepare
     else
         itemsToMail.emplace(1, 25474);
 
-    for (auto&& item : mBoostItemsMap)
-        if (item->spec == m_charBoostInfo.specialization)
-            itemsToEquip.emplace(item->slot, item->itemId);
+    for (BoostItems const& item : mBoostItemsMap)
+        if (item.spec == m_charBoostInfo.specialization)
+            itemsToEquip.emplace(item.slot, item.itemId);
 }
 
 void CharacterBooster::SendCharBoostPacket(PreparedItemsMap items) const
@@ -256,7 +258,7 @@ void CharacterBooster::_SendMail(CharacterDatabaseTransaction trans, PreparedIte
             trans->Append(stmt);
         }
         else
-            TC_LOG_ERROR("sql.sql", "Can't create item %u for _SendMail in Boost. Skip.", itr.second);
+            TC_LOG_ERROR("sql.sql", "Can't create item {} for _SendMail in Boost. Skip.", itr.second);
     }
 }
 
@@ -455,7 +457,7 @@ std::string CharacterBooster::_EquipItems(CharacterDatabaseTransaction trans, Pr
             }
             else
             {
-                TC_LOG_ERROR("sql.sql", "Can't create item %u for _EquipItems in Boost. Skip.", itr->second);
+                TC_LOG_ERROR("sql.sql", "Can't create item {} for _EquipItems in Boost. Skip.", itr->second);
 
                 items << "0 0 ";
             }
@@ -654,7 +656,7 @@ void CharacterBooster::_HandleCharacterBoost() const
 
     if (sWorld->getBoolConfig(CONFIG_BOOST_PROMOTION))
     {
-        auto paid = LoginDatabase.PQuery("SELECT counter FROM account_boost WHERE id = '%d' AND realmid = '%d' AND counter > 0", GetSession()->GetAccountId(), realm.Id.Realm);
+        auto paid = LoginDatabase.PQuery("SELECT counter FROM account_boost WHERE id = '{}' AND realmid = '{}' AND counter > 0", GetSession()->GetAccountId(), realm.Id.Realm);
         if (!paid)
             return;
     }

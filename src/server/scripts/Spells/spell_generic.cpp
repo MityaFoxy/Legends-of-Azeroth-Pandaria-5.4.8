@@ -4391,7 +4391,7 @@ class spell_gen_portal_to_isle_of_thunder : public SpellScript
             }
             else
             {
-                TC_LOG_ERROR("shit", "spell_gen_portal_to_isle_of_thunder: Player %u, team %u, spell %u.", player->GetGUID().GetCounter(), player->GetTeam(), GetSpellInfo()->Id);
+                TC_LOG_ERROR("shit", "spell_gen_portal_to_isle_of_thunder: Player {}, team {}, spell {}.", player->GetGUID().GetCounter(), player->GetTeam(), GetSpellInfo()->Id);
                 return;
             }
             dest._position.m_mapId = 1064;
@@ -4593,9 +4593,10 @@ class spell_gen_water_strider_water_walking : public AuraScript
 {
     PrepareAuraScript(spell_gen_water_strider_water_walking);
 
-    bool CheckArea(Unit* target)
+    void HandleApply(AuraEffect const*, AuraEffectHandleModes)
     {
-        return target->GetBattlegorund() == nullptr;
+        if (GetUnitOwner()->GetBattlegorund())
+            Remove();
     }
 
     void HandleProc(ProcEventInfo& eventInfo)
@@ -4606,7 +4607,7 @@ class spell_gen_water_strider_water_walking : public AuraScript
 
     void Register() override
     {
-        DoCheckAreaTarget += AuraCheckAreaTargetFn(spell_gen_water_strider_water_walking::CheckArea);
+        OnEffectApply += AuraEffectApplyFn(spell_gen_water_strider_water_walking::HandleApply, EFFECT_0, SPELL_AURA_WATER_WALK, AURA_EFFECT_HANDLE_REAL);
         OnProc += AuraProcFn(spell_gen_water_strider_water_walking::HandleProc);
     }
 };

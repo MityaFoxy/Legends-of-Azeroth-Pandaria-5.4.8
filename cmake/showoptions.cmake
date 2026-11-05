@@ -100,13 +100,6 @@ if( WIN32 )
   endif()
 endif( WIN32 )
 
-if ( NOJEM )
-  message("")
-  message(" *** NOJEM - WARNING!")
-  message(" *** jemalloc linking has been disabled!")
-  message(" *** Please note that this is for DEBUGGING WITH VALGRIND only!")
-  message(" *** DO NOT DISABLE IT UNLESS YOU KNOW WHAT YOU'RE DOING!")
-endif()
+message("* Server allocator      : ${ALLOCATOR} (resolved in dependencies)")
 
 message("")
-

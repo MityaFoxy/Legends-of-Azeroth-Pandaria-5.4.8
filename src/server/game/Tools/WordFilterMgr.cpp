@@ -57,7 +57,7 @@ bool FindWordInSequence(const std::string& str, const std::string& word, const s
 
         if (distBethCharsCount > maxDistBethChars)
         {
-            i = lastI; 
+            i = lastI;
             charsCount = 0;
             distBethCharsCount = 0;
             lastCharIsExist = false;
@@ -71,7 +71,7 @@ bool FindWordInSequence(const std::string& str, const std::string& word, const s
 }
 */
 
-WordFilterMgr::WordFilterMgr() 
+WordFilterMgr::WordFilterMgr()
 {
 }
 
@@ -106,13 +106,13 @@ void WordFilterMgr::LoadLetterAnalogs()
         std::string analogs = fields[1].GetString();
 
         NormalizeWord(analogs);
-        m_letterAnalogs[letter] = analogs; 
+        m_letterAnalogs[letter] = analogs;
 
         ++count;
     }
     while (result->NextRow());
 
-    TC_LOG_INFO("misc", ">> Loaded %u letter analogs in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("misc", ">> Loaded {} letter analogs in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
 
@@ -160,7 +160,7 @@ void WordFilterMgr::LoadBadWords()
     }
     while (result->NextRow());
 
-    TC_LOG_INFO("misc", ">> Loaded %u bad words in %u ms", count, GetMSTimeDiffToNow(oldMSTime));
+    TC_LOG_INFO("misc", ">> Loaded {} bad words in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
 inline void WordFilterMgr::ConvertLettersToAnalogs(std::string& text)
@@ -178,7 +178,7 @@ inline void WordFilterMgr::ConvertLettersToAnalogs(std::string& text)
 std::string WordFilterMgr::FindBadWord(const std::string& text, bool mail)
 {
     std::string _text = text;
-    
+
     if (_text.empty() || m_badWords.empty())
         return "";
 
@@ -195,7 +195,7 @@ std::string WordFilterMgr::FindBadWord(const std::string& text, bool mail)
             if (_text.find(it->first) != std::string::npos)
                 return it->second;
     }
-    /* 
+    /*
     // At ~5 times slower.
     for (BadWordMap::const_iterator it = m_badWords.begin(); it != m_badWords.end(); ++it)
     {
@@ -223,7 +223,7 @@ std::string WordFilterMgr::FindBadWord(const std::string& text, bool mail)
 bool WordFilterMgr::AddBadWord(const std::string& badWord, bool toDB)
 {
     std::string _badWord = badWord;
-  
+
     NormalizeWord(_badWord);
 
     std::string convertedBadWord = _badWord;
@@ -236,7 +236,7 @@ bool WordFilterMgr::AddBadWord(const std::string& badWord, bool toDB)
     m_badWords[convertedBadWord] = _badWord;
 
     if (toDB)
-        WorldDatabase.PQuery("REPLACE INTO bad_word VALUES ('%s')", _badWord.c_str()); 
+        WorldDatabase.PQuery("REPLACE INTO bad_word VALUES ('{}')", _badWord.c_str());
 
     return true;
 }
@@ -257,7 +257,7 @@ bool WordFilterMgr::AddBadWordMail(const std::string& badWord, bool toDB)
     m_badWordsMail[convertedBadWord] = _badWord;
 
     if (toDB)
-        WorldDatabase.PQuery("REPLACE INTO bad_word_mail VALUES ('%s')", _badWord.c_str());
+        WorldDatabase.PQuery("REPLACE INTO bad_word_mail VALUES ('{}')", _badWord.c_str());
 
     return true;
 }
@@ -265,7 +265,7 @@ bool WordFilterMgr::AddBadWordMail(const std::string& badWord, bool toDB)
 bool WordFilterMgr::RemoveBadWord(const std::string& badWord, bool fromDB)
 {
     std::string _badWord = badWord;
-    
+
     NormalizeWord(_badWord);
 
     std::string convertedBadWord = _badWord;
@@ -279,7 +279,7 @@ bool WordFilterMgr::RemoveBadWord(const std::string& badWord, bool fromDB)
     m_badWords.erase(it);
 
     if (fromDB)
-        WorldDatabase.PExecute("DELETE FROM bad_word WHERE `bad_word` = '%s'", _badWord.c_str()); 
+        WorldDatabase.PExecute("DELETE FROM bad_word WHERE `bad_word` = '{}'", _badWord.c_str());
 
     return true;
 }

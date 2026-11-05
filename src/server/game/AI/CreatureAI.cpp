@@ -16,6 +16,7 @@
 */
 
 #include "CreatureAI.h"
+#include "Timer.h"
 #include "AreaBoundary.h"
 #include "CreatureAIImpl.h"
 #include "Creature.h"
@@ -155,7 +156,7 @@ void CreatureAI::DoZoneInCombat(Creature* creature /*= NULL*/, float maxRangeToN
     Map* map = creature->GetMap();
     if (!map->IsDungeon())                                  //use IsDungeon instead of Instanceable, in case battlegrounds will be instantiated
     {
-        TC_LOG_ERROR("misc", "DoZoneInCombat call for map that isn't an instance (creature entry = %d)", creature->GetTypeId() == TYPEID_UNIT ? creature->ToCreature()->GetEntry() : 0);
+        TC_LOG_ERROR("misc", "DoZoneInCombat call for map that isn't an instance (creature entry = {})", creature->GetTypeId() == TYPEID_UNIT ? creature->ToCreature()->GetEntry() : 0);
         return;
     }
 
@@ -180,7 +181,7 @@ void CreatureAI::DoZoneInCombat(Creature* creature /*= NULL*/, float maxRangeToN
     // If it can't find a suitable attack target then we should error out.
     if (!creature->HasReactState(REACT_PASSIVE) && !creature->GetVictim())
     {
-        TC_LOG_ERROR("misc", "DoZoneInCombat called for creature that has empty threat list (creature entry = %u)", creature->GetEntry());
+        TC_LOG_ERROR("misc", "DoZoneInCombat called for creature that has empty threat list (creature entry = {})", creature->GetEntry());
         return;
     }
 
@@ -277,7 +278,7 @@ void CreatureAI::MoveInLineOfSight_Safe(Unit* who)
 
 void CreatureAI::SpellRequiresMovement(Unit* /*target*/, Spell* spell)
 {
-    TC_LOG_ERROR("shitlog", "CreatureAI::SpellRequiresMovement me %u",  me->GetEntry());
+    TC_LOG_ERROR("shitlog", "CreatureAI::SpellRequiresMovement me {}",  me->GetEntry());
 
     spell->finish(false);
     delete spell;
@@ -304,7 +305,7 @@ void CreatureAI::EnterEvadeMode(EvadeReason why)
     if (!_EnterEvadeMode(why))
         return;
 
-    TC_LOG_DEBUG("entities.unit", "Creature %u enters evade mode.", me->GetEntry());
+    TC_LOG_DEBUG("entities.unit", "Creature {} enters evade mode.", me->GetEntry());
 
     if (!me->GetVehicle()) // otherwise me will be in evade mode forever
     {
@@ -358,6 +359,21 @@ void CreatureAI::EngagementStart(Unit* who)
     }
 
     _isEngaged = true;
+    _engagedAt = getMSTime();
+    JustEngagedWith(who);
+}
+
+// Called by Unit::SetInCombatState when the creature enters combat. The script is told once per pull: when
+// EngagementStart told it a moment ago (the threat list of the same pull) nothing happens; a flag left set by an earlier
+// fight does not hold the call back.
+void CreatureAI::EngageFromCombatState(Unit* who)
+{
+    uint32 const now = getMSTime();
+    if (_isEngaged && getMSTimeDiff(_engagedAt, now) < 2000)
+        return;
+
+    _isEngaged = true;
+    _engagedAt = now;
     JustEngagedWith(who);
 }
 
@@ -380,7 +396,7 @@ bool CreatureAI::CheckInRoom()
     if (IsInBoundary())
         return true;
 
-    TC_LOG_DEBUG("scripts", "Creature %s (unit %s) has left its designated room area!", me->GetName().c_str(), me->GetGUID().ToString().c_str());
+    TC_LOG_DEBUG("scripts", "Creature {} (unit {}) has left its designated room area!", me->GetName().c_str(), me->GetGUID().ToString().c_str());
     EnterEvadeMode();
     return false;
 }
@@ -433,8 +449,14 @@ int32 CreatureAI::VisualizeBoundary(Seconds duration, Unit* owner /*= nullptr*/,
 
 bool CreatureAI::UpdateVictimWithGaze()
 {
-    if (!me->IsInCombat())
+    if (!IsEngaged())
         return false;
+
+    if (!me->IsAlive())
+    {
+        EngagementOver();
+        return false;
+    }
 
     if (me->HasReactState(REACT_PASSIVE))
     {
@@ -469,8 +491,17 @@ bool NeedEvadeIfChallengeNotStarted(uint32 entry, uint32 mapId)
 
 bool CreatureAI::UpdateVictim()
 {
-    if (!me->IsInCombat())
+    // CombatManager removes IN_COMBAT when the last opponent dies, before
+    // this AI gets its next update. Engagement lasts until evade/reset, so
+    // SelectVictim must still run once to start the return home.
+    if (!IsEngaged())
         return false;
+
+    if (!me->IsAlive())
+    {
+        EngagementOver();
+        return false;
+    }
 
     if (InstanceScript* instance = me->GetInstanceScript())
     {
@@ -625,6 +656,7 @@ void VehicleAIBase::CheckConditions(uint32 const diff)
                         //if (!sConditionMgr->IsObjectMeetToConditions(player, m_vehicleBase, conditions))
                         if (!sConditionMgr->IsObjectMeetingNotGroupedConditions(CONDITION_SOURCE_TYPE_CREATURE_TEMPLATE_VEHICLE, m_vehicleBase->GetEntry(), player, m_vehicleBase))
                         {
+
                             player->ExitVehicle();
                             return;//check other pessanger in next tick
                         }
@@ -724,6 +756,8 @@ Creature* SummonablePremiumNpcAI::OpenGossip(PlayerOrChatHandler player, Creatur
     data.WriteByteSeq(guid[6]);
     data.WriteByteSeq(guid[2]);
 
-    player->GetSession()->HandleGossipHelloOpcode(data);
+    WorldPackets::NPC::GossipHello gossipHello(std::move(data));
+    gossipHello.Read();
+    player->GetSession()->HandleGossipHelloOpcode(gossipHello);
     return creature;
 }

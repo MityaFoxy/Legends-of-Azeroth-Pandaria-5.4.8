@@ -114,7 +114,7 @@ class TC_COMMON_API BigNumber
 
         uint32 AsDword() const;
 
-        uint8* AsByteArray(int32 minSize = 0, bool littleEndian = true);
+        std::unique_ptr<uint8[]> AsByteArray(int32 minSize = 0, bool littleEndian = true);
 
         void GetBytes(uint8* buf, size_t bufsize, bool littleEndian = true) const;
         std::vector<uint8> ToByteVector(int32 minSize = 0, bool littleEndian = true) const;
@@ -127,8 +127,8 @@ class TC_COMMON_API BigNumber
             return buf;
         }
 
-        char * AsHexStr() const;
-        char * AsDecStr() const;
+        std::string AsHexStr() const;
+        std::string AsDecStr() const;
 
     private:
         struct bignum_st *_bn;
