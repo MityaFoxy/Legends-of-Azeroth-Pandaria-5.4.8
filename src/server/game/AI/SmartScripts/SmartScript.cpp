@@ -335,6 +335,9 @@ void SmartScript::ProcessAction(SmartScriptHolder& e, Unit* unit, uint32 var0, u
                     if (Quest const* q = sObjectMgr->GetQuestTemplate(e.action.quest.quest))
                     {
                         (*itr)->ToPlayer()->AddQuest(q, NULL);
+                        // A quest that starts by itself is shown to the player, not only added to the log
+                        if (q->IsAutoAccept())
+                            (*itr)->ToPlayer()->PlayerTalkClass->SendQuestGiverQuestDetails(q, (*itr)->GetGUID(), true, true);
                         TC_LOG_DEBUG("scripts.ai", "SmartScript::ProcessAction:: SMART_ACTION_ADD_QUEST: Player guidLow {} add quest {}",
                             (*itr)->GetGUID().GetCounter(), e.action.quest.quest);
                     }
