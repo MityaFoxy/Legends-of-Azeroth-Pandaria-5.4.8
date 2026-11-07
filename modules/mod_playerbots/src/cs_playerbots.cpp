@@ -19,6 +19,7 @@
 #include "Config.h"
 #include "AiObjectContext.h"
 #include "Item.h"
+#include "OilActions.h"
 #include "Pet.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
@@ -53,8 +54,178 @@ public:
         std::string command = args ? args : "";
         if (command == "pettest" || command.starts_with("pettest "))
             return HandlePetPersistenceTest(handler, command.substr(std::min<size_t>(8, command.size())));
+        if (command.starts_with("potiontest "))
+            return HandleManaPotionTest(handler, command.substr(11));
+        if (command.starts_with("oiltest "))
+            return HandleOilTest(handler, command.substr(8));
 
         return PlayerbotMgr::HandlePlayerbotMgrCommand(handler, args);
+    }
+
+    // Console-only native potion probe. It never changes mana, combat or cooldowns.
+    static bool HandleManaPotionTest(ChatHandler* handler, std::string const& arguments)
+    {
+        if (handler->GetSession() || !sConfigMgr->GetBoolDefault("AiPlayerbot.ManaPotionDiagnostics", false))
+            return false;
+        uint32 lowGuid = 0;
+        std::string operation, extra;
+        std::istringstream input(arguments);
+        if (!(input >> lowGuid >> operation) || (input >> extra))
+            return false;
+        ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(lowGuid);
+        Player* bot = sRandomPlayerbotMgr->GetPlayerBot(guid);
+        PlayerbotAI* ai = bot ? sPlayerbotsMgr->GetPlayerbotAI(bot) : nullptr;
+        if (!bot || !ai || ai->IsRealPlayer() || !bot->IsInWorld() ||
+            !sPlayerbotAIConfig->IsInRandomAccountList(sCharacterCache->GetCharacterAccountIdByGuid(guid)))
+            return false;
+        static std::map<uint32, ObjectGuid> probes;
+        if (operation == "supply")
+        {
+            if (probes.contains(lowGuid) || bot->GetPowerType() != POWER_MANA ||
+                bot->DoForEachItem([](Item* item) { return item->IsPotion(); }))
+            {
+                handler->SendSysMessage("Potion fixture requires a mana user without existing potions or an active fixture.");
+                return false;
+            }
+            ItemPosCountVec dest;
+            InventoryResult result = bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, 2455, 2);
+            if (result != EQUIP_ERR_OK)
+            {
+                handler->PSendSysMessage("Potion fixture inventory rejected guid=%u error=%u", lowGuid, uint32(result));
+                return false;
+            }
+            Item* potion = bot->StoreNewItem(dest, 2455, true);
+            if (!potion)
+                return false;
+            probes.emplace(lowGuid, potion->GetGUID());
+            handler->PSendSysMessage("Potion fixture supplied guid=%u item_guid=%u count=%u",
+                lowGuid, potion->GetGUID().GetCounter(), potion->GetCount());
+            return true;
+        }
+        auto found = probes.find(lowGuid);
+        if (found == probes.end())
+            return false;
+        ObjectGuid const itemGuid = found->second;
+        if (operation == "run")
+        {
+            Item* item = bot->GetItemByGuid(itemGuid);
+            uint32 const before = bot->GetPower(POWER_MANA);
+            uint32 const countBefore = item ? item->GetCount() : 0;
+            Action* action = ai->GetAiObjectContext()->GetAction("mana potion");
+            bool const useful = action && action->isUseful();
+            bool const accepted = useful && action->isPossible() && action->Execute(Event());
+            uint32 const after = bot->GetPower(POWER_MANA);
+            item = bot->GetItemByGuid(itemGuid);
+            uint32 const countAfter = item ? item->GetCount() : 0;
+            bool const ready = bot->GetSpellHistory()->IsReady(437, 2455);
+            // Same update, still in combat: repeat must respect the held category cooldown.
+            bool const repeat = accepted && action->isUseful() && action->isPossible() && action->Execute(Event());
+            item = bot->GetItemByGuid(itemGuid);
+            handler->PSendSysMessage("Potion fixture run guid=%u item_guid=%u combat=%u useful=%u accepted=%u mana_before=%u mana_after=%u count_before=%u count_after=%u ready=%u repeat=%u count_repeat=%u",
+                lowGuid, itemGuid.GetCounter(), uint32(bot->IsInCombat()), uint32(useful), uint32(accepted),
+                before, after, countBefore, countAfter, uint32(ready), uint32(repeat), item ? item->GetCount() : 0);
+            return true;
+        }
+        if (operation == "cleanup")
+        {
+            if (bot->IsNonMeleeSpellCasted(true))
+                return false;
+            Item* item = bot->GetItemByGuid(itemGuid);
+            if (item && item->GetEntry() == 2455 && item->GetOwnerGUID() == guid)
+                bot->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
+            bool const remaining = bot->GetItemByGuid(itemGuid) != nullptr;
+            if (!remaining)
+                probes.erase(found);
+            handler->PSendSysMessage("Potion fixture cleaned guid=%u item_guid=%u remaining=%u",
+                lowGuid, itemGuid.GetCounter(), uint32(remaining));
+            return !remaining;
+        }
+        return false;
+    }
+
+    // Opt-in fixture: supplies one identifiable oil, uses the real Action, then
+    // removes only that test item and its enchant. Never changes the weapon.
+    static bool HandleOilTest(ChatHandler* handler, std::string const& arguments)
+    {
+        if (handler->GetSession() || !sConfigMgr->GetBoolDefault("AiPlayerbot.OilDiagnostics", false))
+            return false;
+        uint32 lowGuid = 0;
+        std::string operation, extra;
+        std::istringstream input(arguments);
+        if (!(input >> lowGuid >> operation) || (input >> extra))
+            return false;
+        ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(lowGuid);
+        Player* bot = sRandomPlayerbotMgr->GetPlayerBot(guid);
+        PlayerbotAI* ai = bot ? sPlayerbotsMgr->GetPlayerbotAI(bot) : nullptr;
+        if (!bot || !ai || ai->IsRealPlayer() || !bot->IsInWorld() ||
+            !sPlayerbotAIConfig->IsInRandomAccountList(sCharacterCache->GetCharacterAccountIdByGuid(guid)))
+            return false;
+
+        struct Probe { ObjectGuid oil; ObjectGuid weapon; int32 charges; };
+        static std::map<uint32, Probe> probes;
+        if (operation == "supply")
+        {
+            Item* weapon = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+            if (probes.contains(lowGuid) || bot->IsInCombat() || !weapon ||
+                weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) || weapon->GetTemplate()->ItemLevel > 200 ||
+                bot->HasItemCount(20744, 1, true))
+                return false;
+            ItemPosCountVec dest;
+            if (bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, 20744, 1) != EQUIP_ERR_OK)
+                return false;
+            Item* oil = bot->StoreNewItem(dest, 20744, true);
+            if (!oil)
+                return false;
+            probes.emplace(lowGuid, Probe{ oil->GetGUID(), weapon->GetGUID(), oil->GetSpellCharges(0) });
+            handler->PSendSysMessage("Oil fixture supplied guid=%u oil_guid=%u weapon_guid=%u ilevel=%u charges=%d",
+                lowGuid, oil->GetGUID().GetCounter(), weapon->GetGUID().GetCounter(),
+                weapon->GetTemplate()->ItemLevel, oil->GetSpellCharges(0));
+            return true;
+        }
+        auto found = probes.find(lowGuid);
+        if (found == probes.end())
+            return false;
+        Probe const probe = found->second;
+        Item* oil = bot->GetItemByGuid(probe.oil);
+        Item* weapon = bot->GetItemByGuid(probe.weapon);
+        if (operation == "run")
+        {
+            Action* action = ai->GetAiObjectContext()->GetAction("apply oil");
+            bool const useful = action && action->isUseful();
+            bool const possible = useful && action->isPossible();
+            bool const accepted = possible && action->Execute(Event());
+            handler->PSendSysMessage("Oil fixture run guid=%u useful=%u possible=%u accepted=%u",
+                lowGuid, uint32(useful), uint32(possible), uint32(accepted));
+            return true;
+        }
+        if (operation == "status")
+        {
+            handler->PSendSysMessage("Oil fixture status guid=%u oil_guid=%u weapon_guid=%u enchant=%u duration=%u charges_before=%d charges_now=%d",
+                lowGuid, probe.oil.GetCounter(), probe.weapon.GetCounter(),
+                weapon ? weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) : 0,
+                weapon ? weapon->GetEnchantmentDuration(TEMP_ENCHANTMENT_SLOT) : 0,
+                probe.charges, oil ? oil->GetSpellCharges(0) : 0);
+            return true;
+        }
+        if (operation == "cleanup")
+        {
+            // Wait for the native cast to finish before deleting its cast item.
+            if (bot->IsNonMeleeSpellCasted(true))
+                return false;
+            if (weapon && weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) == 2623)
+            {
+                bot->ApplyEnchantment(weapon, TEMP_ENCHANTMENT_SLOT, false);
+                weapon->ClearEnchantment(TEMP_ENCHANTMENT_SLOT);
+            }
+            if (oil && oil->GetEntry() == 20744 && oil->GetOwnerGUID() == guid)
+                bot->DestroyItem(oil->GetBagSlot(), oil->GetSlot(), true);
+            probes.erase(found);
+            handler->PSendSysMessage("Oil fixture cleaned guid=%u oil_guid=%u remaining=%u enchant=%u",
+                lowGuid, probe.oil.GetCounter(), uint32(bot->GetItemByGuid(probe.oil) != nullptr),
+                weapon ? weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) : 0);
+            return true;
+        }
+        return false;
     }
 
     // Opt-in console probe for one random Hunter. It uses ordinary login,

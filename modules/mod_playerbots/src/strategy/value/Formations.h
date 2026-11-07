@@ -9,6 +9,9 @@
 class Player;
 class PlayerbotAI;
 
+// Calculate a temporary line destination without changing the selected formation.
+WorldLocation GetLineFormationLocation(PlayerbotAI* botAI);
+
 class Formation : public AiNamedObject
 {
 public:

@@ -8,6 +8,7 @@
 #include "Event.h"
 #include "LastMovementValue.h"
 #include "Playerbots.h"
+#include "Formations.h"
 
 bool StayActionBase::Stay()
 {
@@ -62,3 +63,46 @@ bool SitAction::Execute(Event event)
 }
 
 bool SitAction::isUseful() { return !AI_VALUE2(bool, "moving", "self target"); }
+
+bool StayLineAction::CanFormLine()
+{
+    Player* master = GetMaster();
+    return master && master != bot && bot->GetGroup() && master->GetGroup() == bot->GetGroup() &&
+        bot->IsInWorld() && master->IsInWorld() && bot->IsAlive() && master->IsAlive() &&
+        bot->GetMap() == master->GetMap() && master->InSamePhase(bot) &&
+        !bot->InBattleground() && !master->InBattleground() &&
+        !bot->IsInCombat() && !master->IsInCombat() && botAI->GetState() == BOT_STATE_NON_COMBAT &&
+        !bot->GetVehicle() && !master->GetVehicle() && !bot->GetTransport() && !master->GetTransport() &&
+        !bot->IsNonMeleeSpellCasted(true, false, true) && !master->IsInFlight() &&
+        !botAI->HasStrategy("move from group", BOT_STATE_COMBAT) &&
+        !botAI->HasStrategy("move from group", BOT_STATE_NON_COMBAT) &&
+        botAI->CanMove() && IsMovingAllowed();
+}
+
+bool StayLineAction::isUseful()
+{
+    if (!CanFormLine())
+        return false;
+    WorldLocation const loc = GetLineFormationLocation(botAI);
+    return !Formation::IsNullLocation(loc) &&
+        bot->GetDistance(loc.GetPositionX(), loc.GetPositionY(), loc.GetPositionZ()) > 1.0f;
+}
+
+bool StayLineAction::isPossible() { return CanFormLine(); }
+
+bool StayLineAction::Execute(Event /*event*/)
+{
+    if (!CanFormLine())
+        return false;
+    WorldLocation const loc = GetLineFormationLocation(botAI);
+    if (Formation::IsNullLocation(loc) || loc.GetMapId() != bot->GetMapId())
+        return false;
+
+    float x = loc.GetPositionX(), y = loc.GetPositionY(), z = loc.GetPositionZ();
+    Player* master = GetMaster();
+    if (!bot->GetMap()->CheckCollisionAndGetValidCoords(master, master->GetPositionX(),
+        master->GetPositionY(), master->GetPositionZ(), x, y, z) ||
+        bot->GetDistance(x, y, z) <= 1.0f)
+        return false;
+    return MoveTo(loc.GetMapId(), x, y, z, false, false, true, true);
+}

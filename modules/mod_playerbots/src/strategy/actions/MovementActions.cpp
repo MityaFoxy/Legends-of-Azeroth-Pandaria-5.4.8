@@ -2105,9 +2105,9 @@ bool FleeAction::isUseful()
     return true;
 }
 
-bool CombatFormationMoveAction::isUseful()
+bool CombatFormationMoveAction::CanReposition()
 {
-    if (getMSTime() - moveInterval < lastMoveTimer)
+    if (getMSTimeDiff(lastMoveTimer, getMSTime()) < moveInterval)
     {
         return false;
     }
@@ -2118,17 +2118,33 @@ bool CombatFormationMoveAction::isUseful()
     return true;
 }
 
+bool CombatFormationMoveAction::isUseful()
+{
+    if (!CanReposition() || !bot->IsAlive() || bot->isMoving() ||
+        bot->IsNonMeleeSpellCasted(true) || bot->GetVehicle() || bot->GetTransport() || bot->IsInFlight())
+        return false;
+
+    float const distance = AI_VALUE(float, "disperse distance");
+    // A negative value is the existing disabled setting, not a reason to
+    // manufacture a default spread distance for every combat strategy.
+    return distance > 0.0f && NearestGroupMember(distance) != nullptr;
+}
+
 bool CombatFormationMoveAction::Execute(Event event)
 {
+    if (!isUseful())
+        return false;
+
     float dis = AI_VALUE(float, "disperse distance");
     if (dis <= 0.0f)
         return false;
     Player* playerToLeave = NearestGroupMember(dis);
     if (playerToLeave && bot->GetExactDist(playerToLeave) < dis)
     {
-        //if (FleePosition(playerToLeave->GetPosition(), dis))
+        if (FleePosition(playerToLeave->GetPosition(), dis, moveInterval))
         {
-            //lastMoveTimer = getMSTime();
+            lastMoveTimer = getMSTime();
+            return true;
         }
     }
     return false;
@@ -2239,7 +2255,8 @@ Player* CombatFormationMoveAction::NearestGroupMember(float dis)
     for (Group::member_citerator itr = groupSlot.begin(); itr != groupSlot.end(); itr++)
     {
         Player* member = ObjectAccessor::FindPlayer(itr->guid);
-        if (!member || !member->IsAlive() || member == bot || member->GetMapId() != bot->GetMapId() ||
+        if (!member || !member->IsInWorld() || !member->IsAlive() || member == bot ||
+            member->GetMap() != bot->GetMap() || !member->InSamePhase(bot) ||
             member->IsCharmed() || sServerFacade->GetDistance2d(bot, member) > dis)
             continue;
         if (nearestDis > bot->GetExactDist(member))

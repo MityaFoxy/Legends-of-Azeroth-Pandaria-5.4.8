@@ -125,12 +125,13 @@ public:
     bool Execute(Event event) override;
 
 protected:
+    bool CanReposition();
     Position AverageGroupPos(float dis = sPlayerbotAIConfig->sightDistance, bool ranged = false, bool self = false);
     Player* NearestGroupMember(float dis = sPlayerbotAIConfig->sightDistance);
     float AverageGroupAngle(Unit* from, bool ranged = false, bool self = false);
     Position GetNearestPosition(const std::vector<Position>& positions);
-    int lastMoveTimer = 0;
-    int moveInterval;
+    uint32 lastMoveTimer = 0;
+    uint32 moveInterval;
 };
 
 class TankFaceAction : public CombatFormationMoveAction
@@ -138,6 +139,7 @@ class TankFaceAction : public CombatFormationMoveAction
 public:
     TankFaceAction(PlayerbotAI* botAI) : CombatFormationMoveAction(botAI, "tank face") {}
 
+    bool isUseful() override { return CanReposition(); }
     bool Execute(Event event) override;
 };
 
