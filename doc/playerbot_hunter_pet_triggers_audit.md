@@ -122,12 +122,65 @@ source checks. Existing Call Pet/slot recovery is a separate completed slice;
 this change does not redefine its behavior. Other classes, including Monk,
 are unchanged.
 
-The run also contains 78 accepted `call pet 1` attempts. Their repetition alone
-does not establish successful summons or a new defect; correlate current pets,
-slots, deaths, dismissals and exotic-pet eligibility before changing that path.
+The run also contains 78 accepted `call pet 1` attempts. The follow-up below
+correlates those attempts with owned pets before changing the request condition.
 
 The old `CastShootAction` reads `EQUIPMENT_SLOT_RANGED`, while the core's ranged
 weapon lookup reads main hand. That discrepancy alone does not prove a broken
 wand path: with no old-slot item the Action retains the correct `shoot` name,
 and native checks validate the weapon. Shoot remains an audit item, with no
 speculative change included here.
+
+## Follow-up: Call Pet 1 requires an owned active-slot pet
+
+The complete original native trace attributes **72 of 78** accepted Call Pet
+attempts to GUIDs **30 and 74**, 36 each. A read-only database snapshot finds
+both Hunters at level 1 with no `character_pet` rows or current pet. This
+is separate from exotic-pet eligibility and the previous slot-255 migration;
+the saved recovery plan contains no skipped records for these two owners.
+
+Local DBC **883 / Call Pet 1** uses summon-pet effect **56**, MiscValue 0 and
+BasePoints **0**. `Spell::EffectSummonPet` treats that BasePoints value as a
+slot and calls `LoadPetFromDB(PET_LOAD_BY_SLOT, slot)`. With no row, it deletes
+the unspawned Pet object and returns. An accepted cast can therefore produce no
+summoned pet; generic absence alone is not sufficient for this Hunter action.
+The pinned NotCronky comparison likewise checks spell 883 and active slot 0.
+
+`HunterPetStrategy` now requests a dedicated `hunter no pet` trigger. It
+inherits all native `NoPetTrigger` restrictions and its five-second cadence,
+then requires knowledge of spell 883 and a pet ID in `PET_SLOT_ACTIVE_FIRST`.
+The shared generic trigger remains available to Mage, Warlock and Death Knight.
+No spell, pet, level or slot is granted, no failure log is suppressed, and the
+existing Call Pet Action/native spell path and priority 60 are preserved.
+Loaded dead pets remain the responsibility of the revival handler. Other
+active slots, stable slots and overflow pets do not satisfy Call Pet **1**.
+
+The extended Hunter regression compiles the real generic trigger as well as
+the Hunter predicates and strategy. It tests unknown spell, empty/other/stable
+slots, positive slot-0 recall, loaded live/dead pets, minion, guardian,
+controlled unit, mounted state, and the preserved handler/target. Four new
+mutations join the existing five: registration, slot, knowledge and base guards.
+Native build and before/after observation are recorded separately under
+`wow_mop_codex_handoff/tests/hunter-call-pet-20261107/`.
+
+**PASS — November 7, 12:36:53 MSK.** GCC15 and Clang ASan/UBSan pass all nine
+mutations; -j4 worldserver build succeeds. Autonomous
+`loa-hunter-call-pet-20261107-r1.service` observes 100 bots for 180.31 seconds
+after login. GUIDs 30/74 both produce normal decision traces and make **zero**
+pet-care requests, versus their previous 72 accepted empty Call Pet attempts.
+Preflight and post-shutdown queries confirm neither owner has pet rows.
+The positive path is sampled on GUID8: Call Pet1 OK at09:33:47UTC, then native
+`has pet` events from09:33:52UTC onward. The test issues no summon commands.
+
+Complete trace: **90990 decisions, 0 UNKNOWN**; other1159FAILED require context.
+Unit/server exit0, online0, no remaining worldserver or fatal log markers.
+BG89entered/60objective, no combat-phase/full-cycle sample in this short window.
+Mend/Revive were not sampled again; their previous native observations and
+current predicate regressions remain separate evidence. This is neither a
+full-server sanitizer run nor a full rotation/BG acceptance test.
+
+Native sources match the tested build; binary SHA-256:
+`ff06ff9e748d10232b1fcc9f47bde7698bc68a5e45c7f4e11a47a8820e570207`.
+See `native-r1/result.json`, `action-audit.json`, `pet-actions-by-guid.json`,
+`positive-call-observation.json` and complete runtime logs. The installed
+runtime was not replaced.

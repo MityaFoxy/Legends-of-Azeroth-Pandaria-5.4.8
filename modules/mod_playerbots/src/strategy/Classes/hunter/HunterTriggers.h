@@ -11,6 +11,15 @@
 
 class PlayerbotAI;
 
+class HunterNoPetTrigger : public NoPetTrigger
+{
+public:
+    HunterNoPetTrigger(PlayerbotAI* botAI) : NoPetTrigger(botAI) {}
+
+    std::string const getName() override { return "hunter no pet"; }
+    bool IsActive() override;
+};
+
 class HuntersPetMediumHealthTrigger : public Trigger
 {
 public:

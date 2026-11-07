@@ -45,6 +45,7 @@ cpp = r'''
 #include <map>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 using uint8=uint8_t; using uint32=uint32_t; using int32=int32_t;
 struct Unit { virtual ~Unit() = default; };
@@ -54,7 +55,21 @@ struct Pet : Unit {
     bool IsAlive() const { return alive; }
     float GetHealthPct() const { return health; }
 };
-struct Player : Unit { Pet* pet = nullptr; Pet* GetPet() { return pet; } };
+struct Guid { bool empty = true; bool IsEmpty() const { return empty; } };
+struct Player : Unit {
+    Pet* pet = nullptr;
+    Unit* guardian = nullptr;
+    Unit* controlled = nullptr;
+    Guid minion;
+    bool knowsCall = false;
+    std::map<uint8, uint32> slots;
+    Pet* GetPet() { return pet; }
+    Guid GetMinionGUID() { return minion; }
+    Unit* GetGuardianPet() { return guardian; }
+    Unit* GetFirstControlled() { return controlled; }
+    bool HasSpell(uint32 id) { assert(id == 883); return knowsCall; }
+    uint32 GetPetIdBySlot(uint8 slot) { return slots[slot]; }
+};
 struct Event {
     bool active = false;
     Event() = default;
@@ -66,7 +81,13 @@ uint32 getMSTime() { return 10000; }
 template<class T> struct Value { T value{}; T Get() { return value; } };
 struct Context {
     std::map<std::string, Value<Unit*>> targets;
-    template<class T> Value<T>* GetValue(std::string const& name) { return &targets[name]; }
+    Value<bool> mounted;
+    template<class T> Value<T>* GetValue(std::string const& name, std::string const& qualifier = "") {
+        if constexpr (std::is_same_v<T, bool>) {
+            assert(name == "mounted" && qualifier == "self target");
+            return &mounted;
+        } else return &targets[name];
+    }
 };
 struct PlayerbotAI {
     Player* player;
@@ -83,10 +104,15 @@ struct AiNamedObject {
 };
 struct Config { uint32 mediumHealth = 65; } config;
 Config* sPlayerbotAIConfig = &config;
+#define AI_VALUE(type, name) (context->GetValue<type>(name)->Get())
+#define AI_VALUE2(type, name, qualifier) (context->GetValue<type>(name, qualifier)->Get())
 '''
+cpp += block((root / 'src/server/game/Entities/Pet/PetDefines.h').read_text(), 'enum PetSlot') + ';\n'
 for file in ('Action.h', 'Action.cpp', 'Trigger.h', 'Trigger.cpp', 'NamedObjectContext.h'):
     cpp += without_includes((base / file).read_text()) + '\n'
 cpp += block((base / 'NamedObjectContext.cpp').read_text(), 'void Qualified::Qualify(int qual)')
+cpp += clazz((base / 'triggers/GenericTriggers.h').read_text(), 'NoPetTrigger')
+cpp += block((base / 'triggers/GenericTriggers.cpp').read_text(), 'bool NoPetTrigger::IsActive()')
 cpp += r'''
 // Spell execution is outside this fixture. Real Hunter action wrappers below
 // retain and expose the target name used by the native Action::GetTarget path.
@@ -101,12 +127,12 @@ struct CastBuffSpellAction : CastSpellAction {
 };
 '''
 actions_h = (hunter / 'HunterActions.h').read_text()
-for name in ('CastMendPetAction', 'CastRevivePetAction'):
+for name in ('CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction'):
     cpp += clazz(actions_h, name)
 action_factory = clazz(context, 'HunterAiObjectContextInternal')
 # The entire real factory is compiled. Unrelated spell implementations are doubles.
 for name in sorted(set(re.findall(r'new (\w+)\(', action_factory)) -
-                   {'CastMendPetAction', 'CastRevivePetAction', 'CastBuffSpellAction'}):
+                   {'CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBuffSpellAction'}):
     cpp += f'struct {name} : Action {{ explicit {name}(PlayerbotAI* ai) : Action(ai) {{}} }};\n'
 cpp += action_factory
 cpp += without_includes((hunter / 'HunterTriggers.h').read_text())
@@ -137,9 +163,12 @@ void checkHandler(std::vector<TriggerNode*>& nodes, std::string const& triggerNa
         if (actionName == "mend pet") {
             assert(dynamic_cast<CastMendPetAction*>(action));
             assert(action->GetTarget() == ai.player->pet && "mend must target pet");
-        } else {
+        } else if (actionName == "revive pet") {
             assert(dynamic_cast<CastRevivePetAction*>(action));
             assert(action->GetTarget() == ai.player && "revive retains native self cast");
+        } else {
+            assert(dynamic_cast<CastCallPetAction*>(action));
+            assert(action->GetTarget() == ai.player && "call retains native self cast");
         }
         NextAction::destroy(handlers);
         found = true;
@@ -153,6 +182,39 @@ int main() {
     auto mend = triggers.create("hunters pet medium health", &ai);
     auto revive = triggers.create("hunters pet dead", &ai);
     assert(mend && revive && "pet triggers unreachable");
+    auto call = triggers.create("hunter no pet", &ai);
+    assert(call && "Hunter call trigger missing");
+    assert(call->getName() == "hunter no pet");
+    NoPetTrigger genericNoPet(&ai);
+    assert(genericNoPet.IsActive() && !call->IsActive());
+    bot.knowsCall = true;
+    bot.slots[PET_SLOT_STABLE_FIRST] = 123;
+    bot.slots[PET_SLOT_ACTIVE_FIRST + 1] = 124;
+    assert(!call->IsActive() && "Call Pet 1 requires first active slot");
+    bot.slots[PET_SLOT_ACTIVE_FIRST] = 125;
+    bot.knowsCall = false;
+    assert(!call->IsActive() && "Call Pet must be known");
+    bot.knowsCall = true;
+    assert(call->IsActive() && "owned first-slot pet must be callable");
+    bot.minion.empty = false;
+    assert(!call->IsActive() && "generic pet guards lost");
+    bot.minion.empty = true;
+    bot.guardian = &pet;
+    assert(!call->IsActive());
+    bot.guardian = nullptr;
+    bot.controlled = &pet;
+    assert(!call->IsActive());
+    bot.controlled = nullptr;
+    ai.context.mounted.value = true;
+    assert(!call->IsActive());
+    ai.context.mounted.value = false;
+    ai.context.targets["pet target"].value = &pet;
+    assert(!call->IsActive());
+    pet.alive = false;
+    assert(!call->IsActive() && "a loaded dead pet needs revival, not Call Pet");
+    pet.alive = true;
+    ai.context.targets["pet target"].value = nullptr;
+    assert(call->IsActive());
     assert(triggers.create("hunters pet medium health", &ai) == mend);
     assert(!mend->IsActive() && !revive->IsActive() && "absent pet is not a dead pet");
     bot.pet = &pet;
@@ -181,6 +243,7 @@ int main() {
     ai.context.targets["pet target"].value = &replacement;
     std::vector<TriggerNode*> nodes;
     HunterPetStrategy{}.InitTriggers(nodes);
+    checkHandler(nodes, "hunter no pet", "call pet 1", 60, call, actions, ai);
     checkHandler(nodes, "hunters pet medium health", "mend pet", 60, mend, actions, ai);
     checkHandler(nodes, "hunters pet dead", "revive pet", 60, revive, actions, ai);
     for (auto node : nodes) delete node;
@@ -214,6 +277,10 @@ with tempfile.TemporaryDirectory(prefix='loa-hunter-triggers-') as directory:
             ('threshold', 'pet->GetHealthPct() < sPlayerbotAIConfig->mediumHealth', 'pet->GetHealthPct() < 50.0f', 'configured medium health ignored'),
             ('aura', '!botAI->HasAura("mend pet", pet)', 'true', 'existing mend aura must be preserved'),
             ('revive', 'return pet && !pet->IsAlive();', 'return pet && pet->IsAlive();', '!mend->IsActive() && !revive->IsActive()'),
+            ('call-registration', 'creators["hunter no pet"]', 'creators["missing hunter no pet"]', 'Hunter call trigger missing'),
+            ('call-slot', 'bot->GetPetIdBySlot(PET_SLOT_ACTIVE_FIRST)', 'true', 'Call Pet 1 requires first active slot'),
+            ('call-known', 'bot->HasSpell(883)', 'true', 'Call Pet must be known'),
+            ('call-base', 'NoPetTrigger::IsActive() &&', 'true &&', 'generic pet guards lost'),
         ]
         for name, before, after, assertion in mutations:
             assert cpp.count(before) == 1, name

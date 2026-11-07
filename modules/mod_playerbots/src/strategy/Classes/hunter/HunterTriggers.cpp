@@ -13,6 +13,13 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 
+bool HunterNoPetTrigger::IsActive()
+{
+    // Call Pet 1 loads active slot 0; it cannot create a pet for an empty slot.
+    return NoPetTrigger::IsActive() && bot->HasSpell(883) &&
+        bot->GetPetIdBySlot(PET_SLOT_ACTIVE_FIRST);
+}
+
 bool HuntersPetMediumHealthTrigger::IsActive()
 {
     Pet* pet = bot->GetPet();
