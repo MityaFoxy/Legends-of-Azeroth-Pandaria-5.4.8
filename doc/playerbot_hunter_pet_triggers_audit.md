@@ -40,9 +40,39 @@ request. Actions retain their original targets, priorities, spell knowledge,
 costs, cooldowns and native casting checks. No pet creation, slot migration,
 forced injury, resurrection command or inventory mutation is added.
 
-Do not use `PetIsDeadValue` as evidence that a missing pet died: its current
-implementation treats any persisted pet row as dead when no pet is loaded.
-This separate legacy value is not changed by the two-trigger repair.
+The two-trigger repair did not use the legacy `PetIsDeadValue`, which treated
+any persisted pet row as death when no pet was loaded. The follow-up below
+repairs that separate value.
+
+## Follow-up: current pet death value
+
+On November 7, `PetIsDeadValue::Calculate` was changed to read the current
+`Player::GetPet()` once and require `!pet->IsAlive()`. Stored ownership,
+stable/dismissal records and an unresolved pet GUID do not establish death.
+This matches `IsDeadValue`'s absent-target behavior, the Hunter death trigger
+and `Spell::EffectResurrectPet`'s requirement for a present dead pet. Loaded
+pet death states retain their original behavior, including transitions.
+`Pet::LoadPetFromDB` remains responsible for loading persisted health/state.
+The value no longer queries the characters database.
+
+A repository-wide call-site search finds the `pet dead` registration in
+`ValueContext` but no static consumers in current strategies/Actions. This
+is a corrected value contract, not evidence of improved live rotations or
+an explanation for repeated Call Pet. Its registration/cache API is retained.
+
+`pet_state_value_regression.py` compiles the actual value, Hunter death
+predicate and native Unit state methods/enums with pet/storage doubles.
+Old source compiles and fails the saved-but-absent-pet assertion. GCC15 and
+Clang ASan/UBSan pass: absent pets with/without saved rows or stale GUIDs,
+all native death states, replacement/removal, consistency with the Hunter
+predicate and zero SQL calls. Three mutations are detected: absent-as-dead,
+inverted alive check and reintroduced storage polling. CTest/CI include it.
+
+Autonomous build `loa-pet-state-build-20261107-r1.service` passed -j4 on
+November 7 at **12:27:30 MSK**. Binary SHA-256:
+`976eb35b75a734d19404bb57169c930b6cb3b42e64d76ec689b5ace7d23b438a`.
+Evidence: `wow_mop_codex_handoff/tests/pet-state-20261107/`. No live server was
+started for this value-only check and the installed runtime was not replaced.
 
 ## Verification
 
