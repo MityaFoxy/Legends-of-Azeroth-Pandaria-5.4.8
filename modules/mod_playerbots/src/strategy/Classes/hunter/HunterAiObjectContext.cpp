@@ -60,12 +60,16 @@ class HunterTriggerFactoryInternal : public NamedObjectContext<Trigger>
 public:
     HunterTriggerFactoryInternal()
     {
+        creators["black arrow"] = &HunterTriggerFactoryInternal::black_arrow;
+        creators["hunter's mark"] = &HunterTriggerFactoryInternal::hunters_mark;
         creators["hunter no pet"] = &HunterTriggerFactoryInternal::no_pet;
         creators["hunters pet medium health"] = &HunterTriggerFactoryInternal::pet_medium_health;
         creators["hunters pet dead"] = &HunterTriggerFactoryInternal::pet_dead;
     }
 
 private:
+    static Trigger* black_arrow(PlayerbotAI* botAI) { return new BlackArrowTrigger(botAI); }
+    static Trigger* hunters_mark(PlayerbotAI* botAI) { return new HuntersMarkTrigger(botAI); }
     static Trigger* no_pet(PlayerbotAI* botAI) { return new HunterNoPetTrigger(botAI); }
     static Trigger* pet_medium_health(PlayerbotAI* botAI) { return new HuntersPetMediumHealthTrigger(botAI); }
     static Trigger* pet_dead(PlayerbotAI* botAI) { return new HuntersPetDeadTrigger(botAI); }

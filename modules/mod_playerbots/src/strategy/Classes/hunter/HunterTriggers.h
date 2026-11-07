@@ -11,6 +11,9 @@
 
 class PlayerbotAI;
 
+DEBUFF_CHECKISOWNER_TRIGGER(BlackArrowTrigger, "black arrow");
+DEBUFF_TRIGGER(HuntersMarkTrigger, "hunter's mark");
+
 class HunterNoPetTrigger : public NoPetTrigger
 {
 public:

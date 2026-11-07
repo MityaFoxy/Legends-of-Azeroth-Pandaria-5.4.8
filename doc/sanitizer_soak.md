@@ -1,5 +1,31 @@
 # ASan/UBSan: ночной тест после upstream merge
 
+## Hunter: Black Arrow и Hunter's Mark (2026-11-07)
+
+Восстановлены два отсутствующих Trigger для уже существующих Actions и
+стратегии DPS; прежние приоритеты19/31 сохранены. Black Arrow учитывает
+свою ауру, Hunter's Mark — ауру любого Hunter. Сверка с pinned NotCronky
+969150c0, локальными DBC3674/1130 и общим DebuffTrigger:
+[досье](playerbot_hunter_combat_audit.md).
+
+Расширенная регрессия GCC15/Clang ASan/UBSan прошла, все13 намеренных
+поломок обнаружены; старый код воспроизводил недостижимость после успешной
+компиляции. Автономный `loa-hunter-combat-20261107-r1.service` завершился
+**7 ноября в12:59:06МСК**: сборка `-j4`, 100ботов/360,79секунды,
+**244622решения, 0UNKNOWN** по обоим файлам Behavior.
+
+В BG GUID96 выполнил Hunter's Mark через восстановленный Trigger:
+один OK после prerequisite. Подтверждён приём каста, не измерение эффекта.
+Black Arrow: 84Trigger/73IMPOSSIBLE; live spellcheck подтверждает отсутствие
+3674 у всех Hunter текущей выборки BM/MM. Положительный каст Survival
+остаётся открытой проверкой. BG:89entered,87combat,81damage,44resurrected;
+полный матч/повторный вход не покрыты. 18823прочихFAILED требуют разбора
+контекста; основные группы melee/tank face/reach melee, не доказанный диагноз.
+
+Unit/server exit0,online0,worldserver остановлен. Артефакты:
+`wow_mop_codex_handoff/tests/hunter-combat-20261107/native-r1/`.
+Runtime не установлен. Дальше — остальные Hunter-связи с отдельной сверкой MoP.
+
 ## Hunter Call Pet: проверка активного слота (2026-11-07)
 
 72 из 78 вызовов в предыдущем коротком прогоне принадлежали GUID30/74:
