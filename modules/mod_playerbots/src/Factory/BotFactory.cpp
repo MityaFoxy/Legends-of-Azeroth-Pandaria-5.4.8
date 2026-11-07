@@ -213,6 +213,10 @@ void BotFactory::InitPet()
     {
         if (bot->GetClass() != CLASS_HUNTER)
             return;
+
+        // Call Pet 1 uses the first active slot; an unsummoned pet still owns it.
+        if (bot->GetPetIdBySlot(PET_SLOT_ACTIVE_FIRST))
+            return;
  
         Map* map = bot->GetMap();
         if (!map)
@@ -269,7 +273,19 @@ void BotFactory::InitPet()
  
             pet->InitTalentForLevel();
  
-            pet->SavePetToDB();
+            // Follow native Spell::EffectTameCreature registration and transaction ordering.
+            // Selectively adapted from NotCronky's Hunter AI fix:
+            // https://github.com/NotCronky/Legends-of-Azeroth-Pandaria-5.4.8/commit/969150c0d398039e993a88913fe71a528b74dc41
+            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+            bot->AddNewPet(newPetSlot, pet);
+            bot->SetCurrentPetId(pet->GetCharmInfo()->GetPetNumber(), trans);
+            pet->SavePetToDB(trans);
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_PET_SLOT_BY_ID);
+            stmt->setUInt8(0, newPetSlot);
+            stmt->setUInt32(1, bot->GetGUID().GetCounter());
+            stmt->setUInt32(2, pet->GetCharmInfo()->GetPetNumber());
+            trans->Append(stmt);
+            CharacterDatabase.CommitTransaction(trans);
             bot->PetSpellInitialize();
             break;
         }
