@@ -13,7 +13,8 @@
 bool CastStealthAction::isPossible()
 {
     // do not use with WSG flag or EYE flag
-    return !botAI->HasAura(23333, bot) && !botAI->HasAura(23335, bot) && !botAI->HasAura(34976, bot);
+    return !botAI->HasAura(23333, bot) && !botAI->HasAura(23335, bot) && !botAI->HasAura(34976, bot) &&
+        CastBuffSpellAction::isPossible();
 }
 
 bool UnstealthAction::Execute(Event event)

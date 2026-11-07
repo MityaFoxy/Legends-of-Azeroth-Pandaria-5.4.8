@@ -38,6 +38,11 @@ jobs:
       run: |
         ./bin/bin/openssl_compatibility
         python3 contrib/tests/database_startup_retry_regression.py
+    - name: Class AI regression tests (ASan/UBSan)
+      run: |
+        cmake -S contrib/diagnostics/sanitizer_regression -B bin/regression \
+          -DLOA_SOURCE_DIR="$GITHUB_WORKSPACE" -DCMAKE_CXX_COMPILER=/usr/bin/g++
+        ctest --test-dir bin/regression -L class-ai --output-on-failure --parallel 2
     - name: Check executables
       run: |
         ./bin/check_install/bin/authserver --version

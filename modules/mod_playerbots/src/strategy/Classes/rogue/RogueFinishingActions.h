@@ -16,10 +16,11 @@ public:
     CastEviscerateAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "eviscerate") {}
 };
 
-class CastSliceAndDiceAction : public CastMeleeSpellAction
+class CastSliceAndDiceAction : public CastBuffSpellAction
 {
 public:
-    CastSliceAndDiceAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "slice and dice") {}
+    CastSliceAndDiceAction(PlayerbotAI* botAI)
+        : CastBuffSpellAction(botAI, "slice and dice", false, 3 * IN_MILLISECONDS) {}
 };
 
 class CastExposeArmorAction : public CastDebuffSpellAction

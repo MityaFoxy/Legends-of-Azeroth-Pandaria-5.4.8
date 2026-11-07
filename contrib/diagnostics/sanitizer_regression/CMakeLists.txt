@@ -54,6 +54,11 @@ set_tests_properties(playerbot_factory_cache_regression PROPERTIES ENVIRONMENT "
 add_test(NAME playerbot_cast_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_cast_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(playerbot_cast_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME rogue_ai_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/rogue_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(rogue_ai_regression playerbot_cast_regression
+  playerbot_party_backport_regression playerbot_factory_cache_regression
+  PROPERTIES LABELS "rogue;class-ai" TIMEOUT 600)
 add_test(NAME lifecycle_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
