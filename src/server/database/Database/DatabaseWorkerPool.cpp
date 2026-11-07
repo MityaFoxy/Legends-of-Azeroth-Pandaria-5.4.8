@@ -34,6 +34,7 @@
 #include "Transaction.h"
 #include "MySQLWorkaround.h"
 #include <boost/asio/use_future.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <mysqld_error.h>
 #ifdef TRINITY_DEBUG
 #include <sstream>
@@ -47,6 +48,13 @@
 
 #define MIN_MARIADB_CLIENT_VERSION 30003u
 #define MIN_MARIADB_CLIENT_VERSION_STRING "3.0.3"
+
+template<class T>
+struct DatabaseWorkerPool<T>::AsyncWork
+{
+    explicit AsyncWork(Trinity::Asio::IoContext& context) : guard(context.get_executor()) { }
+    boost::asio::executor_work_guard<Trinity::Asio::IoContext::Executor> guard;
+};
 
 template<typename T>
 struct DatabaseWorkerPool<T>::QueueSizeTracker
@@ -159,6 +167,7 @@ uint32 DatabaseWorkerPool<T>::Open()
         return error;
     }
 
+    _asyncWork = std::make_unique<AsyncWork>(*_ioContext);
     for (std::unique_ptr<T> const& connection : _connections[IDX_ASYNC])
         connection->StartWorkerThread(_ioContext.get());
 
@@ -169,12 +178,22 @@ uint32 DatabaseWorkerPool<T>::Open()
 }
 
 template <class T>
+void DatabaseWorkerPool<T>::StopAsyncWorkers()
+{
+    // Releasing work lets run() finish queued saves; stop() would discard them.
+    _asyncWork.reset();
+    // Keep every connection alive until every worker has finished: executing
+    // tasks locate their connection by scanning this vector.
+    for (std::unique_ptr<T> const& connection : _connections[IDX_ASYNC])
+        connection->StopWorkerThread();
+}
+
+template <class T>
 void DatabaseWorkerPool<T>::Close()
 {
     TC_LOG_INFO("sql.driver", "Closing down DatabasePool '{}'.", GetDatabaseName());
 
-     if (_ioContext)
-        _ioContext->stop();
+    StopAsyncWorkers();
 
     //! Closes the actualy MySQL connection.
     _connections[IDX_ASYNC].clear();

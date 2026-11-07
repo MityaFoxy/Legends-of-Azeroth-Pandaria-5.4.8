@@ -66,11 +66,7 @@ MySQLConnection::~MySQLConnection()
 void MySQLConnection::Close()
 {
     // Stop the worker thread before the statements are cleared
-    if (m_workerThread)
-    {
-        m_workerThread->join();
-        m_workerThread.reset();
-    }
+    StopWorkerThread();
 
     m_stmts.clear();
 
@@ -438,18 +434,23 @@ void MySQLConnection::StartWorkerThread(Trinity::Asio::IoContext* context)
 {
     m_workerThread = std::make_unique<std::thread>([context]
     {
-        boost::asio::executor_work_guard executorWorkGuard = boost::asio::make_work_guard(context->get_executor());
-
         context->run();
     });
+    m_workerThreadId = m_workerThread->get_id();
+}
+
+void MySQLConnection::StopWorkerThread()
+{
+    if (m_workerThread)
+    {
+        m_workerThread->join();
+        m_workerThread.reset();
+    }
 }
 
 std::thread::id MySQLConnection::GetWorkerThreadId() const
 {
-    if (m_workerThread)
-        return m_workerThread->get_id();
-
-    return {};
+    return m_workerThreadId;
 }
 
 bool MySQLConnection::LockIfReady()
