@@ -1,5 +1,32 @@
 # ASan/UBSan: ночной тест после upstream merge
 
+## Hunter: Serpent Sting / no stings (2026-11-07)
+
+Восстановлена связь местной `dps debuff`: `no stings` -> Serpent Sting,
+приоритет 18. Канонический ключ `serpent sting` и совместимый `no stings`
+создают предикат отсутствия своей ауры. Стратегия и Action сохранены;
+сверены NotCronky969150c0, DBC1978 -> 118253 и native обработчики.
+[Досье, источники и ограничения](playerbot_hunter_serpent_sting_audit.md).
+
+GCC15/Clang ASan/UBSan прошли расширенную регрессию; все 16 намеренных
+поломок обнаружены. До исправления старый код компилировался, затем падал
+на проверке достижимости. Автономный `loa-hunter-sting-20261107-r1.service`
+завершился **7 ноября в 13:16:07 МСК**: сборка `-j4`, 100 ботов,
+361,54 секунды; **221625 решений, 0 UNKNOWN** по обоим Behavior-файлам.
+
+Serpent Sting: 14 Trigger, 1 OK, 10 IMPOSSIBLE, 2 PREREQ, 1 FAILED.
+GUID19 в BG: Trigger -> очередь приоритета18 -> принятый каст в10:15:43UTC.
+Итоговый урон/аура отдельно не измерялись; причины отказов не установлены.
+Живой spellcheck подтвердил кнопку1978 у семи Hunter уровня60. BG:
+83 вошли, 58 combat, 53 damage, 26 resurrected; полный цикл не покрыт.
+Всего 12149 FAILED требуют контекстного разбора. Unit/server exit0,
+online0, worldserver остановлен, runtime не установлен.
+
+Ветка `serpent sting on attacker` пока не активирована: владение аурой
+в общем выборщике уже корректно, но защита вторичных целей под прерываемым
+уроном контролем требует отдельной проверки. Артефакты:
+`wow_mop_codex_handoff/tests/hunter-sting-20261107/native-r1/`.
+
 ## Hunter: Black Arrow и Hunter's Mark (2026-11-07)
 
 Восстановлены два отсутствующих Trigger для уже существующих Actions и

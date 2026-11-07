@@ -11,6 +11,7 @@
 
 class PlayerbotAI;
 
+DEBUFF_CHECKISOWNER_TRIGGER(SerpentStingTrigger, "serpent sting");
 DEBUFF_CHECKISOWNER_TRIGGER(BlackArrowTrigger, "black arrow");
 DEBUFF_TRIGGER(HuntersMarkTrigger, "hunter's mark");
 

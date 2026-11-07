@@ -153,7 +153,7 @@ generic_cpp = (base / 'triggers/GenericTriggers.cpp').read_text()
 for name in ('SpellTrigger', 'BuffTrigger', 'DebuffTrigger'):
     cpp += clazz(generic_h, name)
     cpp += block(generic_cpp, 'bool ' + name + '::IsActive()')
-for name in ('DEBUFF_TRIGGER', 'DEBUFF_CHECKISOWNER_TRIGGER'):
+for name in ('DEBUFF_TRIGGER', 'DEBUFF_CHECKISOWNER_TRIGGER', 'DEBUFF_CHECKISOWNER_ACTION'):
     cpp += '\n' + re.search(r'^#define ' + name + r'\(.*?(?=\n\n)',
                      (base / 'AiObject.h').read_text(), re.M | re.S).group() + '\n'
 actions_base_h = (base / 'actions/GenericSpellActions.h').read_text()
@@ -171,11 +171,12 @@ cpp += 'bool CastSpellAction::Execute(Event) { return false; }\n'
 actions_h = (hunter / 'HunterActions.h').read_text()
 for name in ('CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBlackArrow', 'CastHuntersMarkAction'):
     cpp += clazz(actions_h, name)
+cpp += re.search(r'^DEBUFF_CHECKISOWNER_ACTION\(CastSerpentStingAction,.*?;', actions_h, re.M).group() + '\n'
 cpp += block((hunter / 'HunterActions.cpp').read_text(), 'bool CastHuntersMarkAction::isUseful()')
 action_factory = clazz(context, 'HunterAiObjectContextInternal')
 # The entire real factory is compiled. Unrelated spell implementations are doubles.
 for name in sorted(set(re.findall(r'new (\w+)\(', action_factory)) -
-                   {'CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBuffSpellAction', 'CastBlackArrow', 'CastHuntersMarkAction'}):
+                   {'CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBuffSpellAction', 'CastBlackArrow', 'CastHuntersMarkAction', 'CastSerpentStingAction'}):
     cpp += f'struct {name} : Action {{ explicit {name}(PlayerbotAI* ai) : Action(ai) {{}} }};\n'
 cpp += action_factory
 cpp += without_includes((hunter / 'HunterTriggers.h').read_text())
@@ -186,11 +187,13 @@ cpp += r'''
 struct CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&) {} };
 struct GenericHunterStrategy : CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 struct DpsHunterStrategy : GenericHunterStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
+struct DpsHunterDebuffStrategy : CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 struct HunterPetStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 '''
 cpp += block((hunter / 'GenericHunterStrategy.cpp').read_text(), 'void GenericHunterStrategy::InitTriggers(')
 cpp += block((hunter / 'GenericHunterNonCombatStrategy.cpp').read_text(), 'void HunterPetStrategy::InitTriggers(')
 cpp += block((hunter / 'DpsHunterStrategy.cpp').read_text(), 'void DpsHunterStrategy::InitTriggers(')
+cpp += block((hunter / 'DpsHunterStrategy.cpp').read_text(), 'void DpsHunterDebuffStrategy::InitTriggers(')
 assert 'triggerContexts.Add(new HunterTriggerFactoryInternal());' in context
 cpp += r'''
 void checkHandler(std::vector<TriggerNode*>& nodes, std::string const& triggerName,
@@ -215,8 +218,11 @@ void checkHandler(std::vector<TriggerNode*>& nodes, std::string const& triggerNa
             assert(dynamic_cast<CastCallPetAction*>(action));
             assert(action->GetTarget() == ai.player && "call retains native self cast");
         } else {
-            assert(actionName == "black arrow" ? dynamic_cast<CastBlackArrow*>(action) != nullptr :
-                   dynamic_cast<CastHuntersMarkAction*>(action) != nullptr);
+            if (actionName == "serpent sting")
+                assert(dynamic_cast<CastSerpentStingAction*>(action));
+            else
+                assert(actionName == "black arrow" ? dynamic_cast<CastBlackArrow*>(action) != nullptr :
+                       dynamic_cast<CastHuntersMarkAction*>(action) != nullptr);
             assert(action->GetTarget() == ai.context.targets["current target"].value && "debuff must target current enemy");
         }
         NextAction::destroy(handlers);
@@ -270,7 +276,45 @@ void checkCombat() {
     checkHandler(nodes, "hunter's mark", "hunter's mark", 31, mark, actions, ai);
     for (auto node : nodes) delete node;
 }
+void checkSting() {
+    Player bot; PlayerbotAI ai{&bot}; Unit enemy, other;
+    HunterTriggerFactoryInternal triggers;
+    HunterAiObjectContextInternal actions;
+    auto sting = triggers.create("no stings", &ai);
+    auto canonical = triggers.create("serpent sting", &ai);
+    assert(sting && canonical && "Serpent Sting trigger aliases unreachable");
+    assert(sting->getName() == "serpent sting" && canonical->getName() == "serpent sting");
+    assert(!sting->IsActive());
+    ai.context.targets["current target"].value = &enemy;
+    assert(sting->GetTarget() == &enemy && sting->IsActive() && canonical->IsActive());
+    auto action = actions.create("serpent sting", &ai);
+    assert(action && action->GetTarget() == &enemy);
+    assert(!action->isPossible());
+    ai.known = {"serpent sting"};
+    assert(action->isPossible() && action->isUseful());
+    ai.auras[{"serpent sting", &enemy}] = Aura{false};
+    assert(sting->IsActive() && canonical->IsActive() && action->isUseful() && "foreign Serpent Sting must not block ours");
+    ai.auras[{"serpent sting", &enemy}].owned = true;
+    assert(!sting->IsActive() && !canonical->IsActive() && !action->isUseful() && "own Serpent Sting must not be reapplied");
+    ai.context.targets["current target"].value = &other;
+    assert(sting->IsActive() && action->isUseful() && "Serpent Sting must follow target changes");
+    other.alive = false;
+    assert(!sting->IsActive() && !action->isUseful());
+    other.alive = true; other.world = false;
+    assert(!sting->IsActive() && !action->isUseful());
+    other.world = true; other.health = 79;
+    assert(!sting->IsActive() && "Serpent Sting lifetime gate lost");
+    other.health = 80;
+    assert(sting->IsActive());
+    ai.castAllowed = false;
+    assert(!action->isPossible());
+    std::vector<TriggerNode*> nodes;
+    DpsHunterDebuffStrategy{}.InitTriggers(nodes);
+    checkHandler(nodes, "no stings", "serpent sting", 18, sting, actions, ai);
+    for (auto node : nodes) delete node;
+}
 int main() {
+    checkSting();
     checkCombat();
     Player bot; PlayerbotAI ai{&bot}; Pet pet, replacement;
     HunterTriggerFactoryInternal triggers;
@@ -381,6 +425,9 @@ with tempfile.TemporaryDirectory(prefix='loa-hunter-triggers-') as directory:
             ('mark-registration', 'creators["hunter\'s mark"] = &HunterTriggerFactoryInternal', 'creators["missing hunter\'s mark"] = &HunterTriggerFactoryInternal', 'combat triggers unreachable'),
             ('black-arrow-owner', 'DEBUFF_CHECKISOWNER_TRIGGER(BlackArrowTrigger, "black arrow")', 'DEBUFF_TRIGGER(BlackArrowTrigger, "black arrow")', "another Hunter's Black Arrow must not block ours"),
             ('mark-shared', 'DEBUFF_TRIGGER(HuntersMarkTrigger, "hunter\'s mark")', 'DEBUFF_CHECKISOWNER_TRIGGER(HuntersMarkTrigger, "hunter\'s mark")', "shared Hunter's Mark must not be reapplied"),
+            ('sting-legacy-registration', 'creators["no stings"]', 'creators["missing no stings"]', 'Serpent Sting trigger aliases unreachable'),
+            ('sting-canonical-registration', 'creators["serpent sting"] = &HunterTriggerFactoryInternal', 'creators["missing serpent sting"] = &HunterTriggerFactoryInternal', 'Serpent Sting trigger aliases unreachable'),
+            ('sting-owner', 'DEBUFF_CHECKISOWNER_TRIGGER(SerpentStingTrigger, "serpent sting")', 'DEBUFF_TRIGGER(SerpentStingTrigger, "serpent sting")', 'foreign Serpent Sting must not block ours'),
         ]
         for name, before, after, assertion in mutations:
             assert cpp.count(before) == 1, name
