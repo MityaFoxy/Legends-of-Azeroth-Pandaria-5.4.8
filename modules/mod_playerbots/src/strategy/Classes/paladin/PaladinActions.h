@@ -17,9 +17,10 @@ class Unit;
 BUFF_ACTION(CastSealOfRighteousnessAction, "seal of righteousness");
 BUFF_ACTION(CastSealOfCommandAction, "seal of command");
 BUFF_ACTION(CastSealOfInsightAction, "seal of insight");
+BUFF_ACTION(CastSealOfTruthAction, "seal of truth");
 
 // judgements
-SPELL_ACTION(CastJudgementAction, "judgement");
+SPELL_ACTION(CastJudgementAction, "judgment");
 
 // auras
 BUFF_ACTION(CastDevotionAuraAction, "devotion aura");
@@ -113,6 +114,18 @@ class CastHolyLightAction : public CastHealingSpellAction
 {
 public:
     CastHolyLightAction(PlayerbotAI* botAI) : CastHealingSpellAction(botAI, "holy light") {}
+};
+
+class CastWordOfGloryAction : public CastHealingSpellAction
+{
+public:
+    CastWordOfGloryAction(PlayerbotAI* botAI) : CastHealingSpellAction(botAI, "word of glory") {}
+};
+
+class CastWordOfGloryOnPartyAction : public HealPartyMemberAction
+{
+public:
+    CastWordOfGloryOnPartyAction(PlayerbotAI* botAI) : HealPartyMemberAction(botAI, "word of glory") {}
 };
 
 class CastHolyShockOnPartyAction : public HealPartyMemberAction

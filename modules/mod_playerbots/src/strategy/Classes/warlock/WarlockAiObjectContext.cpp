@@ -188,6 +188,7 @@ public:
         creators["rain of fire"] = &WarlockAiObjectContextInternal::rain_of_fire;
         creators["life tap"] = &WarlockAiObjectContextInternal::life_tap;
         creators["fear"] = &WarlockAiObjectContextInternal::fear;
+        creators["howl of terror"] = &WarlockAiObjectContextInternal::howl_of_terror;
         creators["fear on cc"] = &WarlockAiObjectContextInternal::fear_on_cc; 
         creators["demonic empowerment"] = &WarlockAiObjectContextInternal::demonic_empowerment;
         
@@ -258,6 +259,7 @@ private:
     static Action* siphon_life_on_attacker(PlayerbotAI* botAI) { return new CastSiphonLifeOnAttackerAction(botAI); }
     static Action* fear_on_cc(PlayerbotAI* botAI) { return new CastFearOnCcAction(botAI); }
     static Action* fear(PlayerbotAI* botAI) { return new CastFearAction(botAI); }
+    static Action* howl_of_terror(PlayerbotAI* botAI) { return new CastHowlOfTerrorAction(botAI); }
     static Action* banish(PlayerbotAI* botAI) { return new CastBanishAction(botAI); }
     static Action* banish_on_cc(PlayerbotAI* botAI) { return new CastBanishAction(botAI); }
     static Action* shadow_bolt(PlayerbotAI* botAI) { return new CastShadowBoltAction(botAI); }

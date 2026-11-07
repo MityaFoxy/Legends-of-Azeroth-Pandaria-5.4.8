@@ -12,44 +12,18 @@ class TankPaladinStrategyActionNodeFactory : public NamedObjectFactory<ActionNod
 public:
     TankPaladinStrategyActionNodeFactory()
     {
-        // creators["seal of vengeance"] = &seal_of_vengeance;
-        creators["seal of corruption"] = &seal_of_corruption;
-        creators["seal of vengeance"] = &seal_of_vengeance;
+        creators["seal of insight"] = &seal_of_insight;
+        creators["seal of truth"] = &seal_of_truth;
         creators["seal of command"] = &seal_of_command;
         creators["hand of reckoning"] = &hand_of_reckoning;
         creators["taunt spell"] = &hand_of_reckoning;
     }
 
 private:
-    // static ActionNode* seal_of_vengeance([[maybe_unused]] PlayerbotAI* botAI)
-    // {
-    //     return new ActionNode("seal of vengeance",
-    //         /*P*/ nullptr,
-    //         /*A*/ NextAction::array(0, new NextAction("seal of righteousness"), nullptr),
-    //         /*C*/ nullptr);
-    // }
-    static ActionNode* seal_of_command([[maybe_unused]] PlayerbotAI* botAI)
-    {
-        return new ActionNode("seal of command",
-                              /*P*/ nullptr,
-                              /*A*/ NextAction::array(0, new NextAction("seal of corruption"), nullptr),
-                              /*C*/ nullptr);
-    }
-    static ActionNode* seal_of_corruption([[maybe_unused]] PlayerbotAI* botAI)
-    {
-        return new ActionNode("seal of corruption",
-                              /*P*/ nullptr,
-                              /*A*/ NextAction::array(0, new NextAction("seal of vengeance"), nullptr),
-                              /*C*/ nullptr);
-    }
-
-    static ActionNode* seal_of_vengeance([[maybe_unused]] PlayerbotAI* botAI)
-    {
-        return new ActionNode("seal of vengeance",
-                              /*P*/ nullptr,
-                              /*A*/ NextAction::array(0, new NextAction("seal of righteousness"), nullptr),
-                              /*C*/ nullptr);
-    }
+    // Keep the native knowledge/cast checks; Command covers levels below Truth.
+    ACTION_NODE_A(seal_of_insight, "seal of insight", "seal of truth");
+    ACTION_NODE_A(seal_of_truth, "seal of truth", "seal of command");
+    ACTION_NODE_A(seal_of_command, "seal of command", "seal of righteousness");
     ACTION_NODE_A(hand_of_reckoning, "hand of reckoning", "righteous defense");
 };
 
@@ -62,7 +36,7 @@ NextAction** TankPaladinStrategy::getDefaultActions()
 {
     return NextAction::array(0, new NextAction("shield of righteousness", ACTION_DEFAULT + 0.6f),
                              new NextAction("hammer of the righteous", ACTION_DEFAULT + 0.5f),
-                             new NextAction("judgement of wisdom", ACTION_DEFAULT + 0.4f),
+                             new NextAction("judgment", ACTION_DEFAULT + 0.4f),
                              // new NextAction("avenger's shield", ACTION_NORMAL + 3),
                              // new NextAction("consecration", ACTION_NORMAL + 2),
                              new NextAction("melee", ACTION_DEFAULT), NULL);
@@ -73,9 +47,9 @@ void TankPaladinStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     GenericPaladinStrategy::InitTriggers(triggers);
 
     triggers.push_back(
-        new TriggerNode("seal", NextAction::array(0, new NextAction("seal of corruption", ACTION_HIGH), nullptr)));
-    triggers.push_back(
-        new TriggerNode("low mana", NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH + 9), nullptr)));
+        new TriggerNode("seal", NextAction::array(0, new NextAction("seal of insight", ACTION_HIGH), nullptr)));
+    // MoP Protection regenerates mana through Guarded by the Light (53592).
+    // Insight heals; low mana must not replace an already active seal.
     // triggers.push_back(new TriggerNode("devotion aura", NextAction::array(0, new NextAction("devotion aura", 90.0f),
     // NULL)));
 

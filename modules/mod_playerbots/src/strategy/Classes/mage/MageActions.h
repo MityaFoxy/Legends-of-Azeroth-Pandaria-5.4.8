@@ -193,10 +193,10 @@ public:
     CastSummonWaterElementalAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "summon water elemental") {}
 };
 
-class CastCombustionAction : public CastBuffSpellAction
+class CastCombustionAction : public CastSpellAction
 {
 public:
-    CastCombustionAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "combustion") {}
+    CastCombustionAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "combustion") {}
 };
 
 BEGIN_SPELL_ACTION(CastCounterspellAction, "counterspell")

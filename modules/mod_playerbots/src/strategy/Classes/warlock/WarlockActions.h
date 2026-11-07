@@ -18,7 +18,7 @@ SPELL_ACTION(CastDemonicBreathAction, "demonic breath");
 SPELL_ACTION(CastMortalCoilAction, "mortal coil");
 BUFF_ACTION(CastSoulLinkAction, "soul link");
 SPELL_ACTION(CastSacrificialPactAction, "sacrificial pact");
-SPELL_ACTION(CastDarkBarginAction, "dark bargain");
+BUFF_ACTION(CastDarkBarginAction, "dark bargain");
 SPELL_ACTION(CastBloodHorrorAction, "blood horror");
 SPELL_ACTION(CastGrmoireOfSupremacyAction, "grimoire of supremacy");
 SPELL_ACTION(CastGrimoireOfSacrificeAction, "grimoire of sacrifice");
@@ -92,6 +92,13 @@ class CastFearAction : public CastDebuffSpellAction
 {
 public:
     CastFearAction(PlayerbotAI* botAI) : CastDebuffSpellAction(botAI, "fear") {}
+};
+
+class CastHowlOfTerrorAction : public CastSpellAction
+{
+public:
+    CastHowlOfTerrorAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "howl of terror") {}
+    ActionThreatType getThreatType() override { return ActionThreatType::Aoe; }
 };
 
 class CastFearOnCcAction : public CastBuffSpellAction

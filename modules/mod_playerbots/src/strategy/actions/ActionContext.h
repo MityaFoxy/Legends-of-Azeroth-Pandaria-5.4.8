@@ -7,6 +7,7 @@
 #include "ChooseTargetActions.h"
 #include "FollowActions.h"
 #include "GenericActions.h"
+#include "GenericSpellActions.h"
 #include "PositionAction.h"
 #include "RtiAction.h"
 #include "MovementActions.h"
@@ -51,6 +52,7 @@ public:
         creators["dps aoe"] = &ActionContext::dps_aoe;
         creators["attack"] = &ActionContext::melee;
         creators["melee"] = &ActionContext::melee;
+        creators["shoot"] = &ActionContext::shoot;
         creators["attack anything"] = &ActionContext::attack_anything;
 
         creators["toggle pet spell"] = &ActionContext::toggle_pet_spell;
@@ -94,6 +96,7 @@ private:
     static Action* dps_assist(PlayerbotAI* botAI) { return new DpsAssistAction(botAI); }
     static Action* dps_aoe(PlayerbotAI* botAI) { return new DpsAoeAction(botAI); }
     static Action* melee(PlayerbotAI* botAI) { return new MeleeAction(botAI); }
+    static Action* shoot(PlayerbotAI* botAI) { return new CastShootAction(botAI); }
     static Action* attack_anything(PlayerbotAI* botAI) { return new AttackAnythingAction(botAI); }
 
     static Action* toggle_pet_spell(PlayerbotAI* ai) { return new TogglePetSpellAutoCastAction(ai); }

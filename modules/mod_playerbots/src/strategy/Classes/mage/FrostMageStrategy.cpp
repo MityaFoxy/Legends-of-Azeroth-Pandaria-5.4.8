@@ -112,7 +112,7 @@ void FrostMageStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         NextAction::array(0, new NextAction("deep freeze", ACTION_NORMAL + 2),
         new NextAction("ice lance", ACTION_NORMAL + 1), nullptr)));
 
-    triggers.push_back(new TriggerNode("forst bomb", NextAction::array(0, new NextAction("forst bomb", 19.0f), nullptr)));
+    triggers.push_back(new TriggerNode("frost bomb", NextAction::array(0, new NextAction("frost bomb", 19.0f), nullptr)));
 }
 
 void FrostMageAoeStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)

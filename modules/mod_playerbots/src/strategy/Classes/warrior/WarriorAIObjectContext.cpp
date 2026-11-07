@@ -127,6 +127,7 @@ public:
         // -- general
         creators["charge"] = &WarriorAiObjectContextInternal::charge;
         creators["heroic strike"] = &WarriorAiObjectContextInternal::heroic_strike;
+        creators["pummel"] = &WarriorAiObjectContextInternal::pummel;
         creators["heroic leap"] = &WarriorAiObjectContextInternal::heroic_leap;
         creators["victory rush"] = &WarriorAiObjectContextInternal::victory_rush;
         creators["execute"] = &WarriorAiObjectContextInternal::execute;
@@ -146,7 +147,7 @@ public:
         creators["whirlwind"] = &WarriorAiObjectContextInternal::whirlwind;
         creators["cleave"] = &WarriorAiObjectContextInternal::cleave;
         creators["bladestorm"] = &WarriorAiObjectContextInternal::bladestorm;
-        creators["dragonroar"] = &WarriorAiObjectContextInternal::dragonroar;
+        creators["dragon roar"] = &WarriorAiObjectContextInternal::dragonroar;
         creators["shockwave"] = &WarriorAiObjectContextInternal::shockwave;
 
         // -- arms
@@ -187,6 +188,7 @@ private:
     // -- generic
     static Action* charge(PlayerbotAI* botAI) { return new CastChargeAction(botAI); }
     static Action* heroic_strike(PlayerbotAI* botAI) { return new CastHeroicStrikeAction(botAI); }
+    static Action* pummel(PlayerbotAI* botAI) { return new CastPummelAction(botAI); }
     static Action* heroic_leap(PlayerbotAI* botAI) { return new CastHeroicLeapAction(botAI); }
     static Action* victory_rush(PlayerbotAI* botAI) { return new CastVictoryRushAction(botAI); }
     static Action* execute(PlayerbotAI* botAI) { return new CastExecuteAction(botAI); }

@@ -54,6 +54,8 @@ public:
         std::string command = args ? args : "";
         if (command == "pettest" || command.starts_with("pettest "))
             return HandlePetPersistenceTest(handler, command.substr(std::min<size_t>(8, command.size())));
+        if (command.starts_with("spellcheck "))
+            return HandleSpellDiagnostic(handler, command.substr(11));
         if (command.starts_with("potiontest "))
             return HandleManaPotionTest(handler, command.substr(11));
         if (command.starts_with("oiltest "))
@@ -226,6 +228,49 @@ public:
             return true;
         }
         return false;
+    }
+
+    // Read-only console inspection: do not cast, teach spells, change targets,
+    // run CheckCast (which can apply spell modifiers), or modify equipment.
+    static bool HandleSpellDiagnostic(ChatHandler* handler, std::string const& arguments)
+    {
+        if (handler->GetSession() || !sConfigMgr->GetBoolDefault("AiPlayerbot.SpellDiagnostics", false))
+        {
+            handler->SendSysMessage("Spell inspection requires console and AiPlayerbot.SpellDiagnostics=1.");
+            return false;
+        }
+        uint32 lowGuid = 0, spellId = 0;
+        std::string extra;
+        std::istringstream input(arguments);
+        if (!(input >> lowGuid >> spellId) || (input >> extra) || !lowGuid || !spellId)
+        {
+            handler->SendSysMessage("Usage: npcbot spellcheck <random bot GUID> <spell ID>");
+            return false;
+        }
+        ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(lowGuid);
+        uint32 account = sCharacterCache->GetCharacterAccountIdByGuid(guid);
+        Player* bot = sRandomPlayerbotMgr->GetPlayerBot(guid);
+        PlayerbotAI* ai = bot ? sPlayerbotsMgr->GetPlayerbotAI(bot) : nullptr;
+        SpellInfo const* spell = sSpellMgr->GetSpellInfo(spellId);
+        if (!sPlayerbotAIConfig->IsInRandomAccountList(account) || !bot || !ai || ai->IsRealPlayer() ||
+            !bot->IsInWorld() || !spell)
+        {
+            handler->SendSysMessage("Spell inspection requires a logged-in random bot and a valid spell ID.");
+            return false;
+        }
+        uint32 resolved = ai->GetAiObjectContext()->GetValue<uint32>("spell id", spell->SpellName)->Get();
+        Item* weapon = bot->GetWeaponForAttack(RANGED_ATTACK, true);
+        handler->PSendSysMessage("Spell inspection guid=%u level=%u spec=%u spell=%u known=%u resolved=%u caster_aura_state=%u state_present=%u guard53592=%u weapon=%u weapon_subclass=%u",
+            lowGuid, uint32(bot->GetLevel()), bot->GetTalentSpecialization(), spellId,
+            uint32(bot->HasSpell(spellId)), resolved, spell->CasterAuraState,
+            uint32(!spell->CasterAuraState || bot->HasAuraState(AuraStateType(spell->CasterAuraState), spell, bot)),
+            uint32(bot->HasAura(53592)), weapon ? weapon->GetEntry() : 0,
+            weapon ? uint32(weapon->GetTemplate()->SubClass) : 0);
+        if (bot->GetClass() == CLASS_PALADIN)
+            for (uint32 seal : { 105361u, 31801u, 20165u, 20154u, 20164u })
+                handler->PSendSysMessage("Seal inspection guid=%u spell=%u known=%u active=%u",
+                    lowGuid, seal, uint32(bot->HasSpell(seal)), uint32(bot->HasAura(seal)));
+        return true;
     }
 
     // Opt-in console probe for one random Hunter. It uses ordinary login,
