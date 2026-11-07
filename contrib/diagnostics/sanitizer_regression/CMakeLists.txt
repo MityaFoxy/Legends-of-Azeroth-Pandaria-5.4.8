@@ -77,6 +77,10 @@ set_tests_properties(rogue_ai_regression playerbot_cast_regression
 add_test(NAME hunter_pet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/hunter_pet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(hunter_pet_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 600)
+add_test(NAME hunter_pet_trigger_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/hunter_pet_trigger_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(hunter_pet_trigger_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME hunter_pet_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${LOA_SOURCE_DIR}/contrib/tests/hunter_pet_recovery_regression.py)
 set_tests_properties(hunter_pet_recovery_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 60)

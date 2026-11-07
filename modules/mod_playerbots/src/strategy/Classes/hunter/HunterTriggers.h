@@ -11,4 +11,20 @@
 
 class PlayerbotAI;
 
+class HuntersPetMediumHealthTrigger : public Trigger
+{
+public:
+    HuntersPetMediumHealthTrigger(PlayerbotAI* botAI) : Trigger(botAI, "hunters pet medium health", 2) {}
+
+    bool IsActive() override;
+};
+
+class HuntersPetDeadTrigger : public Trigger
+{
+public:
+    HuntersPetDeadTrigger(PlayerbotAI* botAI) : Trigger(botAI, "hunters pet dead", 2) {}
+
+    bool IsActive() override;
+};
+
 #endif

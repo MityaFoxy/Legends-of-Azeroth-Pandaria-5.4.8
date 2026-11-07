@@ -7,7 +7,21 @@
 
 #include "GenericTriggers.h"
 #include "HunterActions.h"
+#include "Pet.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
+
+bool HuntersPetMediumHealthTrigger::IsActive()
+{
+    Pet* pet = bot->GetPet();
+    return pet && pet->IsAlive() && pet->GetHealthPct() < sPlayerbotAIConfig->mediumHealth &&
+        !botAI->HasAura("mend pet", pet);
+}
+
+bool HuntersPetDeadTrigger::IsActive()
+{
+    Pet* pet = bot->GetPet();
+    return pet && !pet->IsAlive();
+}
