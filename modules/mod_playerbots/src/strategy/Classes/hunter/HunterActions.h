@@ -12,6 +12,8 @@
 class PlayerbotAI;
 class Unit;
 
+Unit* SelectSerpentStingAttacker(PlayerbotAI* botAI);
+
 // BEGIN_RANGED_SPELL_ACTION(CastHuntersMarkAction, "hunter's mark")
 // END_SPELL_ACTION()
 
@@ -227,6 +229,9 @@ public:
     CastSerpentStingOnAttackerAction(PlayerbotAI* botAI) : CastDebuffSpellOnAttackerAction(botAI, "serpent sting", true)
     {
     }
+
+    Unit* GetTarget() override;
+    bool Execute(Event event) override;
 };
 
 class CastBestialWrathAction : public CastBuffSpellAction

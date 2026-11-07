@@ -15,6 +15,14 @@ DEBUFF_CHECKISOWNER_TRIGGER(SerpentStingTrigger, "serpent sting");
 DEBUFF_CHECKISOWNER_TRIGGER(BlackArrowTrigger, "black arrow");
 DEBUFF_TRIGGER(HuntersMarkTrigger, "hunter's mark");
 
+class SerpentStingOnAttackerTrigger : public DebuffOnAttackerTrigger
+{
+public:
+    SerpentStingOnAttackerTrigger(PlayerbotAI* botAI) : DebuffOnAttackerTrigger(botAI, "serpent sting") {}
+
+    Unit* GetTarget() override;
+};
+
 class HunterNoPetTrigger : public NoPetTrigger
 {
 public:

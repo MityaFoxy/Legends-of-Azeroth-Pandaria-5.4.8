@@ -13,6 +13,8 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 
+Unit* SerpentStingOnAttackerTrigger::GetTarget() { return SelectSerpentStingAttacker(botAI); }
+
 bool HunterNoPetTrigger::IsActive()
 {
     // Call Pet 1 loads active slot 0; it cannot create a pet for an empty slot.

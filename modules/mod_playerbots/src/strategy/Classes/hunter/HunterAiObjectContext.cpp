@@ -62,6 +62,7 @@ public:
     {
         creators["serpent sting"] = &HunterTriggerFactoryInternal::serpent_sting;
         creators["no stings"] = &HunterTriggerFactoryInternal::serpent_sting;
+        creators["serpent sting on attacker"] = &HunterTriggerFactoryInternal::serpent_sting_on_attacker;
         creators["black arrow"] = &HunterTriggerFactoryInternal::black_arrow;
         creators["hunter's mark"] = &HunterTriggerFactoryInternal::hunters_mark;
         creators["hunter no pet"] = &HunterTriggerFactoryInternal::no_pet;
@@ -71,6 +72,7 @@ public:
 
 private:
     static Trigger* serpent_sting(PlayerbotAI* botAI) { return new SerpentStingTrigger(botAI); }
+    static Trigger* serpent_sting_on_attacker(PlayerbotAI* botAI) { return new SerpentStingOnAttackerTrigger(botAI); }
     static Trigger* black_arrow(PlayerbotAI* botAI) { return new BlackArrowTrigger(botAI); }
     static Trigger* hunters_mark(PlayerbotAI* botAI) { return new HuntersMarkTrigger(botAI); }
     static Trigger* no_pet(PlayerbotAI* botAI) { return new HunterNoPetTrigger(botAI); }

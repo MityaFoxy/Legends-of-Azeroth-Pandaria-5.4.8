@@ -49,6 +49,20 @@ cpp = r'''
 #include <type_traits>
 #include <vector>
 using uint8=uint8_t; using uint32=uint32_t; using int32=int32_t;
+using ObjectGuid=uint32; using GuidVector=std::vector<ObjectGuid>;
+enum AuraType { SPELL_AURA_MOD_CONFUSE, SPELL_AURA_MOD_FEAR, SPELL_AURA_MOD_FEAR_2,
+    SPELL_AURA_MOD_STUN, SPELL_AURA_TRANSFORM, SPELL_AURA_MOD_ROOT };
+constexpr int SPELL_ATTR0_BREAKABLE_BY_DAMAGE=1, AURA_INTERRUPT_FLAG_TAKE_DAMAGE=2;
+constexpr uint32 TAKEN_HIT_PROC_FLAG_MASK=4;
+constexpr int CURRENT_CHANNELED_SPELL=1;
+struct SpellInfo {
+    uint32 Id=0, ProcFlags=0, ProcCharges=0;
+    bool breakable=false, interrupt=false;
+    bool HasAttribute(int) const { return breakable; }
+    bool HasAuraInterruptFlag(int) const { return interrupt; }
+};
+struct AuraEffect { SpellInfo info; SpellInfo const* GetSpellInfo() const { return &info; } };
+struct Spell { SpellInfo info; SpellInfo const* GetSpellInfo() const { return &info; } };
 struct Unit {
     virtual ~Unit() = default;
     bool alive = true;
@@ -58,11 +72,23 @@ struct Unit {
     bool IsInWorld() const { return world; }
     uint32 GetMapId() const { return 1; }
     uint32 GetHealth() const { return uint32(health); }
+    uint32 instance=1, phase=1;
+    bool valid=true, los=true, scatter=false;
+    float distance=10;
+    using AuraEffectList=std::vector<AuraEffect*>;
+    std::map<AuraType, AuraEffectList> cc;
+    AuraEffectList const& GetAuraEffectsByType(AuraType type) const {
+        static const AuraEffectList empty;
+        auto i=cc.find(type); return i==cc.end() ? empty : i->second;
+    }
+    Spell* GetCurrentSpell(int) { return nullptr; }
+    bool HasAura(uint32 id) const { assert(id==19503); return scatter; }
+    bool HasBreakableByDamageAuraType(AuraType type, uint32 excludeAura=0) const;
+    bool HasBreakableByDamageCrowdControlAura(Unit* excludeCasterChannel=nullptr) const;
 };
 struct Pet : Unit {
     float GetHealthPct() const { return health; }
 };
-struct Spell {};
 constexpr int CURRENT_GENERIC_SPELL = 0;
 #define TC_LOG_DEBUG(...) ((void)0)
 struct Guid { bool empty = true; bool IsEmpty() const { return empty; } };
@@ -83,6 +109,12 @@ struct Player : Unit {
     bool IsInCombat() const { return false; }
     void Dismount() {}
     Spell* GetCurrentSpell(int) { return nullptr; }
+    bool IsInMap(Unit* other) const { return world && other->world && instance==other->instance; }
+    bool InSamePhase(Unit* other) const { return phase & other->phase; }
+    bool IsWithinCombatRange(Unit* other, float range) const { return other->distance <= range; }
+};
+struct AttackersValue {
+    static bool IsValidTarget(Unit* target, Player*) { return target->alive && target->valid && target->los; }
 };
 struct Event {
     bool active = false;
@@ -98,6 +130,7 @@ struct Context {
     Value<bool> mounted;
     Value<bool> spellUseful{true};
     Value<float> groupDps{10};
+    Value<GuidVector> attackers;
     template<class T> Value<T>* GetValue(std::string const& name, std::string const& qualifier = "") {
         if constexpr (std::is_same_v<T, bool>) {
             if (name == "spell cast useful") return &spellUseful;
@@ -106,6 +139,8 @@ struct Context {
         } else if constexpr (std::is_same_v<T, float>) {
             assert(name == "estimated group dps");
             return &groupDps;
+        } else if constexpr (std::is_same_v<T, GuidVector>) {
+            assert(name=="attackers"); return &attackers;
         } else return &targets[name];
     }
 };
@@ -118,7 +153,9 @@ struct PlayerbotAI {
     Player* player;
     Context context;
     Pet* mended = nullptr;
-    bool HasAura(std::string const& name, Unit* target) { return name == "mend pet" && target == mended; }
+    bool HasAura(std::string const& name, Unit* target, bool = false, bool own = false) {
+        return name=="mend pet" ? target==mended : GetAura(name,target,own)!=nullptr;
+    }
     std::map<std::pair<std::string, Unit*>, Aura> auras;
     std::set<std::string> known;
     bool castAllowed = true;
@@ -129,7 +166,17 @@ struct PlayerbotAI {
     bool IsInVehicle(bool = true, bool = true, bool = true) { return false; }
     bool CanCastSpell(std::string const& name, Unit* target) { return target && known.count(name) && castAllowed; }
     float GetRange(std::string const&) { return 40; }
+    Player* GetBot() { return player; }
+    Context* GetAiObjectContext() { return &context; }
+    std::map<ObjectGuid, Unit*> units;
+    Unit* GetUnit(ObjectGuid id) { return units[id]; }
+    Unit* castTarget=nullptr; uint32 casts=0;
+    bool CastSpell(std::string const& name, Unit* target) {
+        assert(target && "must not cast at a missing target"); ++casts; castTarget=target;
+        return CanCastSpell(name,target);
+    }
 };
+Unit* SelectSerpentStingAttacker(PlayerbotAI* botAI);
 struct AiNamedObject {
     PlayerbotAI* botAI; Player* bot; Context* context; std::string name;
     AiNamedObject(PlayerbotAI* ai, std::string const& name)
@@ -143,6 +190,9 @@ Config* sPlayerbotAIConfig = &config;
 #define AI_VALUE2(type, name, qualifier) (context->GetValue<type>(name, qualifier)->Get())
 '''
 cpp += block((root / 'src/server/game/Entities/Pet/PetDefines.h').read_text(), 'enum PetSlot') + ';\n'
+unit_cpp = (root / 'src/server/game/Entities/Unit/Unit.cpp').read_text()
+cpp += block(unit_cpp, 'bool Unit::HasBreakableByDamageAuraType(')
+cpp += block(unit_cpp, 'bool Unit::HasBreakableByDamageCrowdControlAura(')
 for file in ('Action.h', 'Action.cpp', 'Trigger.h', 'Trigger.cpp', 'NamedObjectContext.h'):
     cpp += without_includes((base / file).read_text()) + '\n'
 cpp += block((base / 'NamedObjectContext.cpp').read_text(), 'void Qualified::Qualify(int qual)')
@@ -153,30 +203,40 @@ generic_cpp = (base / 'triggers/GenericTriggers.cpp').read_text()
 for name in ('SpellTrigger', 'BuffTrigger', 'DebuffTrigger'):
     cpp += clazz(generic_h, name)
     cpp += block(generic_cpp, 'bool ' + name + '::IsActive()')
+cpp += clazz(generic_h, 'DebuffOnAttackerTrigger')
+cpp += block(generic_cpp, 'Value<Unit*>* DebuffOnAttackerTrigger::GetTargetValue()')
 for name in ('DEBUFF_TRIGGER', 'DEBUFF_CHECKISOWNER_TRIGGER', 'DEBUFF_CHECKISOWNER_ACTION'):
     cpp += '\n' + re.search(r'^#define ' + name + r'\(.*?(?=\n\n)',
                      (base / 'AiObject.h').read_text(), re.M | re.S).group() + '\n'
 actions_base_h = (base / 'actions/GenericSpellActions.h').read_text()
 actions_base_cpp = (base / 'actions/GenericSpellActions.cpp').read_text()
-for name in ('CastSpellAction', 'CastAuraSpellAction', 'CastBuffSpellAction', 'CastDebuffSpellAction'):
+for name in ('CastSpellAction', 'CastAuraSpellAction', 'CastBuffSpellAction', 'CastDebuffSpellAction', 'CastDebuffSpellOnAttackerAction'):
     cpp += clazz(actions_base_h, name)
 for signature in ('CastSpellAction::CastSpellAction(', 'CastBuffSpellAction::CastBuffSpellAction(',
                   'bool CastSpellAction::isPossible()', 'bool CastSpellAction::isUseful()',
                   'bool CastAuraSpellAction::isUseful()', 'bool CastDebuffSpellAction::isUseful()',
                   'NextAction** CastSpellAction::getPrerequisites()'):
     cpp += block(actions_base_cpp, signature)
+cpp += block(actions_base_cpp, 'Value<Unit*>* CastDebuffSpellOnAttackerAction::GetTargetValue()')
 # Execution/world effects remain outside this fixture; tests invoke the real
 # possibility/usefulness checks and verify delegation to the castability double.
 cpp += 'bool CastSpellAction::Execute(Event) { return false; }\n'
 actions_h = (hunter / 'HunterActions.h').read_text()
-for name in ('CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBlackArrow', 'CastHuntersMarkAction'):
+for name in ('CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBlackArrow', 'CastHuntersMarkAction', 'CastSerpentStingOnAttackerAction'):
     cpp += clazz(actions_h, name)
 cpp += re.search(r'^DEBUFF_CHECKISOWNER_ACTION\(CastSerpentStingAction,.*?;', actions_h, re.M).group() + '\n'
 cpp += block((hunter / 'HunterActions.cpp').read_text(), 'bool CastHuntersMarkAction::isUseful()')
+actions_cpp = (hunter / 'HunterActions.cpp').read_text()
+# The old source still compiles for the before-fix reachability reproduction.
+if 'Unit* SelectSerpentStingAttacker(' in actions_cpp:
+    for signature in ('Unit* SelectSerpentStingAttacker(',
+                      'Unit* CastSerpentStingOnAttackerAction::GetTarget()',
+                      'bool CastSerpentStingOnAttackerAction::Execute('):
+        cpp += block(actions_cpp, signature)
 action_factory = clazz(context, 'HunterAiObjectContextInternal')
 # The entire real factory is compiled. Unrelated spell implementations are doubles.
 for name in sorted(set(re.findall(r'new (\w+)\(', action_factory)) -
-                   {'CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBuffSpellAction', 'CastBlackArrow', 'CastHuntersMarkAction', 'CastSerpentStingAction'}):
+                   {'CastMendPetAction', 'CastRevivePetAction', 'CastCallPetAction', 'CastBuffSpellAction', 'CastBlackArrow', 'CastHuntersMarkAction', 'CastSerpentStingAction', 'CastSerpentStingOnAttackerAction'}):
     cpp += f'struct {name} : Action {{ explicit {name}(PlayerbotAI* ai) : Action(ai) {{}} }};\n'
 cpp += action_factory
 cpp += without_includes((hunter / 'HunterTriggers.h').read_text())
@@ -188,12 +248,14 @@ struct CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&) {} };
 struct GenericHunterStrategy : CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 struct DpsHunterStrategy : GenericHunterStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 struct DpsHunterDebuffStrategy : CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
+struct DpsAoeHunterStrategy : CombatStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 struct HunterPetStrategy { void InitTriggers(std::vector<TriggerNode*>&); };
 '''
 cpp += block((hunter / 'GenericHunterStrategy.cpp').read_text(), 'void GenericHunterStrategy::InitTriggers(')
 cpp += block((hunter / 'GenericHunterNonCombatStrategy.cpp').read_text(), 'void HunterPetStrategy::InitTriggers(')
 cpp += block((hunter / 'DpsHunterStrategy.cpp').read_text(), 'void DpsHunterStrategy::InitTriggers(')
 cpp += block((hunter / 'DpsHunterStrategy.cpp').read_text(), 'void DpsHunterDebuffStrategy::InitTriggers(')
+cpp += block((hunter / 'DpsHunterStrategy.cpp').read_text(), 'void DpsAoeHunterStrategy::InitTriggers(')
 assert 'triggerContexts.Add(new HunterTriggerFactoryInternal());' in context
 cpp += r'''
 void checkHandler(std::vector<TriggerNode*>& nodes, std::string const& triggerName,
@@ -217,6 +279,9 @@ void checkHandler(std::vector<TriggerNode*>& nodes, std::string const& triggerNa
         } else if (actionName == "call pet 1") {
             assert(dynamic_cast<CastCallPetAction*>(action));
             assert(action->GetTarget() == ai.player && "call retains native self cast");
+        } else if (actionName == "serpent sting on attacker") {
+            assert(dynamic_cast<CastSerpentStingOnAttackerAction*>(action));
+            assert(action->GetTarget()==trigger->GetTarget() && "attacker target disagreement");
         } else {
             if (actionName == "serpent sting")
                 assert(dynamic_cast<CastSerpentStingAction*>(action));
@@ -313,7 +378,79 @@ void checkSting() {
     checkHandler(nodes, "no stings", "serpent sting", 18, sting, actions, ai);
     for (auto node : nodes) delete node;
 }
+void checkStingAttacker() {
+    Player bot; PlayerbotAI ai{&bot}; Unit current, high, low;
+    ai.context.targets["current target"].value=&current;
+    ai.known={"serpent sting"};
+    ai.units={{1,&current},{2,&high},{3,&low}};
+    ai.context.attackers.value={0,1,2,3};
+    current.health=1000; high.health=300; low.health=100;
+    HunterTriggerFactoryInternal triggers; HunterAiObjectContextInternal actions;
+    auto trigger=triggers.create("serpent sting on attacker", &ai);
+    auto action=actions.create("serpent sting on attacker", &ai);
+    assert(trigger && action && "attacker Serpent Sting unreachable");
+    assert(trigger->GetTarget()==&high && action->GetTarget()==&high && "must select healthiest secondary attacker");
+    assert(trigger->IsActive() && action->isUseful() && action->isPossible());
+    AuraEffect control; control.info.breakable=true;
+    for (auto type : {SPELL_AURA_MOD_CONFUSE, SPELL_AURA_MOD_FEAR, SPELL_AURA_MOD_FEAR_2,
+                      SPELL_AURA_MOD_STUN, SPELL_AURA_TRANSFORM, SPELL_AURA_MOD_ROOT}) {
+        high.cc[type]={&control};
+        assert(trigger->GetTarget()==&low && action->GetTarget()==&low && "breakable CC must not attract Serpent Sting");
+        high.cc.clear();
+    }
+    high.scatter=true;
+    assert(trigger->GetTarget()==&low && "Scatter Shot special case lost");
+    high.scatter=false;
+    control.info.breakable=false; control.info.interrupt=true;
+    high.cc[SPELL_AURA_MOD_CONFUSE]={&control};
+    assert(trigger->GetTarget()==&low);
+    control.info.interrupt=false; control.info.ProcFlags=TAKEN_HIT_PROC_FLAG_MASK; control.info.ProcCharges=1;
+    assert(trigger->GetTarget()==&low);
+    control.info.ProcFlags=0; control.info.ProcCharges=0;
+    assert(trigger->GetTarget()==&high && "nonbreakable control must remain attackable");
+    high.cc.clear();
+    ai.auras[{"serpent sting",&high}]=Aura{false};
+    assert(trigger->GetTarget()==&high && "foreign attacker aura must not block ours");
+    ai.auras[{"serpent sting",&high}].owned=true;
+    assert(trigger->GetTarget()==&low && "own attacker aura must not be reapplied");
+    ai.auras.clear();
+    for (bool* flag : {&high.alive,&high.world,&high.valid,&high.los}) {
+        *flag=false; assert(trigger->GetTarget()==&low && "invalid attacker selected"); *flag=true;
+    }
+    high.instance=2;
+    assert(trigger->GetTarget()==&low && "other instance selected"); high.instance=1;
+    high.phase=2;
+    assert(trigger->GetTarget()==&low && "other phase selected"); high.phase=1;
+    high.distance=41;
+    assert(trigger->GetTarget()==&low && "out-of-range attacker selected"); high.distance=10;
+    ai.context.targets["current target"].value=&high;
+    ai.context.attackers.value={2,3};
+    assert(trigger->GetTarget()==&low && "current target change ignored");
+    ai.context.targets["current target"].value=&current;
+    ai.context.attackers.value={2,3};
+    assert(action->isUseful() && action->isPossible());
+    high.scatter=true; // Control landed after the readiness checks.
+    assert(action->Execute(Event{}) && ai.castTarget==&low && "execution must reselect after control");
+    low.scatter=true;
+    assert(!trigger->IsActive() && !action->isUseful());
+    uint32 casts=ai.casts;
+    assert(!action->Execute(Event{}) && ai.casts==casts && "all controlled must not cast");
+    low.scatter=false; low.health=79;
+    assert(!trigger->IsActive() && !action->isUseful() && "attacker lifetime gate lost");
+    assert(!action->Execute(Event{}) && ai.casts==casts && "execution must retain lifetime gate");
+    low.health=80;
+    assert(trigger->IsActive() && action->isUseful());
+    ai.castAllowed=false;
+    assert(!action->isPossible() && !action->Execute(Event{}) && "native cast rejection lost");
+    std::vector<TriggerNode*> nodes;
+    DpsAoeHunterStrategy{}.InitTriggers(nodes);
+    checkHandler(nodes,"serpent sting on attacker","serpent sting on attacker",17,trigger,actions,ai);
+    for (auto node:nodes) delete node;
+    ai.context.attackers.value.clear();
+    assert(!trigger->GetTarget() && !action->GetTarget());
+}
 int main() {
+    checkStingAttacker();
     checkSting();
     checkCombat();
     Player bot; PlayerbotAI ai{&bot}; Pet pet, replacement;
@@ -428,6 +565,13 @@ with tempfile.TemporaryDirectory(prefix='loa-hunter-triggers-') as directory:
             ('sting-legacy-registration', 'creators["no stings"]', 'creators["missing no stings"]', 'Serpent Sting trigger aliases unreachable'),
             ('sting-canonical-registration', 'creators["serpent sting"] = &HunterTriggerFactoryInternal', 'creators["missing serpent sting"] = &HunterTriggerFactoryInternal', 'Serpent Sting trigger aliases unreachable'),
             ('sting-owner', 'DEBUFF_CHECKISOWNER_TRIGGER(SerpentStingTrigger, "serpent sting")', 'DEBUFF_TRIGGER(SerpentStingTrigger, "serpent sting")', 'foreign Serpent Sting must not block ours'),
+            ('attacker-registration', 'creators["serpent sting on attacker"] = &HunterTriggerFactoryInternal', 'creators["missing attacker sting"] = &HunterTriggerFactoryInternal', 'attacker Serpent Sting unreachable'),
+            ('attacker-cc', 'unit->HasBreakableByDamageCrowdControlAura()', 'false', 'breakable CC must not attract Serpent Sting'),
+            ('attacker-root', 'unit->HasBreakableByDamageAuraType(SPELL_AURA_MOD_ROOT)', 'false', 'breakable CC must not attract Serpent Sting'),
+            ('attacker-current', 'unit == current ||', 'false ||', 'must select healthiest secondary attacker'),
+            ('attacker-owner', 'botAI->HasAura("serpent sting", unit, false, true)', 'botAI->HasAura("serpent sting", unit, false, false)', 'foreign attacker aura must not block ours'),
+            ('attacker-execute', 'Unit* target = GetTarget();\n    return target && botAI->CastSpell(spell, target);', 'return botAI->CastSpell(spell, botAI->units[2]);', 'execution must reselect after control'),
+            ('attacker-execute-useful', 'if (!CastDebuffSpellOnAttackerAction::isUseful())', 'if (false)', 'execution must retain lifetime gate'),
         ]
         for name, before, after, assertion in mutations:
             assert cpp.count(before) == 1, name
