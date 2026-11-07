@@ -20,6 +20,7 @@ root = pathlib.Path(sys.argv.pop(1))
 if len(sys.argv) > 1:
     sys.argv.pop(1)  # CTest passes its C++ compiler; unused by this Python fixture.
 path = root / "contrib/diagnostics/sanitizer_soak.py"
+sys.path.insert(0, str(path.parent))
 spec = importlib.util.spec_from_file_location("soak", path)
 soak = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(soak)

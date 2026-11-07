@@ -133,6 +133,7 @@ int main() {
 }
 '''
 
+sys.path.insert(0, str(root / "contrib/diagnostics"))
 spec = importlib.util.spec_from_file_location("soak", root / "contrib/diagnostics/sanitizer_soak.py")
 soak = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(soak)

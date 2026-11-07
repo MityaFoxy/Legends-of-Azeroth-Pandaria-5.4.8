@@ -639,6 +639,8 @@ void Engine::LogAction(char const* format, ...)
                 ++behaviorActionsOk;
             else if (lastBehaviorAction.ends_with(" - FAILED"))
                 ++behaviorActionsFailed;
+            else if (lastBehaviorAction.ends_with(" - UNKNOWN"))
+                ++behaviorActionsUnknown;
             return;
         }
 
@@ -650,15 +652,16 @@ void Engine::LogAction(char const* format, ...)
 
         Player* bot = botAI->GetBot();
         TC_LOG_DEBUG("playerbots.behavior",
-            "Bot={} GUID={} level={} race={} class={} ai_state={} alive={} combat={} moving={} hp_pct={} map={} zone={} x={} y={} z={} last_attempt={} ok={} failed={}",
+            "Bot={} GUID={} level={} race={} class={} ai_state={} alive={} combat={} moving={} hp_pct={} map={} zone={} x={} y={} z={} last_attempt={} ok={} failed={} unknown={}",
             bot->GetName(), bot->GetGUID().GetCounter(), bot->GetLevel(), bot->GetRace(), bot->GetClass(),
             uint32(botAI->GetState()), bot->IsAlive(), bot->IsInCombat(), bot->isMoving(), bot->GetHealthPct(),
             bot->GetMapId(), bot->GetZoneId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            lastBehaviorAction, behaviorActionsOk, behaviorActionsFailed);
+            lastBehaviorAction, behaviorActionsOk, behaviorActionsFailed, behaviorActionsUnknown);
         lastBehaviorLog = now;
         hasBehaviorLog = true;
         behaviorActionsOk = 0;
         behaviorActionsFailed = 0;
+        behaviorActionsUnknown = 0;
         return;
     }
 

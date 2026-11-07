@@ -38,6 +38,7 @@ jobs:
       run: |
         ./bin/bin/openssl_compatibility
         python3 contrib/tests/database_startup_retry_regression.py
+        python3 contrib/tests/playerbot_multilevel_soak_regression.py
     - name: Class AI regression tests (ASan/UBSan)
       run: |
         cmake -S contrib/diagnostics/sanitizer_regression -B bin/regression \

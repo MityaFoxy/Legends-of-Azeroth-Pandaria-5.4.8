@@ -110,6 +110,7 @@ private:
     std::string lastBehaviorAction = "none";
     uint32 behaviorActionsOk = 0;
     uint32 behaviorActionsFailed = 0;
+    uint32 behaviorActionsUnknown = 0;
 
     ActionExecutionListeners actionExecutionListeners;
 

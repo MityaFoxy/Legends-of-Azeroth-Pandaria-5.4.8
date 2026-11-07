@@ -23,6 +23,7 @@ import time
 import uuid
 from pathlib import Path
 
+from playerbot_action_audit import audit_actions
 
 BG_CYCLE_TIMEOUT_SECONDS = 60 * 60
 
@@ -1130,6 +1131,14 @@ def main():
                     raise RuntimeError("Failure on stage shutdown: inspect logs")
                 if phase == "sanitizer":
                     sanitizer_monitor.check(drain=True)
+                if args.full_bot_log:
+                    action_resolution = audit_actions(stage / "Logs")
+                    (stage / "action-resolution.json").write_text(
+                        json.dumps(action_resolution, ensure_ascii=False, indent=2) + "\n")
+                    event("action_resolution_audited", phase=phase, bots=target,
+                          result=action_resolution)
+                    if not action_resolution["passed"]:
+                        raise RuntimeError("Action resolution failed: UNKNOWN actions or missing decision TRACE")
         event(
             "complete",
             message=(

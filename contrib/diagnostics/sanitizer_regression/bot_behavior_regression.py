@@ -36,7 +36,7 @@ uint32 clockNow = 0;
 uint32 getMSTime() { return clockNow; }
 uint32 getMSTimeDiff(uint32 before, uint32 after) { return after - before; }
 int reports = 0;
-uint32 recordedOk = 0, recordedFailed = 0;
+uint32 recordedOk = 0, recordedFailed = 0, recordedUnknown = 0;
 std::string recordedAction;
 constexpr int LOG_LEVEL_TRACE = 1;
 struct Logger {
@@ -54,7 +54,7 @@ void recordTrace(std::string const& name, uint32 guid, uint32 map, uint32 instan
     ++traces; recordedTrace = message;
 }
 #define TC_LOG_TRACE(category, format, ...) recordTrace(__VA_ARGS__)
-#define TC_LOG_DEBUG(...) do { ++reports; recordedOk = behaviorActionsOk; recordedFailed = behaviorActionsFailed; recordedAction = lastBehaviorAction; } while (false)
+#define TC_LOG_DEBUG(...) do { ++reports; recordedOk = behaviorActionsOk; recordedFailed = behaviorActionsFailed; recordedUnknown = behaviorActionsUnknown; recordedAction = lastBehaviorAction; } while (false)
 struct Guid { uint32 GetCounter() { return 123; } };
 struct Player {
     std::string GetName() { return "regression"; }
@@ -92,13 +92,17 @@ int main() {
     assert(reports == 1);
     engine.LogAction("A:%s - OK", "attack");
     engine.LogAction("A:%s - FAILED", "cast");
+    engine.LogAction("A:%s - UNKNOWN", "missing factory");
+    engine.LogAction("A:%s - UNKNOWN", "missing factory");
     engine.LogAction("A:%s - USELESS", "heal");
     assert(engine.behaviorActionsOk == 1 && engine.behaviorActionsFailed == 1);
     clockNow = 59999; engine.LogAction("--- AI Tick ---"); assert(reports == 1);
     clockNow = 60000; engine.LogAction("--- AI Tick ---");
     assert(reports == 2 && recordedOk == 1 && recordedFailed == 1);
+    assert(recordedUnknown == 2); // Later actions must not erase missing factories.
     assert(recordedAction == "A:heal - USELESS");
     assert(!engine.behaviorActionsOk && !engine.behaviorActionsFailed);
+    assert(!engine.behaviorActionsUnknown);
     assert(engine.lastAction.empty()); // Diagnostics never changes the AI/test history.
     engine.LogAction("A:%s - OK", std::string(5000, 'x').c_str());
     assert(engine.lastBehaviorAction.size() == 511);

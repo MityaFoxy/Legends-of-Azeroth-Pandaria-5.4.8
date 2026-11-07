@@ -80,6 +80,9 @@ set_tests_properties(hunter_pet_regression PROPERTIES LABELS "hunter;class-ai" T
 add_test(NAME hunter_pet_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${LOA_SOURCE_DIR}/contrib/tests/hunter_pet_recovery_regression.py)
 set_tests_properties(hunter_pet_recovery_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 60)
+add_test(NAME playerbot_multilevel_soak_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_multilevel_soak_regression.py)
+set_tests_properties(playerbot_multilevel_soak_regression PROPERTIES LABELS "soak" TIMEOUT 60)
 add_test(NAME lifecycle_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
