@@ -20,12 +20,14 @@
 #include "AiObjectContext.h"
 #include "Item.h"
 #include "OilActions.h"
+#include "ObjectMgr.h"
 #include "Pet.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "PerformanceMonitor.h"
 #include "PlayerbotAIConfig.h"
 #include "RandomPlayerbotMgr.h"
+#include "RandomItemManager.h"
 #include "ScriptMgr.h"
 #include "SpellMgr.h"
 #include "SpellInfo.h"
@@ -33,6 +35,7 @@
 
 #include <sstream>
 #include <map>
+#include <utility>
 
 class playerbots_commandscript : public CommandScript
 {
@@ -60,8 +63,52 @@ public:
             return HandleManaPotionTest(handler, command.substr(11));
         if (command.starts_with("oiltest "))
             return HandleOilTest(handler, command.substr(8));
+        if (command.starts_with("equipmentcheck "))
+            return HandleTankEquipmentDiagnostic(handler, command.substr(15));
 
         return PlayerbotMgr::HandlePlayerbotMgrCommand(handler, args);
+    }
+
+    // Read-only native selection probe; never equips or creates candidate items.
+    static bool HandleTankEquipmentDiagnostic(ChatHandler* handler, std::string const& arguments)
+    {
+        if (handler->GetSession() || !sConfigMgr->GetBoolDefault("AiPlayerbot.EquipmentDiagnostics", false))
+            return false;
+        uint32 lowGuid = 0;
+        std::string extra;
+        std::istringstream input(arguments);
+        if (!(input >> lowGuid) || (input >> extra) || !lowGuid)
+            return false;
+        ObjectGuid guid = ObjectGuid::Create<HighGuid::Player>(lowGuid);
+        Player* bot = sRandomPlayerbotMgr->GetPlayerBot(guid);
+        PlayerbotAI* ai = bot ? sPlayerbotsMgr->GetPlayerbotAI(bot) : nullptr;
+        if (!bot || !ai || ai->IsRealPlayer() || !bot->IsInWorld() ||
+            !sPlayerbotAIConfig->IsInRandomAccountList(sCharacterCache->GetCharacterAccountIdByGuid(guid)))
+            return false;
+        if (!((bot->GetClass() == CLASS_WARRIOR && bot->GetSpecialization() == SPEC_WARRIOR_PROTECTION) ||
+              (bot->GetClass() == CLASS_PALADIN && bot->GetSpecialization() == SPEC_PALADIN_PROTECTION)))
+            return false;
+        auto equippedGuid = [bot](uint8 slot)
+        {
+            Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            return item ? item->GetGUID() : ObjectGuid::Empty;
+        };
+        ObjectGuid const mainBefore = equippedGuid(EQUIPMENT_SLOT_MAINHAND);
+        ObjectGuid const offBefore = equippedGuid(EQUIPMENT_SLOT_OFFHAND);
+        uint32 weapon = sRandomItemMgr->FindBestItemForLevelAndEquip(bot, INVTYPE_WEAPON);
+        if (!weapon)
+            weapon = sRandomItemMgr->FindBestItemForLevelAndEquip(bot, INVTYPE_WEAPONMAINHAND);
+        uint32 const shield = sRandomItemMgr->FindBestItemForLevelAndEquip(bot, INVTYPE_SHIELD);
+        for (auto const& candidate : { std::make_pair("main", weapon), std::make_pair("off", shield) })
+        {
+            ItemTemplate const* item = sObjectMgr->GetItemTemplate(candidate.second);
+            handler->PSendSysMessage("Tank equipment guid=%u bot_class=%u spec=%u slot=%s item=%u item_class=%u subclass=%u inventory=%u",
+                lowGuid, uint32(bot->GetClass()), uint32(bot->GetSpecialization()), candidate.first, candidate.second,
+                item ? item->Class : 0, item ? item->SubClass : 0, item ? item->InventoryType : 0);
+        }
+        handler->PSendSysMessage("Tank equipment unchanged guid=%u value=%u",
+            lowGuid, uint32(mainBefore == equippedGuid(EQUIPMENT_SLOT_MAINHAND) && offBefore == equippedGuid(EQUIPMENT_SLOT_OFFHAND)));
+        return true;
     }
 
     // Console-only native potion probe. It never changes mana, combat or cooldowns.
