@@ -18,6 +18,8 @@
 #include "CharacterCache.h"
 #include "Config.h"
 #include "HunterStingTest.h"
+#include "DruidDispelTest.h"
+#include "DruidControlTest.h"
 #include "NavigationReplayTest.h"
 #include "AiObjectContext.h"
 #include "Item.h"
@@ -61,6 +63,10 @@ public:
             return HandleNavigationReplayTest(handler);
         if (command.starts_with("stingtest "))
             return HandleHunterStingTest(handler, command.substr(10));
+        if (command.starts_with("druiddispel "))
+            return HandleDruidDispelTest(handler, command.substr(12));
+        if (command.starts_with("druidcontrol "))
+            return HandleDruidControlTest(handler, command.substr(13));
         if (command == "pettest" || command.starts_with("pettest "))
             return HandlePetPersistenceTest(handler, command.substr(std::min<size_t>(8, command.size())));
         if (command.starts_with("spellcheck "))
@@ -445,4 +451,6 @@ void AddSC_playerbots_commandscript()
 {
     new playerbots_commandscript();
     AddHunterStingTest();
+    AddDruidDispelTest();
+    AddDruidControlTest();
 }

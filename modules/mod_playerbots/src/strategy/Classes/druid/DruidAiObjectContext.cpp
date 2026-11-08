@@ -13,6 +13,7 @@
 #include "DruidCatActions.h"
 #include "DruidShapeshiftActions.h"
 #include "DruidTriggers.h"
+#include "DruidValues.h"
 #include "GenericDruidNonCombatStrategy.h"
 #include "GenericDruidStrategy.h"
 #include "HealDruidStrategy.h"
@@ -70,14 +71,89 @@ private:
     static Strategy* heal(PlayerbotAI* botAI) { return new HealDruidStrategy(botAI); }
 };
 
+class DruidValueFactoryInternal : public NamedObjectContext<UntypedValue>
+{
+public:
+    DruidValueFactoryInternal()
+    {
+        creators["mark of the wild target"] = &DruidValueFactoryInternal::mark_target;
+    }
+
+private:
+    static UntypedValue* mark_target(PlayerbotAI* ai) { return new DruidMarkOfTheWildTargetValue(ai); }
+};
+
 class DruidTriggerFactoryInternal : public NamedObjectContext<Trigger>
 {
 public:
     DruidTriggerFactoryInternal()
     {
+        creators["cat form"] = &DruidTriggerFactoryInternal::cat_form;
+        creators["bear form"] = &DruidTriggerFactoryInternal::bear_form;
+        creators["combo points not full"] = &DruidTriggerFactoryInternal::combo_not_full;
+        creators["combo points not full and high energy"] = &DruidTriggerFactoryInternal::combo_energy;
+        creators["combo points available"] = &DruidTriggerFactoryInternal::combo_finisher;
+        creators["ferocious bite time"] = &DruidTriggerFactoryInternal::bite;
+        creators["target with combo points almost dead"] = &DruidTriggerFactoryInternal::dying;
+        creators["savage roar"] = &DruidTriggerFactoryInternal::savage_roar;
+        creators["rake"] = &DruidTriggerFactoryInternal::rake;
+        creators["moonfire"] = &DruidTriggerFactoryInternal::moonfire;
+        creators["faerie fire"] = &DruidTriggerFactoryInternal::faerie_fire;
+        creators["faerie fire (feral)"] = &DruidTriggerFactoryInternal::faerie_fire;
+        creators["mark of the wild"] = &DruidTriggerFactoryInternal::mark;
+        creators["mark of the wild on party"] = &DruidTriggerFactoryInternal::mark_party;
+        creators["berserk"] = &DruidTriggerFactoryInternal::berserk;
+        creators["eclipse (lunar)"] = &DruidTriggerFactoryInternal::lunar;
+        creators["eclipse (solar)"] = &DruidTriggerFactoryInternal::solar;
+        creators["eclipse (lunar) cooldown"] = &DruidTriggerFactoryInternal::lunar_direction;
+        creators["eclipse (solar) cooldown"] = &DruidTriggerFactoryInternal::solar_direction;
+        creators["party member cure poison"] = &DruidTriggerFactoryInternal::cure_poison;
+        creators["party member remove curse"] = &DruidTriggerFactoryInternal::remove_curse;
+        creators["party member cure magic"] = &DruidTriggerFactoryInternal::cure_magic;
     }
 
 private:
+    static Trigger* cat_form(PlayerbotAI* ai) { return new DruidFormTrigger(ai, "cat form", 768, FORM_CAT); }
+    static Trigger* cure_poison(PlayerbotAI* ai) { return new DruidDispelTrigger(ai, "party member cure poison", DISPEL_POISON); }
+    static Trigger* remove_curse(PlayerbotAI* ai) { return new DruidDispelTrigger(ai, "party member remove curse", DISPEL_CURSE); }
+    static Trigger* cure_magic(PlayerbotAI* ai) { return new DruidDispelTrigger(ai, "party member cure magic", DISPEL_MAGIC); }
+    static Trigger* bear_form(PlayerbotAI* ai) { return new DruidFormTrigger(ai, "bear form", 5487, FORM_BEAR); }
+    static Trigger* combo_not_full(PlayerbotAI* ai) { return new DruidComboPointsTrigger(ai, "combo points not full", DruidComboPointsTrigger::Condition::NotFull); }
+    static Trigger* combo_energy(PlayerbotAI* ai) { return new DruidComboPointsTrigger(ai, "combo points not full and high energy", DruidComboPointsTrigger::Condition::NotFullHighEnergy); }
+    static Trigger* combo_finisher(PlayerbotAI* ai) { return new DruidComboPointsTrigger(ai, "combo points available", DruidComboPointsTrigger::Condition::Finisher); }
+    static Trigger* bite(PlayerbotAI* ai) { return new DruidComboPointsTrigger(ai, "ferocious bite time", DruidComboPointsTrigger::Condition::Finisher); }
+    static Trigger* dying(PlayerbotAI* ai) { return new DruidComboPointsTrigger(ai, "target with combo points almost dead", DruidComboPointsTrigger::Condition::DyingTarget); }
+    static Trigger* savage_roar(PlayerbotAI* ai) { return new DruidSavageRoarTrigger(ai); }
+    static Trigger* rake(PlayerbotAI* ai) { return new DruidDebuffTrigger(ai, "rake", 1822, true, 6.0f, true); }
+    static Trigger* moonfire(PlayerbotAI* ai) { return new DruidDebuffTrigger(ai, "moonfire", 8921, true); }
+    static Trigger* faerie_fire(PlayerbotAI* ai) { return new DruidDebuffTrigger(ai, "faerie fire", 770); }
+    static Trigger* mark(PlayerbotAI* ai) { return new DruidMarkOfTheWildTrigger(ai); }
+    static Trigger* mark_party(PlayerbotAI* ai) { return new DruidMarkOfTheWildTrigger(ai, true); }
+    static Trigger* berserk(PlayerbotAI* ai) { return new DruidBerserkTrigger(ai); }
+    static Trigger* lunar(PlayerbotAI* ai) { return new DruidEclipseTrigger(ai, "eclipse (lunar)", true, false); }
+    static Trigger* solar(PlayerbotAI* ai) { return new DruidEclipseTrigger(ai, "eclipse (solar)", false, false); }
+    static Trigger* lunar_direction(PlayerbotAI* ai) { return new DruidEclipseTrigger(ai, "eclipse (lunar) cooldown", true, true); }
+    static Trigger* solar_direction(PlayerbotAI* ai) { return new DruidEclipseTrigger(ai, "eclipse (solar) cooldown", false, true); }
+};
+
+class DruidControlTriggerFactoryInternal : public NamedObjectContext<Trigger>
+{
+public:
+    DruidControlTriggerFactoryInternal()
+    {
+        creators["entangling roots"] = &roots;
+        creators["hibernate"] = &hibernate;
+        creators["bash"] = &bash;
+        creators["bash on enemy healer"] = &bash_healer;
+        creators["nature's swiftness"] = &swiftness;
+    }
+
+private:
+    static Trigger* roots(PlayerbotAI* ai) { return new DruidControlTrigger(ai, "entangling roots", "entangling roots on cc"); }
+    static Trigger* hibernate(PlayerbotAI* ai) { return new DruidControlTrigger(ai, "hibernate", "hibernate on cc"); }
+    static Trigger* bash(PlayerbotAI* ai) { return new DruidControlTrigger(ai, "bash", "bash"); }
+    static Trigger* bash_healer(PlayerbotAI* ai) { return new DruidControlTrigger(ai, "bash on enemy healer", "bash on enemy healer"); }
+    static Trigger* swiftness(PlayerbotAI* ai) { return new DruidNaturesSwiftnessTrigger(ai); }
 };
 
 class DruidAiObjectContextInternal : public NamedObjectContext<Action>
@@ -164,6 +240,7 @@ public:
         creators["swiftmend on party"] = &DruidAiObjectContextInternal::swiftmend_on_party;
         creators["nourish on party"] = &DruidAiObjectContextInternal::nourish_on_party;
         creators["remove curse on party"] = &DruidAiObjectContextInternal::remove_curse_on_party;
+        creators["nature's cure on party"] = &DruidAiObjectContextInternal::cure_magic_on_party;
         creators["insect swarm on attacker"] = &DruidAiObjectContextInternal::insect_swarm_on_attacker;
         creators["moonfire on attacker"] = &DruidAiObjectContextInternal::moonfire_on_attacker;
         creators["enrage"] = &DruidAiObjectContextInternal::enrage;
@@ -249,6 +326,7 @@ private:
     static Action* swiftmend_on_party(PlayerbotAI* ai) { return new CastPartySwiftmendAction(ai); }
     static Action* nourish_on_party(PlayerbotAI* ai) { return new CastPartyNourishAction(ai); }
     static Action* remove_curse_on_party(PlayerbotAI* ai) { return new CastDruidRemoveCurseOnPartyAction(ai); }
+    static Action* cure_magic_on_party(PlayerbotAI* ai) { return new DruidDispelAction(ai, "nature's cure on party", DISPEL_MAGIC); }
     static Action* insect_swarm_on_attacker(PlayerbotAI* ai) { return new CastInsectSwarmOnAttackerAction(ai); }
     static Action* moonfire_on_attacker(PlayerbotAI* ai) { return new CastMoonfireOnAttackerAction(ai); }
     static Action* enrage(PlayerbotAI* ai) { return new CastEnrageAction(ai); }
@@ -261,4 +339,6 @@ DruidAiObjectContext::DruidAiObjectContext(PlayerbotAI* botAI) : AiObjectContext
     strategyContexts.Add(new DruidDruidStrategyFactoryInternal());
     actionContexts.Add(new DruidAiObjectContextInternal());
     triggerContexts.Add(new DruidTriggerFactoryInternal());
+    triggerContexts.Add(new DruidControlTriggerFactoryInternal());
+    valueContexts.Add(new DruidValueFactoryInternal());
 }

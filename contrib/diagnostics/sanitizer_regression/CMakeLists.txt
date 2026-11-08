@@ -79,6 +79,12 @@ set_tests_properties(action_factory_regression combat_formation_regression oil_a
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME rogue_ai_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/rogue_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+add_test(NAME druid_ai_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_ai_regression PROPERTIES LABELS "druid;class-ai" TIMEOUT 600)
+add_test(NAME druid_control_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_control_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_control_regression PROPERTIES LABELS "druid;class-ai" TIMEOUT 600)
 add_test(NAME dispel_filter_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/dispel_filter_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(dispel_filter_regression PROPERTIES LABELS "druid;class-ai;dispel" TIMEOUT 120)

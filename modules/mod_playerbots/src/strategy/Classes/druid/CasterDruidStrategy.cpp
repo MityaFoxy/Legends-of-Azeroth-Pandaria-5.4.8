@@ -53,7 +53,7 @@ private:
     static ActionNode* entangling_roots_on_cc([[maybe_unused]] PlayerbotAI* botAI)
     {
         return new ActionNode("entangling roots on cc",
-                              /*P*/ NextAction::array(0, new NextAction("moonkin form"), nullptr),
+                              /*P*/ nullptr, // DruidCcAction consults native shapeshift requirements.
                               /*A*/ nullptr,
                               /*C*/ nullptr);
     }

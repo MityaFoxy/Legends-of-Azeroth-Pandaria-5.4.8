@@ -115,7 +115,7 @@ void GenericDruidNonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trig
     // triggers.push_back(new TriggerNode("cure poison", NextAction::array(0, new NextAction("abolish poison", 21.0f),
     // nullptr)));
     triggers.push_back(new TriggerNode(
-        "party member cure poison", NextAction::array(0, new NextAction("abolish poison on party", 20.0f), nullptr)));
+        "party member cure poison", NextAction::array(0, new NextAction("cure poison on party", 20.0f), nullptr)));
     triggers.push_back(new TriggerNode(
         "party member dead", NextAction::array(0, new NextAction("revive", ACTION_CRITICAL_HEAL + 10), nullptr)));
     // triggers.push_back(new TriggerNode("low mana", NextAction::array(0, new NextAction("innervate", ACTION_EMERGENCY
@@ -153,6 +153,10 @@ void GenericDruidNonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trig
     triggers.push_back(
         new TriggerNode("party member remove curse",
                         NextAction::array(0, new NextAction("remove curse on party", ACTION_DISPEL + 7), nullptr)));
+
+    triggers.push_back(
+        new TriggerNode("party member cure magic",
+                        NextAction::array(0, new NextAction("nature's cure on party", ACTION_DISPEL + 7), nullptr)));
 }
 
 GenericDruidBuffStrategy::GenericDruidBuffStrategy(PlayerbotAI* botAI) : NonCombatStrategy(botAI)

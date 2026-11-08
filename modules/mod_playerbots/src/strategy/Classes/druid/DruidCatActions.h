@@ -33,13 +33,14 @@ class CastTigersFuryAction : public CastBuffSpellAction
 {
 public:
     CastTigersFuryAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "tiger's fury") {}
+    bool isUseful() override;
 };
 
 class CastSavageRoarAction : public CastBuffSpellAction
 {
 public:
-    CastSavageRoarAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "savage roar") {}
-    std::string const GetTargetName() override { return "current target"; }
+    CastSavageRoarAction(PlayerbotAI* botAI)
+        : CastBuffSpellAction(botAI, "savage roar", false, 3 * IN_MILLISECONDS) {}
 };
 
 class CastRakeAction : public CastDebuffSpellAction
@@ -63,13 +64,15 @@ public:
 class CastMangleCatAction : public CastMeleeSpellAction
 {
 public:
-    CastMangleCatAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "mangle (cat)") {}
+    CastMangleCatAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "mangle") {}
+    std::string const getName() override { return "mangle (cat)"; }
 };
 
 class CastSwipeCatAction : public CastMeleeSpellAction
 {
 public:
-    CastSwipeCatAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "swipe (cat)") {}
+    CastSwipeCatAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "swipe") {}
+    std::string const getName() override { return "swipe (cat)"; }
 };
 
 class CastFerociousBiteAction : public CastMeleeSpellAction

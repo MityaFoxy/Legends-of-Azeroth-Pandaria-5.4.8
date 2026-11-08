@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DRUIDACTIONS_H
 
 #include "GenericSpellActions.h"
+#include "DruidControlActions.h"
 #include "SharedDefines.h"
 
 class PlayerbotAI;
@@ -18,10 +19,11 @@ public:
     CastFaerieFireAction(PlayerbotAI* botAI) : CastDebuffSpellAction(botAI, "faerie fire") {}
 };
 
-class CastFaerieFireFeralAction : public CastSpellAction
+class CastFaerieFireFeralAction : public CastDebuffSpellAction
 {
 public:
-    CastFaerieFireFeralAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "faerie fire (feral)") {}
+    CastFaerieFireFeralAction(PlayerbotAI* botAI) : CastDebuffSpellAction(botAI, "faerie fire") {}
+    std::string const getName() override { return "faerie fire (feral)"; }
 };
 
 class CastRejuvenationAction : public CastHealingSpellAction
@@ -96,6 +98,8 @@ class CastMarkOfTheWildOnPartyAction : public BuffOnPartyAction
 {
 public:
     CastMarkOfTheWildOnPartyAction(PlayerbotAI* botAI) : BuffOnPartyAction(botAI, "mark of the wild") {}
+    Value<Unit*>* GetTargetValue() override;
+    bool Execute(Event event) override;
 };
 
 class CastSurvivalInstinctsAction : public CastBuffSpellAction
@@ -177,12 +181,11 @@ public:
     CastEntanglingRootsAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "entangling roots") {}
 };
 
-class CastEntanglingRootsCcAction : public CastSpellAction
+class CastEntanglingRootsCcAction : public DruidCcAction
 {
 public:
-    CastEntanglingRootsCcAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "entangling roots on cc") {}
-    Value<Unit*>* GetTargetValue() override;
-    bool Execute(Event event) override;
+    CastEntanglingRootsCcAction(PlayerbotAI* botAI)
+        : DruidCcAction(botAI, "entangling roots", 339, "entangling roots on cc") {}
 };
 
 class CastHibernateAction : public CastSpellAction
@@ -191,12 +194,11 @@ public:
     CastHibernateAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "hibernate") {}
 };
 
-class CastHibernateCcAction : public CastSpellAction
+class CastHibernateCcAction : public DruidCcAction
 {
 public:
-    CastHibernateCcAction(PlayerbotAI* botAI) : CastSpellAction(botAI, "hibernate on cc") {}
-    Value<Unit*>* GetTargetValue() override;
-    bool Execute(Event event) override;
+    CastHibernateCcAction(PlayerbotAI* botAI)
+        : DruidCcAction(botAI, "hibernate", 2637, "hibernate on cc") {}
 };
 
 class CastNaturesGraspAction : public CastBuffSpellAction
@@ -205,33 +207,46 @@ public:
     CastNaturesGraspAction(PlayerbotAI* botAI) : CastBuffSpellAction(botAI, "nature's grasp") {}
 };
 
-class CastCurePoisonAction : public CastCureSpellAction
+class DruidDispelAction : public CurePartyMemberAction
 {
 public:
-    CastCurePoisonAction(PlayerbotAI* botAI) : CastCureSpellAction(botAI, "cure poison") {}
+    DruidDispelAction(PlayerbotAI* ai, std::string const alias, uint32 dispelType, bool self = false)
+        : CurePartyMemberAction(ai, "remove corruption", dispelType), alias(alias), self(self) {}
+    std::string const getName() override { return alias; }
+    Value<Unit*>* GetTargetValue() override;
+    bool isUseful() override;
+    bool isPossible() override;
+    bool Execute(Event event) override;
+    NextAction** getPrerequisites() override;
+
+private:
+    bool SelectSpell();
+    std::string alias;
+    bool self;
 };
 
-class CastCurePoisonOnPartyAction : public CurePartyMemberAction
+class CastCurePoisonAction : public DruidDispelAction
 {
 public:
-    CastCurePoisonOnPartyAction(PlayerbotAI* botAI) : CurePartyMemberAction(botAI, "cure poison", DISPEL_POISON) {}
+    CastCurePoisonAction(PlayerbotAI* botAI) : DruidDispelAction(botAI, "cure poison", DISPEL_POISON, true) {}
 };
 
-class CastAbolishPoisonAction : public CastCureSpellAction
+class CastCurePoisonOnPartyAction : public DruidDispelAction
 {
 public:
-    CastAbolishPoisonAction(PlayerbotAI* botAI) : CastCureSpellAction(botAI, "abolish poison") {}
-    NextAction** getAlternatives() override;
+    CastCurePoisonOnPartyAction(PlayerbotAI* botAI) : DruidDispelAction(botAI, "cure poison on party", DISPEL_POISON) {}
 };
 
-class CastAbolishPoisonOnPartyAction : public CurePartyMemberAction
+class CastAbolishPoisonAction : public DruidDispelAction
 {
 public:
-    CastAbolishPoisonOnPartyAction(PlayerbotAI* botAI) : CurePartyMemberAction(botAI, "abolish poison", DISPEL_POISON)
-    {
-    }
+    CastAbolishPoisonAction(PlayerbotAI* botAI) : DruidDispelAction(botAI, "abolish poison", DISPEL_POISON, true) {}
+};
 
-    NextAction** getAlternatives() override;
+class CastAbolishPoisonOnPartyAction : public DruidDispelAction
+{
+public:
+    CastAbolishPoisonOnPartyAction(PlayerbotAI* botAI) : DruidDispelAction(botAI, "abolish poison on party", DISPEL_POISON) {}
 };
 
 class CastBarkskinAction : public CastBuffSpellAction
@@ -287,10 +302,10 @@ public:
     CastPartyNourishAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "nourish", 25.0f, HealingManaEfficiency::LOW) {}
 };
 
-class CastDruidRemoveCurseOnPartyAction : public CurePartyMemberAction
+class CastDruidRemoveCurseOnPartyAction : public DruidDispelAction
 {
 public:
-    CastDruidRemoveCurseOnPartyAction(PlayerbotAI* ai) : CurePartyMemberAction(ai, "remove curse", DISPEL_CURSE) {}
+    CastDruidRemoveCurseOnPartyAction(PlayerbotAI* ai) : DruidDispelAction(ai, "remove curse on party", DISPEL_CURSE) {}
 };
 
 class CastInsectSwarmOnAttackerAction : public CastDebuffSpellOnAttackerAction
@@ -321,6 +336,8 @@ public:
     }
     bool isUseful() override;
     Unit* GetTarget() override;
+    std::string const getName() override { return "rejuvenation on not full"; }
+    bool Execute(Event event) override;
 };
 
 class CastForceOfNatureAction : public CastSpellAction
