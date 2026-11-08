@@ -954,6 +954,11 @@ AiPlayerbot.LogValuesPerTick = 0
 # Interval is seconds (clamped to 5..3600); each Engine reports its own window.
 AiPlayerbot.LogBehavior = 0
 AiPlayerbot.LogBehaviorInterval = 60
+
+# Opt-in per-action outcome diagnostics; requires Logger.playerbots.execution.
+# Keep disabled during normal operation because high bot counts produce large logs.
+AiPlayerbot.ExecutionDiagnostics = 0
+
 AiPlayerbot.RandomChangeMultiplier = 1
 
 # Tell which spell is avoiding (experimental)

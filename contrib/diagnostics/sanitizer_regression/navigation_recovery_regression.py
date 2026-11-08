@@ -135,7 +135,7 @@ struct AuraApplication {
 };
 struct Map {
     mutable std::vector<std::pair<G3D::Vector3,G3D::Vector3>> rays;
-    bool collision=true, liquid=false, los=true;
+    bool collision=true, walkable=true, liquid=false, los=true;
     float liquidLevel=2, liquidBottom=-2, dryAt=std::numeric_limits<float>::infinity();
     mutable int liquidSamples=0, losChecks=0;
     int GetLiquidStatus(uint32,float x,float,float,int,LiquidData* data,float) const {
@@ -150,6 +150,12 @@ struct Map {
     }
     bool CheckCollisionAndGetValidCoords(void const*,float,float,float,float& x,float& y,float& z,bool=true) const {
         (void)x;(void)y;(void)z; return collision;
+    }
+    bool CanReachPositionAndGetValidCoords(void const*,float,float,float,float& x,float& y,float& z,
+        bool failOnCollision=true,bool failOnSlopes=true) const {
+        (void)x;(void)y;(void)z;
+        assert(failOnCollision && failOnSlopes);
+        return collision && walkable;
     }
 };
 struct Spline {
@@ -524,12 +530,16 @@ void searchTests() {
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(!navigation && same(path.back(),{8,0,0}) && hasLog("warn","path-no-progress"));
 
-    // The last-resort step is still refused when collision validation cannot
-    // prove even the short segment safe.
+    // The last-resort step is still refused when collision and native slope
+    // validation cannot prove even the short segment safe.
     reset(); action.last={}; bot.mapObject.collision=false; replies=std::deque<Route>(10,bad());
     path=action.SearchForBestPath(100,0,0,navigation);
     assert(path.empty() && navigation && hasLog("warn","unsafe-direct-fallback"));
     bot.mapObject.collision=true;
+    reset(); action.last={}; bot.mapObject.walkable=false; replies=std::deque<Route>(10,bad());
+    path=action.SearchForBestPath(100,0,0,navigation);
+    assert(path.empty() && navigation && hasLog("warn","unsafe-direct-fallback"));
+    bot.mapObject.walkable=true;
 
     // The query budget is total calls, clamped, and missing terrain is not queried.
     for (uint32 limit : {0u,1u,2u,5u,10u,100u}) {
@@ -1187,6 +1197,8 @@ with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory
             ("lost-obstruction-evidence", "diagnostics.blockedAttempt = attempts;", "diagnostics.blockedAttempt = 0;"),
             ("lost-start-mismatch-evidence", "diagnostics.mismatchAttempt = attempts;", "diagnostics.mismatchAttempt = 0;"),
             ("normal-only-fallback", "if (normalOnly || bot->GetTransport())", "if (bot->GetTransport())"),
+            ("unchecked-fallback-slope", "fallbackX, fallbackY, fallbackZ, true, true)",
+             "fallbackX, fallbackY, fallbackZ, true, false)"),
             ("lost-overlap", "constexpr float ReplanOverlap = 8.0f;", "constexpr float ReplanOverlap = 0.0f;"),
             ("swimming-excluded", "bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||",
              "bot->IsInWater() || bot->IsBeingTeleported() || !bot->IsAlive() || mm.top() != state.generator ||")):

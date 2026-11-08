@@ -18,6 +18,8 @@ from sanitizer_soak import stamp, optional_overlay, check_disk_space, disk_space
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--run', required=True, type=Path)
 parser.add_argument('--planner', action='store_true', help='Also require three validated native planner routes')
+parser.add_argument('--start-mismatch', action='store_true',
+                    help='Replay the recorded GUID 48 overlapping-layer fallback instead of the BG cases')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 root = args.run.resolve()
@@ -75,9 +77,10 @@ try:
     inhibitor = subprocess.Popen(['systemd-inhibit', '--what=sleep:idle:handle-lid-switch', '--mode=block',
         '--who=LoA-native-navigation-replay', '--why=Native BG path replay and graceful cleanup',
         'sleep', 'infinity'], start_new_session=True)
-    backup = root/'backup'
-    backup.mkdir()
-    db.backup(backup)
+    if not args.start_mismatch:
+        backup = root/'backup'
+        backup.mkdir()
+        db.backup(backup)
     frozen = sources()
     write_json(root/'source-sha256.json', frozen)
     (root/'source.patch').write_bytes(subprocess.check_output(['git','diff','--binary','HEAD'], cwd=repo))
@@ -106,8 +109,15 @@ try:
         'Logger.movement.path':'2,NavigationReplay',
         'AuctionHouseBot.Seller.Enabled':'0', 'AuctionHouseBot.Buyer.Enabled':'0',
     }))
+    if args.start_mismatch:
+        bot_conf = stage/'playerbots.conf'
+        bot_conf.write_text(optional_overlay(bot_conf.read_text(), {
+            'AiPlayerbot.BattlegroundTest':'0',
+        }))
     manifest = json.loads((prepared/'manifest.json').read_text())
-    manifest['purpose'] = 'Ordinary BG entry; native queries with recorded start overrides, no relocation or movement dispatch by fixture'
+    manifest['purpose'] = ('Recorded GUID 48 overlapping-layer query; no relocation or movement dispatch by fixture'
+                           if args.start_mismatch else
+                           'Ordinary BG entry; native queries with recorded start overrides, no relocation or movement dispatch by fixture')
     manifest['stages'][0]['config_sha256'] = {p.name:digest(p) for p in (conf, stage/'playerbots.conf')}
     write_json(prepared/'manifest.json',manifest)
     binary, config = container_path(prepared/'bin/worldserver',work), container_path(conf,work)
@@ -115,7 +125,8 @@ try:
     server = subprocess.Popen(['podman','exec','-i','--user','0','--env','LD_PRELOAD=',
         '--workdir',container_path(stage,work),'loa-build',binary,'-c',config],
         stdin=subprocess.PIPE, stdout=console_file, stderr=subprocess.STDOUT)
-    update(status='waiting-native-bg', build_exit_code=0, binary_sha256=digest(prepared/'bin/worldserver'))
+    update(status='waiting-start-mismatch' if args.start_mismatch else 'waiting-native-bg',
+           build_exit_code=0, binary_sha256=digest(prepared/'bin/worldserver'))
     started, last_query, identified = time.monotonic(), 0, False
     while time.monotonic()-started < 900:
         if stopped or server.poll() is not None or inhibitor.poll() is not None:
@@ -131,14 +142,26 @@ try:
                 signal_owned_server('loa-build',container_path(stage/'worldserver.pid',work),binary,config,probe=True)
                 identified = True
             if time.monotonic()-last_query >= 5:
-                server.stdin.write(b'npcbot navreplay\n')
+                server.stdin.write(b'npcbot navslopereplay\n' if args.start_mismatch else b'npcbot navreplay\n')
                 server.stdin.flush()
                 last_query = time.monotonic()
         path = stage/'Logs/PlayerbotFull.log'
         text = path.read_text(errors='replace') if path.exists() else ''
-        rows = [line for line in text.splitlines() if 'Navigation replay ' in line]
+        marker = 'Navigation start-mismatch replay' if args.start_mismatch else 'Navigation replay '
+        rows = [line for line in text.splitlines() if marker in line]
         (root/'replay.log').write_text('\n'.join(rows)+'\n')
-        if 'Navigation replay completed cases=3 queries=9 relocated=0 dispatched=0' in text:
+        completed = ('Navigation start-mismatch replay completed cases=1 queries=4 relocated=0 dispatched=0'
+                     if args.start_mismatch else
+                     'Navigation replay completed cases=3 queries=9 relocated=0 dispatched=0')
+        if completed in text:
+            if args.start_mismatch:
+                results = [r for r in rows if ' guid=48 passed=' in r]
+                if len(results) != 1 or ' passed=true ' not in results[0] or ' collisionOnly=true ' not in results[0] \
+                        or ' slopeSafe=false ' not in results[0] or ' plannerNavigation=true ' not in results[0] \
+                        or ' plannerPoints=0 ' not in results[0] or ' relocated=0 dispatched=0' not in results[0]:
+                    raise RuntimeError('Historical overlapping-layer fallback was not rejected; see replay.log')
+                update(status='replayed', observed_seconds=time.monotonic()-started)
+                break
             queries = [r for r in rows if 'Navigation replay case=' in r]
             if len(queries) != 9:
                 raise RuntimeError('Incomplete or repeated replay')
@@ -186,6 +209,8 @@ finally:
     if state['status']=='replayed':
         unchanged = frozen == sources()
         update(status='passed' if unchanged else 'failed',native_source_unchanged=unchanged,
-               scope='Native query reproduction only; not acceptance of repaired movement')
+               scope=('Historical start-mismatch fallback rejection; no relocation or movement dispatch'
+                      if args.start_mismatch else
+                      'Native query reproduction only; not acceptance of repaired movement'))
     write_json(root/'result.json',state)
 raise SystemExit(0 if state['status']=='passed' else 1)

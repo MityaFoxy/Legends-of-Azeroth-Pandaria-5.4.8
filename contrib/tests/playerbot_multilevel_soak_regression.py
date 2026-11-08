@@ -22,6 +22,22 @@ def record(level=60, guid=1, team=469, phase="combat", damage=5):
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_binary_snapshot_prefers_reflink_and_records_fallback(self):
+        source = Path("/source/worldserver")
+        destination = Path("/run/bin/worldserver")
+        with (patch.object(soak.subprocess, "run") as run,
+              patch.object(soak.shutil, "copy2") as copy):
+            self.assertEqual(soak.snapshot_binary(source, destination), "reflink")
+            run.assert_called_once_with([
+                "cp", "--reflink=always", "--preserve=mode,timestamps", "--",
+                str(source), str(destination),
+            ], check=True, capture_output=True)
+            copy.assert_not_called()
+        with (patch.object(soak.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "cp")),
+              patch.object(soak.shutil, "copy2") as copy):
+            self.assertEqual(soak.snapshot_binary(source, destination), "copy")
+            copy.assert_called_once_with(source, destination)
+
     def run_supervisor(self, rows, online=100, console="", inhibitor_failed=False, levels=(60,),
                        behavior="2026-11-06_05:00:00 TRACE [playerbots.behavior] Bot=Test GUID=1 map=529 instance=1 decision=A:melee - OK\n",
                        rotated_unknown=False):
@@ -40,6 +56,7 @@ class SupervisorTests(unittest.TestCase):
                 soak.prepare(args)
             manifest_path = args.run / "manifest.json"
             manifest = json.loads(manifest_path.read_text())
+            self.assertIn(manifest["binary_snapshot"], ("reflink", "copy"))
             manifest["startup_timeout_seconds"] = 45
             soak.write_json(manifest_path, manifest)
             clock = [1.0]

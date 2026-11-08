@@ -70,6 +70,19 @@ def digest(path):
         return hashlib.file_digest(data, "sha256").hexdigest()
 
 
+def snapshot_binary(source, destination):
+    """Prefer a CoW snapshot; retain a real copy on filesystems without reflinks."""
+    try:
+        subprocess.run([
+            "cp", "--reflink=always", "--preserve=mode,timestamps", "--",
+            str(source), str(destination),
+        ], check=True, capture_output=True)
+        return "reflink"
+    except (OSError, subprocess.CalledProcessError):
+        shutil.copy2(source, destination)
+        return "copy"
+
+
 class LogTail:
     """Bounded reads; finish the open inode before following a rotation."""
 
@@ -161,7 +174,7 @@ def container_path(path, root):
 def prepare(args):
     args.run.mkdir(parents=True, exist_ok=False)
     (args.run / "bin").mkdir()
-    shutil.copy2(args.binary, args.run / "bin/worldserver")
+    snapshot_method = snapshot_binary(args.binary, args.run / "bin/worldserver")
     world = (args.runtime / "worldserver.conf").read_text()
     bots = (args.runtime / "playerbots.conf").read_text()
     stages = []
@@ -176,6 +189,7 @@ def prepare(args):
             "LogsDir": '"Logs"', "PidFile": '"worldserver.pid"',
             "Console.Enable": "0", "Updates.EnableDatabases": "0",
             "AiPlayerbot.PetPersistenceTestGuid": "0", "Battleground.IgnoreFaction": "0",
+            "AiPlayerbot.ExecutionDiagnostics": "0",
             "Appender.Console": "1,3,7,13 11 9 5 3 1",
             "Appender.Server": "2,2,7,Server.log,a,67108864",
             "Appender.MeleeMovement": "2,2,7,MeleeMovement.log,a,67108864",
@@ -197,6 +211,7 @@ def prepare(args):
             stage_world = optional_overlay(stage_world, {
                 "Console.Enable": "1", "AiPlayerbot.SpellDiagnostics": "1",
                 "AiPlayerbot.EquipmentDiagnostics": "1",
+                "AiPlayerbot.ExecutionDiagnostics": "1",
             })
         if getattr(args, "liquid_diagnostics", False):
             stage_world = optional_overlay(stage_world, {
@@ -211,6 +226,7 @@ def prepare(args):
                                          ("worldserver.conf", "playerbots.conf")}})
     write_json(args.run / "manifest.json", {
         "created": stamp(), "binary_sha256": digest(args.run / "bin/worldserver"),
+        "binary_snapshot": snapshot_method,
         "source_binary": str(args.binary), "bots": args.bots, "stages": stages,
         "build_container": args.build_container, "mysql_container": args.mysql_container,
         "work_root": str(args.work_root), "runtime": str(args.runtime),

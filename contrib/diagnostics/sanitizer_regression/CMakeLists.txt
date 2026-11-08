@@ -31,6 +31,9 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME action_execution_trace_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/action_execution_trace_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(action_execution_trace_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 600)
+add_test(NAME refusal_diagnostics_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/refusal_diagnostics_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(refusal_diagnostics_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 600)
 add_test(NAME playerbot_failed_audit_regression COMMAND ${Python3_EXECUTABLE}
   ${LOA_SOURCE_DIR}/contrib/tests/playerbot_failed_audit_regression.py)
 set_tests_properties(playerbot_failed_audit_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 60)
@@ -187,6 +190,10 @@ set_tests_properties(battleground_group_lifecycle_regression PROPERTIES ENVIRONM
 add_test(NAME battleground_starting_area_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_starting_area_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_starting_area_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME pandaren_faction_transfer_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/pandaren_faction_transfer_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(pandaren_faction_transfer_regression PROPERTIES LABELS "playerbots;starting-area" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME playerbot_bg_bracket_distribution_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_bg_bracket_distribution_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME battleground_resurrection_regression COMMAND ${Python3_EXECUTABLE}

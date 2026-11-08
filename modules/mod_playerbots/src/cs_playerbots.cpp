@@ -61,6 +61,8 @@ public:
         std::string command = args ? args : "";
         if (command == "navreplay")
             return HandleNavigationReplayTest(handler);
+        if (command == "navslopereplay")
+            return HandleNavigationStartMismatchReplayTest(handler);
         if (command.starts_with("stingtest "))
             return HandleHunterStingTest(handler, command.substr(10));
         if (command.starts_with("druiddispel "))

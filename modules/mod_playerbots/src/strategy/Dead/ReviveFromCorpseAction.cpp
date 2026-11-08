@@ -17,13 +17,38 @@
 
 #include "ReviveFromCorpseAction.h"
 
+#include "ActionExecutionTrace.h"
 #include "Event.h"
+#include "Map.h"
 #include "MapManager.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 #include "ServerFacade.h"
 #include "Corpse.h"
 #include "WorldPosition.h"
+
+#include <cmath>
+
+namespace
+{
+bool IsSupportedCorpseReclaimPosition(Player* bot)
+{
+    if (!bot || !bot->IsInWorld() || !bot->GetMap())
+        return false;
+
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    float const z = bot->GetPositionZ();
+    LiquidData liquid{};
+    if (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), x, y, z, MAP_ALL_LIQUIDS, &liquid,
+        bot->GetCollisionHeight()) != LIQUID_MAP_NO_WATER && std::isfinite(liquid.level)
+        && liquid.level > liquid.depth_level && z >= liquid.depth_level - 0.05f && z <= liquid.level + 0.75f)
+        return true;
+
+    float const ground = bot->GetMapHeight(x, y, z, true, 4.0f);
+    return std::isfinite(ground) && ground > INVALID_HEIGHT && std::fabs(z - ground) <= 2.0f;
+}
+}
 
 bool ReviveFromCorpseAction::Execute(Event event)
 {
@@ -67,6 +92,12 @@ bool ReviveFromCorpseAction::Execute(Event event)
         }
     }
 
+    // The core resurrects at the ghost's current position, not at the corpse.
+    // Do not turn a valid corpse radius into a persistent unsupported spawn.
+    // FindCorpseAction will keep following its native ground route instead.
+    if (!IsSupportedCorpseReclaimPosition(bot))
+        return ActionExecutionTrace::Fail("corpse/reclaim-unsupported-position");
+
     TC_LOG_DEBUG("playerbots", "Bot {} {}:{} <{}> revives at body", bot->GetGUID().ToString().c_str(),
         bot->GetTeamId() == TEAM_ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName().c_str());
 
@@ -102,12 +133,12 @@ bool ReviveFromCorpseAction::Execute(Event event)
 bool FindCorpseAction::Execute(Event event)
 {
     if (bot->InBattleground())
-        return false;
+        return ActionExecutionTrace::Fail("corpse/in-battleground");
 
     Player* master = botAI->GetGroupMaster();
     Corpse* corpse = bot->GetCorpse();
     if (!corpse)
-        return false;
+        return ActionExecutionTrace::Fail("corpse/no-corpse");
 
 
     uint32 dCount = AI_VALUE(uint32, "death count");
@@ -130,24 +161,25 @@ bool FindCorpseAction::Execute(Event event)
     float reclaimDist = CORPSE_RECLAIM_RADIUS - 5.0f;
     float corpseDist = botPos.distance(corpsePos);
     int64 deadTime = time(nullptr) - corpse->GetGhostTime();
+    bool const supportedReclaimPosition = IsSupportedCorpseReclaimPosition(bot);
 
     bool moveToMaster = master && master != bot && masterPos.fDist(corpsePos) < reclaimDist;
 
     // Should we ressurect? If so, return false.
-    if (corpseDist < reclaimDist)
+    if (corpseDist < reclaimDist && supportedReclaimPosition)
     {
         if (moveToMaster)  // We are near master.
         {
             if (botPos.fDist(masterPos) < sPlayerbotAIConfig->spellDistance)
-                return false;
+                return ActionExecutionTrace::Fail("corpse/reclaim-near-master");
         }
         else if (deadTime > 8 * MINUTE)  // We have walked too long already.
-            return false;
+            return ActionExecutionTrace::Fail("corpse/reclaim-timeout");
         else
         {
             GuidVector units = AI_VALUE(GuidVector, "possible targets no los");
             if (botPos.getUnitsAggro(units, bot) == 0)  // There are no mobs near.
-                return false;
+                return ActionExecutionTrace::Fail("corpse/reclaim-no-aggro");
         }
     }
 
@@ -196,12 +228,18 @@ bool FindCorpseAction::Execute(Event event)
         {
             if (deadTime < 10 * MINUTE && dCount < 5)  // Look for corpse up to 30 minutes.
             {
-                moved = MoveTo(moveToPos.getMapId(), moveToPos.getX(), moveToPos.getY(), moveToPos.getZ(), false, false);
+                // Ghosts walk to their corpse. A direct fallback can enter the
+                // reclaim radius below a valid navmesh ledge and resurrect the
+                // bot there, so require a normal supported route throughout.
+                moved = MoveTo(moveToPos.getMapId(), moveToPos.getX(), moveToPos.getY(), moveToPos.getZ(),
+                    false, false, true);
             }
 
             if (!moved)
             {
                 moved = botAI->DoSpecificAction("spirit healer", Event(), true);
+                if (!moved)
+                    ActionExecutionTrace::Fail("corpse/spirit-healer-failed");
             }
         }
     }

@@ -114,3 +114,75 @@ bool HandleNavigationReplayTest(ChatHandler* handler)
     TC_LOG_INFO("playerbots", "Navigation replay completed cases={} queries={} relocated=0 dispatched=0", index, index * 3);
     return true;
 }
+
+bool HandleNavigationStartMismatchReplayTest(ChatHandler* handler)
+{
+    if (handler->GetSession() || !sConfigMgr->GetBoolDefault("AiPlayerbot.NavigationReplayTest", false))
+        return false;
+
+    uint32 constexpr guid = 48;
+    G3D::Vector3 const start(2840.988f, 3249.5918f, 432.9927f);
+    G3D::Vector3 const goal(2841.4165f, 3249.3403f, 435.68625f);
+    Player* bot = sRandomPlayerbotMgr->GetPlayerBot(ObjectGuid::Create<HighGuid::Player>(guid));
+    PlayerbotAI* ai = bot ? sPlayerbotsMgr->GetPlayerbotAI(bot) : nullptr;
+    G3D::Vector3 const actual = bot ? G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ())
+                                         : G3D::Vector3();
+    if (!bot || !ai || ai->IsRealPlayer() || !bot->IsInWorld() || bot->GetMapId() != 870
+        || bot->GetInstanceId() || bot->IsBeingTeleported() || !bot->IsAlive()
+        || bot->CanFly() || bot->IsFalling() || bot->GetTransport() || bot->GetVehicle()
+        || bot->IsInWater() || bot->HasAuraType(SPELL_AURA_WATER_WALK) || bot->HasAuraType(SPELL_AURA_GHOST)
+        || (actual - start).length() > 0.01f)
+    {
+        TC_LOG_INFO("playerbots", "Navigation start-mismatch replay waiting guid={} loaded={} map={} instance={} distance={}",
+            guid, bot != nullptr, bot ? bot->GetMapId() : 0, bot ? bot->GetInstanceId() : 0,
+            bot ? (actual - start).length() : -1.0f);
+        return true;
+    }
+
+    bot->GetMap()->LoadGrid(start.x, start.y);
+    bot->GetMap()->LoadGrid(goal.x, goal.y);
+    PathGenerator nativePath(bot, 4096);
+    bool const calculated = nativePath.CalculatePath(goal.x, goal.y, goal.z, false, false, false, &start);
+    Movement::PointsArray const& nativePoints = nativePath.GetPath();
+    float const startOffset = nativePoints.empty() ? -1.0f : (nativePoints.front() - start).length();
+
+    float collisionX = goal.x;
+    float collisionY = goal.y;
+    float collisionZ = goal.z;
+    bool const collisionOnly = bot->GetMap()->CheckCollisionAndGetValidCoords(bot, start.x, start.y, start.z,
+        collisionX, collisionY, collisionZ, true);
+    float slopeX = goal.x;
+    float slopeY = goal.y;
+    float slopeZ = goal.z;
+    bool const slopeSafe = bot->GetMap()->CanReachPositionAndGetValidCoords(bot, start.x, start.y, start.z,
+        slopeX, slopeY, slopeZ, true, true);
+
+    LastMovement& last = ai->GetAiObjectContext()->GetValue<LastMovement&>("last movement")->Get();
+    struct RestoreMovementState
+    {
+        LastMovement& original;
+        LastMovement saved;
+        explicit RestoreMovementState(LastMovement& value) : original(value) { saved = value; }
+        ~RestoreMovementState() { original = saved; }
+    } restore(last);
+    last.navigationDetour = {};
+    last.navigationLogStarted = false;
+    MovementAction planner(ai, "navigation slope replay");
+    bool navigation = true;
+    Movement::PointsArray const planned = planner.SearchForBestPath(goal.x, goal.y, goal.z, navigation,
+        false, 0, &start);
+
+    bool const unchanged = bot->GetPositionX() == actual.x && bot->GetPositionY() == actual.y
+        && bot->GetPositionZ() == actual.z;
+    bool const passed = calculated && startOffset > 2.3f && collisionOnly && !slopeSafe
+        && navigation && planned.empty() && unchanged;
+    TC_LOG_INFO("playerbots", "Navigation start-mismatch replay guid={} passed={} calculated={} pathType={} reason={} points={} startOffset={} collisionOnly={} collisionEndpoint=({},{},{}) slopeSafe={} slopeEndpoint=({},{},{}) plannerNavigation={} plannerPoints={} actual=({},{},{}) relocated=0 dispatched=0",
+        guid, passed, calculated, uint32(nativePath.GetPathType()), nativePath.GetPathFailureReason(),
+        nativePoints.size(), startOffset, collisionOnly, collisionX, collisionY, collisionZ,
+        slopeSafe, slopeX, slopeY, slopeZ, navigation, planned.size(), actual.x, actual.y, actual.z);
+    if (!passed)
+        return false;
+
+    TC_LOG_INFO("playerbots", "Navigation start-mismatch replay completed cases=1 queries=4 relocated=0 dispatched=0");
+    return true;
+}

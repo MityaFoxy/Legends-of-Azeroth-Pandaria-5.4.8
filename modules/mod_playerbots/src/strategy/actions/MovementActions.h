@@ -78,6 +78,7 @@ private:
     // The opt-in query fixture can plan from a recorded position without
     // relocating a player, dispatching movement or exposing a gameplay API.
     friend bool HandleNavigationReplayTest(ChatHandler* handler);
+    friend bool HandleNavigationStartMismatchReplayTest(ChatHandler* handler);
     // Per-search evidence; never retained as movement state or used to select a route.
     struct NavigationDiagnostics
     {

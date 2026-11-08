@@ -84,18 +84,19 @@ bool PetAttackAction::Execute(Event event)
     Guardian* pet = bot->GetGuardianPet();
     if (!pet)
     {
-        return false;
+        return ActionExecutionTrace::Fail("pet-attack/no-guardian");
     }
 
     Unit* target = AI_VALUE(Unit*, "current target");
+    ActionExecutionTrace::Target(target);
     if (!target)
     {
-        return false;
+        return ActionExecutionTrace::Fail("pet-attack/no-target");
     }
 
     if (!bot->IsValidAttackTarget(target))
     {
-        return false;
+        return ActionExecutionTrace::Fail("pet-attack/invalid-target");
     }
 
     pet->SetReactState(REACT_PASSIVE);

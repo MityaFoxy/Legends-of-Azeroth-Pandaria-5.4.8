@@ -1,5 +1,65 @@
 # ASan/UBSan: ночной тест после upstream merge
 
+## Маршрут возврата к телу и 18 MoveRandom — native PASS (2026-11-08)
+
+Разбор продолжен в `doc/playerbot_remaining_refusals_2026_11_08.md`.
+Серия18 MoveRandom GUID67 устранена восстановлением штатного завершения
+Pandaren faction transfer; в следующем native-прогоне она не повторилась.
+Для двух старых отказов GUID48 offline Detour подтвердил существующий маршрут,
+а исторические журналы — преждевременный reclaim под уступом. FindCorpse теперь
+запрещает direct fallback и reclaim на неподдерживаемой позиции.
+
+Native `-j4` PASS. Точный live-повтор GUID48 прошёл путь призраком, не воскрес
+на снимке с `ground_valid=false`, продолжил маршрут, воскрес на
+`ground_valid=true` и затем вошёл в BG. Короткий BG80/100 прогон:60.7с,
+89 вошедших,51 участник боя,39 с уроном,18 смертей,12 воскрешений,
+174926 решений,0 UNKNOWN, shutdown exit0. Артефакт:
+`wow_mop_codex_handoff/tests/corpse-route-repeat-20261108/live/status.json`.
+
+Отдельный mmap start mismatch GUID48 закрыт без расширения допусков. Точный
+read-only native replay воспроизвёл `startOffset=2.3423157`: collision-only
+проверка исторической верхней цели вернула true, штатная проверка проходимого
+уклона — false, исправленный planner вернул0 точек. Fallback теперь вызывает
+`CanReachPositionAndGetValidCoords(..., true, true)`; relocation и movement
+dispatch в replay отсутствовали. GCC/Clang ASan/UBSan regression с мутациями,
+native `-j4` и короткий BG80/100 repeat PASS. В repeat снова наблюдался тот же
+start mismatch, но движение началось только к безопасной нижней цели.
+Артефакты: `wow_mop_codex_handoff/tests/start-mismatch-replay-20261108/` и
+`wow_mop_codex_handoff/tests/slope-fallback-repeat-20261108/live/`.
+
+Для автономных прогонов бинарник теперь по возможности сохраняется reflink,
+с обычным `copy2` только на файловых системах без CoW. Метод записывается в
+manifest; disk guard не ослаблен. Из завершённого slope-repeat удалён только
+воспроизводимый бинарник, ставший отдельной копией2.01GiB после перелинковки;
+каталог, конфиги, статус и все журналы сохранены.
+Явный default-off `AiPlayerbot.ExecutionDiagnostics` добавлен в конфигурацию,
+чтобы не повторять тысячи предупреждений о пропущенном ключе.
+
+## Оставшиеся отказы: диагностический повтор завершён (2026-11-08)
+
+Разбор52 unattributed и53 отказов пути после проверки Restoration:
+`doc/playerbot_remaining_refusals_2026_11_08.md`. Найдена неоднозначность
+`move/no-path`: этот результат также означает нулевое перемещение без
+вызова navmesh. Добавлена выключенная по умолчанию диагностика этой ветки,
+кандидатов MoveRandom и причин PetAttack/FindCorpse без изменения поведения.
+GCC/Clang ASan/UBSan обеих диагностических регрессий PASS.
+
+Native-сборка `-j4` PASS; службы теста и анализа success/exit0,
+итог21:10:41МСК. BG80:612.1с,100online,89 участников,87 наносящих урон.
+825395 решений,19782OK,73688FAILED,0UNKNOWN;93470 исполнений совпали с TRACE,
+parse errors0,unattributed0. Все2397 native-хешей сохранены. Shutdown0,
+online0,питомцы без изменений/добавлений/удалений. Статус:
+`wow_mop_codex_handoff/tests/remaining-refusals-20261108/status.json`.
+У GUID67:18 отказов,все72 кандидата отклонены до MoveTo; офлайн Detour
+выбирает под его сохранённой позицией водный полигон на13.35м ниже.
+Ещё6 MoveTo —нулевое перемещение;12 PetAttack —native invalid-target
+непосредственно после Stealth/Invisibility целей;4 ReachMelee —коллизии,
+оба бота продолжили движение на следующей секунде.
+В этом конкретном прогоне FindCorpse не воспроизведён; его5 старых отказов,
+2 MoveRandom GUID48 и исходная серия flee82 тогда ещё не были закрыты новыми
+наблюдениями. Более поздние разделы и отдельный отчёт фиксируют native-повтор
+и узкие исправления GUID48. Это по-прежнему не приёмка всех отказов или ротаций.
+
 ## Restoration: восстановление роли при входе в BG — PASS (2026-11-08)
 
 Native-сборка `-j4` и автономный BG80/100ботов завершились **20:27:55 МСК**,

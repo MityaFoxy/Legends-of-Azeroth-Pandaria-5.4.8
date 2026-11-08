@@ -3,5 +3,6 @@
 
 class ChatHandler;
 bool HandleNavigationReplayTest(ChatHandler* handler);
+bool HandleNavigationStartMismatchReplayTest(ChatHandler* handler);
 
 #endif

@@ -490,6 +490,8 @@ bool MoveRandomAction::Execute(Event event)
     const float y = bot->GetPositionY();
     const float z = bot->GetPositionZ();
     int attempts = 5;
+    uint32 moveAttempts = 0;
+    bool const diagnose = ActionExecutionTrace::Enabled();
     Map* map = bot->GetMap();
     while (--attempts)
     {
@@ -497,18 +499,38 @@ bool MoveRandomAction::Execute(Event event)
         float dx = x + distance * cos(angle);
         float dy = y + distance * sin(angle);
         float dz = z;
+        G3D::Vector3 const requested(dx, dy, dz);
+        auto logCandidate = [&](char const* outcome)
+        {
+            if (diagnose)
+                TC_LOG_DEBUG("playerbots.execution", "event=move-random-candidate bot={} map={} instance={} attempt={} outcome={} from=({},{},{}) requested=({},{},{}) adjusted=({},{},{}) phase={} inWater={} underWater={} bodyHeight={}",
+                    bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(), 5 - attempts, outcome,
+                    x, y, z, requested.x, requested.y, requested.z, dx, dy, dz, bot->GetPhaseMask(),
+                    bot->IsInWater(), bot->IsUnderWater(), bot->GetCollisionHeight());
+        };
         if (!map->CheckCollisionAndGetValidCoords(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
             dx, dy, dz))
+        {
+            logCandidate("coordinates-rejected");
             continue;
+        }
 
         if (map->IsInWater(bot->GetPhaseMask(), dx, dy, dz))
+        {
+            logCandidate("water-rejected");
             continue;
+        }
 
+        ++moveAttempts;
+        logCandidate("move-to");
         bool moved = MoveTo(bot->GetMapId(), dx, dy, dz, false, false, false, true);
         if (moved)
             return true;
     }
 
+    // Preserve the last MoveTo cause when the planner was actually called.
+    if (!moveAttempts)
+        return ActionExecutionTrace::Fail("move-random/no-candidate");
     return false;
 }
 
@@ -1116,7 +1138,14 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     }
     float const distance = (destination - start).length();
     if (distance <= 0.01f)
+    {
+        // Empty here means there is no displacement, not a failed navmesh query.
+        // Keep callers' existing failure result and expose this distinction.
+        ActionExecutionTrace::Fail("path/no-distance");
+        if (ActionExecutionTrace::Enabled())
+            LogNavigationResult("rejected", "no-distance", PATHFIND_BLANK, 0, x, y, z, false);
         return {};
+    }
 
     auto retainReplanOverlap = [](Movement::PointsArray& points)
     {
@@ -1565,8 +1594,12 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
     float fallbackX = fallback.x;
     float fallbackY = fallback.y;
     float fallbackZ = fallback.z;
-    if (!bot->GetMap()->CheckCollisionAndGetValidCoords(bot, start.x, start.y, start.z,
-        fallbackX, fallbackY, fallbackZ) || (G3D::Vector3(fallbackX, fallbackY, fallbackZ) - start).length() <= 0.01f)
+    // The collision-only helper can accept a short segment that changes to an
+    // overlapping navmesh layer through an unwalkable slope. Keep the native
+    // collision checks and also require the core's ordinary climb validation.
+    if (!bot->GetMap()->CanReachPositionAndGetValidCoords(bot, start.x, start.y, start.z,
+        fallbackX, fallbackY, fallbackZ, true, true)
+        || (G3D::Vector3(fallbackX, fallbackY, fallbackZ) - start).length() <= 0.01f)
     {
         usingNavigation = true;
         logResult("rejected", "unsafe-direct-fallback", primaryType, true);
@@ -1578,9 +1611,10 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
 
 bool MovementAction::MoveAway(Unit* target, float distance, bool backwards)
 {
+    ActionExecutionTrace::Target(target);
     if (!target)
     {
-        return false;
+        return ActionExecutionTrace::Fail("move-away/no-target");
     }
     float init_angle = target->GetAngle(bot);
     for (float delta = 0; delta <= M_PI / 2; delta += M_PI / 8)
