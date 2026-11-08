@@ -79,6 +79,9 @@ set_tests_properties(action_factory_regression combat_formation_regression oil_a
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME rogue_ai_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/rogue_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+add_test(NAME dispel_filter_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/dispel_filter_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(dispel_filter_regression PROPERTIES LABELS "druid;class-ai;dispel" TIMEOUT 120)
 set_tests_properties(rogue_ai_regression playerbot_cast_regression
   playerbot_party_backport_regression playerbot_factory_cache_regression
   PROPERTIES LABELS "rogue;class-ai" TIMEOUT 600)

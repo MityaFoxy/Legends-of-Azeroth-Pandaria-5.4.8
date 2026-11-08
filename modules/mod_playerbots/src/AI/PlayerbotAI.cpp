@@ -1603,6 +1603,8 @@ bool IsRealAura(Player* bot, AuraEffect const* aurEff, Unit const* unit)
 
 bool PlayerbotAI::canDispel(SpellInfo const* spellInfo, uint32 dispelType)
 {
+    // These are historical exclusions. caseInsensitiveEqual returns bool,
+    // unlike the strcmpi calls used by the original import.
     static std::vector<std::string> dispel_whitelist =
     {
         "mutating injection",
@@ -1619,19 +1621,19 @@ bool PlayerbotAI::canDispel(SpellInfo const* spellInfo, uint32 dispelType)
 
     for (std::string& wl : dispel_whitelist)
     {
-        if (caseInsensitiveEqual(spellInfo->SpellName, wl) == 0)
+        if (caseInsensitiveEqual(spellInfo->SpellName, wl))
         {
             return false;
         }
     }
 
-    return !spellInfo->SpellName || (caseInsensitiveEqual(spellInfo->SpellName, "demon skin") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "mage armor") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "frost armor") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "wavering will") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "chilled") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "mana tap") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "ice armor"));
+    return !spellInfo->SpellName || (!caseInsensitiveEqual(spellInfo->SpellName, "demon skin") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "mage armor") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "frost armor") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "wavering will") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "chilled") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "mana tap") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "ice armor"));
 }
 
 bool PlayerbotAI::HasAuraToDispel(Unit* target, uint32 dispelType)
