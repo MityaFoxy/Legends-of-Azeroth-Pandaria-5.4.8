@@ -26,6 +26,15 @@ def method(signature):
 
 source = r'''
 #include <algorithm>
+struct ActionExecutionTrace {
+ explicit ActionExecutionTrace(bool = false) {}
+ static bool Enabled() { return false; }
+ static bool Fail(char const*) { return false; }
+ template<class T> static void Target(T const*) {}
+ static void Spell(unsigned, int = -1) {}
+ bool GetRawResult() const { return false; }
+ template<class... T> void Finish(T...) const {}
+};
 #include <cassert>
 #include <cmath>
 #include <deque>

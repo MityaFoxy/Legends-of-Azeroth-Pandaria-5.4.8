@@ -15,6 +15,7 @@
 * with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "ActionExecutionTrace.h"
 #include "PlayerbotAI.h"
 
 #include <cmath>
@@ -2260,9 +2261,10 @@ bool PlayerbotAI::CastSpell(std::string const name, Unit* target, Item* itemTarg
 
 bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 {
+    ActionExecutionTrace::Spell(spellId);
     if (!spellId)
     {
-        return false;
+        return ActionExecutionTrace::Fail("cast/no-spell-id");
     }
 
     Pet* pet = bot->GetPet();
@@ -2272,9 +2274,11 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     if (!target)
         target = bot;
 
+    ActionExecutionTrace::Spell(spellId);
+    ActionExecutionTrace::Target(target);
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
     if (!spellInfo)
-        return false;
+        return ActionExecutionTrace::Fail("cast/no-spell-info");
     if (pet && pet->HasSpell(spellId))
     {
         bool autocast = false;
@@ -2297,7 +2301,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 
     if (bot->IsFlying() || bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
     {
-        return false;
+        return ActionExecutionTrace::Fail("cast/in-flight");
     }
 
     bool failWithDelay = false;
@@ -2319,7 +2323,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     if (failWithDelay)
     {
         SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
-        return false;
+        return ActionExecutionTrace::Fail("cast/stand-up-delay");
     }
 
     Spell* spell = new Spell(bot, spellInfo, TRIGGERED_NONE);
@@ -2380,19 +2384,20 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
         SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
         spell->cancel();
         delete spell;
-        return false;
+        return ActionExecutionTrace::Fail("cast/moving-before-prepare");
     }
 
     spell->prepare(&targets);
     // A second, non-strict check skips instant-spell range and can report OK
     // after prepare already rejected the cast. That starves movement actions.
     SpellCastResult result = spell->GetCastResult();
+    ActionExecutionTrace::Spell(spellId, static_cast<std::int32_t>(result));
     if (result != SPELL_CAST_OK)
     {
         // if (!sPlayerbotAIConfig->logInGroupOnly || (bot->GetGroup() && HasRealPlayerMaster())) {
         TC_LOG_DEBUG("playerbots", "Spell cast failed. - target name: {}, spellid: {}, bot name: {}, result: {}", target->GetName().c_str(), spellId, bot->GetName().c_str(), result);
         // }
-        return false;
+        return ActionExecutionTrace::Fail("cast/prepare-rejected");
     }
     
     _aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetGUID(), time(nullptr));

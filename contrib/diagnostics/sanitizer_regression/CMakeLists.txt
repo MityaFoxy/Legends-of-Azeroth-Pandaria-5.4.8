@@ -28,6 +28,12 @@ add_test(NAME g3d_allocator_regression COMMAND g3d_allocator_regression)
 add_test(NAME sanitizer_regression COMMAND sanitizer_regression)
 set_tests_properties(sanitizer_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME action_execution_trace_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/action_execution_trace_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(action_execution_trace_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 600)
+add_test(NAME playerbot_failed_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_failed_audit_regression.py)
+set_tests_properties(playerbot_failed_audit_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 60)
 add_test(NAME heroic_leap_landing_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/heroic_leap_landing_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME earth_elemental_threat_regression COMMAND ${Python3_EXECUTABLE}

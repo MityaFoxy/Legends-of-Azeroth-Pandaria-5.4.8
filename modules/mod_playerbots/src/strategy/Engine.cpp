@@ -4,6 +4,7 @@
  */
 
 #include "Engine.h"
+#include "ActionExecutionTrace.h"
 
 #include "Config.h"
 #include "Log.h"
@@ -215,7 +216,9 @@ bool Engine::DoNextAction(Unit* unit, uint32 depth, bool minimal)
                 }
 
                 PerformanceMonitorOperation* pmo = sPerformanceMonitor->start(PERF_MON_ACTION, action->getName(), &aiObjectContext->performanceStack);
+                ActionExecutionTrace trace(ActionExecutionTrace::Enabled());
                 actionExecuted = ListenAndExecute(action, event);
+                trace.Finish(botAI->GetBot(), action, trace.GetRawResult(), actionExecuted);
                 if (pmo)
                     pmo->finish();
 
@@ -318,6 +321,9 @@ bool Engine::MultiplyAndPush(NextAction** actions, float forceRelevance, bool sk
 
 ActionResult Engine::ExecuteAction(std::string const name, Event event, std::string const qualifier)
 {
+    // Direct calls are outside queued TRACE A: outcomes. Never attribute their
+    // nested failures to an enclosing queued action.
+    ActionExecutionTrace directExecution(false);
     bool result = false;
 
     ActionNode* actionNode = CreateActionNode(name);
@@ -578,6 +584,8 @@ bool Engine::ListenAndExecute(Action* action, Event event)
     {
         actionExecuted = actionExecutionListeners.AllowExecution(action, event) ? action->Execute(event) : true;
     }
+    else
+        ActionExecutionTrace::Fail("listener-before");
 
     if (botAI->HasStrategy("debug", BOT_STATE_NON_COMBAT))
     {
@@ -598,6 +606,7 @@ bool Engine::ListenAndExecute(Action* action, Event event)
         //botAI->TellMasterNoFacing(out);
     }
 
+    ActionExecutionTrace::RawResult(actionExecuted);
     actionExecuted = actionExecutionListeners.OverrideResult(action, actionExecuted, event);
     actionExecutionListeners.After(action, actionExecuted, event);
     return actionExecuted;

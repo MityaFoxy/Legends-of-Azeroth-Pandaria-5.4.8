@@ -56,6 +56,15 @@ slice_action = clazz((rogue / "RogueFinishingActions.h").read_text(), "CastSlice
 
 prefix = r'''
 #include <algorithm>
+struct ActionExecutionTrace {
+ explicit ActionExecutionTrace(bool = false) {}
+ static bool Enabled() { return false; }
+ static bool Fail(char const*) { return false; }
+ template<class T> static void Target(T const*) {}
+ static void Spell(unsigned, int = -1) {}
+ bool GetRawResult() const { return false; }
+ template<class... T> void Finish(T...) const {}
+};
 #include <cassert>
 #include <cstdarg>
 #include <cstdint>
@@ -138,6 +147,7 @@ struct PlayerbotAI {
     Unit* checkedTarget = nullptr;
     std::vector<std::string> executions;
     std::map<std::pair<std::string, Unit*>, Aura*> auras;
+    Player* GetBot() { return player; }
     Context* GetAiObjectContext() { return &context; }
     bool IsInVehicle(bool = false, bool = false, bool = false) { return false; }
     bool CanCastSpell(std::string const&, Unit* target) {
@@ -238,6 +248,7 @@ engine_doubles += "\n".join(without_includes((base / file).read_text())
                             for file in ("Queue.h", "Queue.cpp"))
 engine_doubles += r'''
 struct Engine {
+    PlayerbotAI* botAI;
     Context* aiObjectContext;
     Queue queue;
     std::vector<TriggerNode*> triggers;
@@ -245,7 +256,7 @@ struct Engine {
     bool testMode = false;
     float lastRelevance = 0;
     std::function<ActionNode*(std::string const&)> makeNode;
-    explicit Engine(Context* context) : aiObjectContext(context) {}
+    explicit Engine(PlayerbotAI* ai) : botAI(ai), aiObjectContext(&ai->context) {}
     ~Engine() {
         while (auto node = queue.Pop()) delete node;
         for (auto node : triggers) delete node;
@@ -420,7 +431,7 @@ struct Combat {
     DpsRogueStrategyActionNodeFactory dpsNodes;
     AssassinationRogueStrategyActionNodeFactory assassinationNodes;
     std::map<std::string, std::unique_ptr<Action>> actions;
-    Engine engine{&ai.context};
+    Engine engine{&ai};
     explicit Combat(bool assassination = true) {
         ai.context.targets["self target"].value = &bot;
         ai.context.targets["current target"].value = &target;

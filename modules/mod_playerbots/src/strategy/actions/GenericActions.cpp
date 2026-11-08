@@ -3,6 +3,7 @@
  * and/or modify it under version 2 of the License, or (at your option), any later version.
  */
 
+#include "ActionExecutionTrace.h"
 #include "GenericActions.h"
 
 #include "CreatureAI.h"
@@ -22,7 +23,7 @@ bool TogglePetSpellAutoCastAction::Execute(Event event)
     Pet* pet = bot->GetPet();
     if (!pet)
     {
-        return false;
+        return ActionExecutionTrace::Fail("pet/no-pet");
     }
     // hack on high level spell after low level initialization
     std::vector<unsigned int> shouldRemove;
@@ -73,6 +74,8 @@ bool TogglePetSpellAutoCastAction::Execute(Event event)
             toggled = true;
         }
     }
+    if (!toggled)
+        ActionExecutionTrace::Fail("pet/autocast-unchanged");
     return toggled;
 }
 

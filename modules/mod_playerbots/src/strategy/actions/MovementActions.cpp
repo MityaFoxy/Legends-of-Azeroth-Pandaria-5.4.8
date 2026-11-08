@@ -3,6 +3,7 @@
  * and/or modify it under version 2 of the License, or (at your option), any later version.
  */
 
+#include "ActionExecutionTrace.h"
 #include "MovementActions.h"
 
 #include <cmath>
@@ -151,8 +152,9 @@ bool MovementAction::ChaseTo(WorldObject* obj, float distance, float angle)
 
 bool MovementAction::ReachCombatTo(Unit* target, float distance)
 {
+    ActionExecutionTrace::Target(target);
     if (!IsMovingAllowed(target))
-        return false;
+        return ActionExecutionTrace::Fail("reach/movement-not-allowed");
 
     float const requestedDistance = distance;
     float tx = target->GetPositionX();
@@ -165,7 +167,7 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
     Position reposition = bot->GetPosition();
     bool const needsReposition = melee && target->GetMeleeRepositionPoint(bot, reposition);
     if (bot->GetExactDist(tx, ty, tz) <= distance && !needsReposition && bot->IsWithinLOSInMap(target))
-        return false;
+        return ActionExecutionTrace::Fail("reach/already-in-range");
 
     float const disToGo = bot->GetExactDist(tx, ty, tz) - distance;
     bool contactPoint = false;
@@ -219,7 +221,7 @@ bool MovementAction::ReachCombatTo(Unit* target, float distance)
         path = SearchForBestPath(targetPosition.x, targetPosition.y, targetPosition.z, usingNavigation, true);
     }
     if (path.size() < 2)
-        return false;
+        return ActionExecutionTrace::Fail("reach/no-path");
     float shortenTo = distance;
 
     // Avoid walking too far when moving towards each other
@@ -336,24 +338,24 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
     if (mapId != bot->GetMapId() || !Trinity::IsValidMapCoord(x, y, z))
     {
         LogNavigationResult("rejected", "invalid-map-or-coordinates", 0, 0, x, y, z, true);
-        return false;
+        return ActionExecutionTrace::Fail("move/invalid-coordinates");
     }
     if (!IsMovingAllowed(mapId, x, y, z))
     {
-        return false;
+        return ActionExecutionTrace::Fail("move/not-allowed");
     }
     if (!bot->GetVehicle() && !bot->GetTransport() && !bot->IsFlying() && !CanStartGroundMovement(x, y, z))
     {
         lastMoveFailure = MoveFailure::RecoveryExhausted;
-        return false;
+        return ActionExecutionTrace::Fail("move/recovery-exhausted");
     }
     if (IsDuplicateMove(mapId, x, y, z))
     {
-        return false;
+        return ActionExecutionTrace::Fail("move/duplicate");
     }
     if (IsWaitingForLastMove(priority))
     {
-        return false;
+        return ActionExecutionTrace::Fail("move/waiting-for-last-move");
     }
     bool const battlegroundGroundMovement = bot->InBattleground();
     if (battlegroundGroundMovement)
@@ -371,7 +373,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         VehicleSeatEntry const* seat = vehicle->GetSeatForPassenger(bot);
         Unit* vehicleBase = vehicle->GetBase();
         if (!vehicleBase || !seat || !seat->CanControl())  // is passenger and cant move anyway
-            return false;
+            return ActionExecutionTrace::Fail("move/vehicle-no-control");
         generatePath = !vehicleBase->CanFly();
 
         float distance = vehicleBase->GetExactDist(x, y, z);  // use vehicle distance, not bot
@@ -434,7 +436,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
         if (path.size() < 2)
         {
             lastMoveFailure = MoveFailure::Route;
-            return false;
+            return ActionExecutionTrace::Fail("move/no-path");
         }
         // Partial paths may stop before the requested destination. Move to
         // the reachable endpoint and keep the movement bookkeeping in sync.
@@ -450,7 +452,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
             if (generatePath)
             {
                 if (!mm.MovePointPath(0, path))
-                    return false;
+                    return ActionExecutionTrace::Fail("move/dispatch-failed");
             }
             else if (!backwards)
             {
@@ -478,7 +480,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
             return true;
         }
     }
-    return false;
+    return ActionExecutionTrace::Fail("move/no-distance");
 }
 
 bool MoveRandomAction::Execute(Event event)
@@ -577,10 +579,10 @@ bool MoveRandomAction::isUseful()
 bool MovementAction::IsMovingAllowed(WorldObject* target)
 {
     if (!target)
-        return false;
+        return ActionExecutionTrace::Fail("move/no-target");
 
     if (bot->GetMapId() != target->GetMapId())
-        return false;
+        return ActionExecutionTrace::Fail("move/target-map-mismatch");
 
     return IsMovingAllowed();
 }
@@ -594,17 +596,17 @@ bool MovementAction::IsMovingAllowed()
 {
     // do not allow if not vehicle driver
     if (botAI->IsInVehicle() && !botAI->IsInVehicle(true))
-        return false;
+        return ActionExecutionTrace::Fail("move/vehicle-passenger");
 
     if (bot->isFrozen() || bot->IsPolymorphed() || (bot->isDead() && !bot->HasPlayerFlag(PLAYER_FLAGS_GHOST)) ||
         bot->IsBeingTeleported() || bot->HasRootAura() || bot->HasSpiritOfRedemptionAura() ||
         bot->HasConfuseAura() || bot->IsCharmed() || bot->HasStunAura() ||
         bot->IsInFlight() || bot->HasUnitState(UNIT_STATE_LOST_CONTROL))
-        return false;
+        return ActionExecutionTrace::Fail("move/state-blocked");
 
     if (bot->GetMotionMaster()->GetMotionSlotType(MOTION_SLOT_CONTROLLED) != NULL_MOTION_TYPE)
     {
-        return false;
+        return ActionExecutionTrace::Fail("move/controlled-motion");
     }
 
     return bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != FLIGHT_MOTION_TYPE;
@@ -2285,22 +2287,26 @@ Player* CombatFormationMoveAction::NearestGroupMember(float dis)
 bool TankFaceAction::Execute(Event event)
 {
     Unit* target = AI_VALUE(Unit*, "current target");
+    ActionExecutionTrace::Target(target);
     if (!target)
-        return false;
+        return ActionExecutionTrace::Fail("tank/no-target");
 
     if (!bot->GetGroup())
-        return false;
+        return ActionExecutionTrace::Fail("tank/no-group");
 
-    if (!bot->IsWithinMeleeRange(target) || target->isMoving())
-        return false;
+    if (!bot->IsWithinMeleeRange(target))
+        return ActionExecutionTrace::Fail("tank/out-of-melee-range");
+
+    if (target->isMoving())
+        return ActionExecutionTrace::Fail("tank/target-moving");
 
     if (!AI_VALUE2(bool, "has aggro", "current target"))
-        return false;
+        return ActionExecutionTrace::Fail("tank/no-aggro");
 
     float averageAngle = AverageGroupAngle(target, true);
 
     if (averageAngle == 0.0f)
-        return false;
+        return ActionExecutionTrace::Fail("tank/no-group-angle");
 
     float deltaAngle = Position::NormalizeOrientation(averageAngle - target->GetAngle(bot));
     if (deltaAngle > M_PI)
@@ -2309,7 +2315,7 @@ bool TankFaceAction::Execute(Event event)
     float tolerable = M_PI_2;
 
     if (fabs(deltaAngle) > tolerable)
-        return false;
+        return ActionExecutionTrace::Fail("tank/already-oriented");
 
     float goodAngle1 = Position::NormalizeOrientation(averageAngle + M_PI * 3 / 5);
     float goodAngle2 = Position::NormalizeOrientation(averageAngle - M_PI * 3 / 5);
@@ -2338,7 +2344,7 @@ bool TankFaceAction::Execute(Event event)
             availablePos.push_back(pos);
     }
     if (availablePos.empty())
-        return false;
+        return ActionExecutionTrace::Fail("tank/no-safe-candidate");
     Position nearest = GetNearestPosition(availablePos);
     return MoveTo(bot->GetMapId(), nearest.GetPositionX(), nearest.GetPositionY(), nearest.GetPositionZ(), false, false, false, true, MovementPriority::MOVEMENT_COMBAT);
 }
