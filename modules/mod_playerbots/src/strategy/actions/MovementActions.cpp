@@ -1100,10 +1100,12 @@ bool MovementAction::ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vec
     return true;
 }
 
-Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float z, bool& usingNavigation, bool normalOnly, uint32 recoveryAttempt)
+Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float z, bool& usingNavigation, bool normalOnly, uint32 recoveryAttempt,
+    G3D::Vector3 const* startPosition)
 {
     usingNavigation = true;
-    G3D::Vector3 const start(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    G3D::Vector3 const start = startPosition ? *startPosition
+        : G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     G3D::Vector3 const destination(x, y, z);
     if (!Trinity::IsValidMapCoord(start.x, start.y, start.z) || !Trinity::IsValidMapCoord(x, y, z))
     {
@@ -1216,6 +1218,15 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             // though a land corridor is connected. Retry with land preference.
             if (bot->IsInWater() || bot->IsUnderWater())
                 avoidLiquids = true;
+        }
+        if (std::string(reason) == "invalid-ground-height" && points.size() >= 2)
+        {
+            // NormalizePath retains the first unsupported point at the end.
+            // Centre the existing bounded search on its supported predecessor,
+            // not the distant source or the underground height. Every bypass
+            // leg must still pass the complete native path validation.
+            obstruction = points[points.size() - 2];
+            hasObstruction = true;
         }
         startBridge = false;
         if (!points.empty() && ((type & PATHFIND_FARFROMPOLY_START) || (points.front() - from).length() > 1.0f))
@@ -1411,7 +1422,10 @@ Movement::PointsArray MovementAction::SearchForBestPath(float x, float y, float 
             }
             float const wx = origin.x + (dx * forward - dy * side) / horizontal;
             float const wy = origin.y + (dy * forward + dx * side) / horizontal;
-            float wz = bot->GetMapHeight(wx, wy, origin.z + (aroundObstruction ? 2.0f : 8.0f),
+            // GetMapHeight already raises the ray by Z_OFFSET_FIND_HEIGHT.
+            // Raising the short obstruction probe again can miss a VMAP floor
+            // and choose unreachable terrain underneath it (e.g. Townhall).
+            float wz = bot->GetMapHeight(wx, wy, origin.z + (aroundObstruction ? 0.0f : 8.0f),
                 true, aroundObstruction ? 4.0f : 50.0f);
             if (bot->CanSwim())
             {

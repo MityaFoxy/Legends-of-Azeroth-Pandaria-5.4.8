@@ -18,6 +18,7 @@
 #include "CharacterCache.h"
 #include "Config.h"
 #include "HunterStingTest.h"
+#include "NavigationReplayTest.h"
 #include "AiObjectContext.h"
 #include "Item.h"
 #include "OilActions.h"
@@ -56,6 +57,8 @@ public:
     static bool HandlePlayerbotCommand(ChatHandler* handler, char const* args)
     {
         std::string command = args ? args : "";
+        if (command == "navreplay")
+            return HandleNavigationReplayTest(handler);
         if (command.starts_with("stingtest "))
             return HandleHunterStingTest(handler, command.substr(10));
         if (command == "pettest" || command.starts_with("pettest "))

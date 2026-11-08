@@ -42,9 +42,15 @@ def main():
                         help="Probe loaded AB fence/building collision models (not live bot movement)")
     parser.add_argument("--ground-body-height", type=float,
                         help="Also normalize dry static ground paths and check LOS at this body height; no dynamic/water replay")
+    parser.add_argument("--townhall-regression", action="store_true",
+                        help="Assert the recorded GUID35 dry-static obstruction and native waypoint-height repair on AB data")
     args = parser.parse_args()
     if args.ground_body_height is not None and (not math.isfinite(args.ground_body_height) or args.ground_body_height <= 0):
         parser.error("ground body height must be finite and positive")
+    if args.townhall_regression:
+        if args.probe_line:
+            parser.error("Townhall regression supplies its own route fixtures")
+        args.ground_body_height = 0.63261503
     maps = (args.source / "src/server/game/Maps/Map.cpp").read_text()
     paths = (args.source / "src/server/game/Movement/PathGenerator.cpp").read_text()
     ab = (args.source / "src/server/game/Battlegrounds/Zones/BattlegroundAB.h").read_text()
@@ -164,6 +170,20 @@ struct GroundProbe {
         source += f"constexpr float {name} = {value};\n"
     source += body(maps, "float Map::GetHeight(float x,").replace("Map::GetHeight", "GroundProbe::GetHeight").replace(
         "VMAP::VMapFactory::createOrGetVMapManager()", "&vmap") + "\n"
+    if args.townhall_regression:
+        # Keep the native WorldObject offset and the production waypoint query.
+        # Only the map adapter omits dynamic gameobjects, absent from this replay.
+        objects = (args.source / "src/server/game/Entities/Object/Object.cpp").read_text()
+        map_header = (args.source / "src/server/game/Maps/Map.h").read_text()
+        max_height = re.search(r"#define MAX_HEIGHT\s+(\S+)", map_header).group(1)
+        source += f"constexpr float MAX_HEIGHT = {max_height};\n"
+        source += "struct AuditObject { GroundProbe& ground; float GetMapHeight(float,float,float,bool,float) const; };\n"
+        source += body(objects, "float WorldObject::GetMapHeight(").replace(
+            "WorldObject::", "AuditObject::").replace("GetMap()->GetHeight(GetPhaseMask(),", "ground.GetHeight(") + "\n"
+        movement = (args.source / "modules/mod_playerbots/src/strategy/actions/MovementActions.cpp").read_text()
+        query = re.search(r"float wz = bot->GetMapHeight\(wx, wy, origin\.z.*?;", movement, re.S).group(0)
+        source += "float WaypointHeight(AuditObject* bot,float wx,float wy,G3D::Vector3 const& origin,bool aroundObstruction) {\n"
+        source += query + "\nreturn wz;\n}\n"
     source += r'''
 // Actual core smoothing bodies, with only world logging supplied by a double.
 constexpr int VERTEX_SIZE=3, MAX_PATH_LENGTH=200, MAX_POINT_PATH_LENGTH=200;
@@ -192,9 +212,10 @@ struct SmoothProbe {
     # Validate literals before embedding user-supplied positions in the fixture.
     if any(not math.isfinite(v) for p in (*points, *args.probe_line) for v in p):
         raise ValueError("Non-finite coordinates")
-    source += "static std::vector<std::array<float,6>> const lines = {" + ",".join(
+    source += "static std::vector<std::array<float,6>> lines = {" + ",".join(
         "{" + ",".join(f"{v:.9e}f" for v in p) + "}" for p in args.probe_line) + "};\n"
     source += f"static bool const inspectObstacles = {'true' if args.inspect_obstacles else 'false'};\n"
+    source += f"static bool const townhallRegression = {'true' if args.townhall_regression else 'false'};\n"
     source += f"static float const groundBodyHeight = {args.ground_body_height or 0:.9e}f;\n"
     source += r'''
 struct TileHeader {uint32 magic,dtVersion,version,size; char liquids,pad[3];};
@@ -312,6 +333,31 @@ int main(int argc,char** argv) {
     };
     for(int i=0;i<5;++i) sample(i,nodes[i][0],nodes[i][1],nodes[i][2]);
     float x,y,z; int id=5; while(scanf("%f %f %f",&x,&y,&z)==3) sample(id++,x,y,z);
+'''
+    if args.townhall_regression:
+        source += r'''
+    GroundProbe townhallGround{vmap,grids};
+    AuditObject object{townhallGround};
+    G3D::Vector3 const start{1307.0289f,1313.9961f,-9.504376f};
+    G3D::Vector3 const goal{851.8919f,1148.902f,11.548326f};
+    G3D::Vector3 const obstacle{1308.7755f,1315.9424f,-8.359013f};
+    // Existing ring variant 1: forward -2, side -8, radius unchanged.
+    float dx=goal.x-obstacle.x,dy=goal.y-obstacle.y,horizontal=std::hypot(dx,dy);
+    float wx=obstacle.x+(-2.f*dx+8.f*dy)/horizontal;
+    float wy=obstacle.y+(-2.f*dy-8.f*dx)/horizontal;
+    float floor=WaypointHeight(&object,wx,wy,obstacle,true);
+    float buried=object.GetMapHeight(wx,wy,obstacle.z+2.f,true,4.f);
+    printf("townhall_waypoint=(%.5f,%.5f) selected_z=%.5f double_offset_z=%.5f\n",wx,wy,floor,buried);
+    assert(std::fabs(floor-(-9.592f))<.02f && floor-buried>3.f);
+    lines={
+        {start.x,start.y,start.z,goal.x,goal.y,goal.z},
+        {start.x,start.y,start.z,wx,wy,floor},
+        {wx,wy,floor,goal.x,goal.y,goal.z},
+        {start.x,start.y,start.z,wx,wy,buried}
+    };
+'''
+    source += r'''
+    unsigned townhallVerified = 0;
     for(size_t i=0;i<lines.size();++i) {
         auto const& p=lines[i];
         if (groundBodyHeight>0) {
@@ -423,11 +469,20 @@ int main(int argc,char** argv) {
                 GroundProbe ground{vmap,grids};
                 std::vector<G3D::Vector3> normalized;
                 bool dry=true;
+                unsigned missingGround=0;
                 for(int k=0;k<length;++k) {
                     auto raw=smooth+3*k;
-                    float z=ground.GetHeight(raw[2],raw[0],raw[1]+Z_OFFSET_FIND_HEIGHT,true,50.f);
+                    float support=ground.GetHeight(raw[2],raw[0],raw[1]+Z_OFFSET_FIND_HEIGHT,true,50.f);
+                    // Native UpdateAllowedPositionZ keeps raw z when no height
+                    // is found; do not invent a spline at INVALID_HEIGHT.
+                    bool validSupport=std::isfinite(support) && support>INVALID_HEIGHT;
+                    float z=validSupport ? support : raw[1];
+                    if(!validSupport) ++missingGround;
                     auto& grid=grids.at({int(32-raw[2]/SIZE_OF_GRIDS),int(32-raw[0]/SIZE_OF_GRIDS)});
-                    if(z<=INVALID_HEIGHT || grid->getLiquidLevel(raw[2],raw[0])>z) dry=false;
+                    if(!validSupport) printf("ground_missing_sample=%zu point=%d raw=(%.5f,%.5f,%.5f) terrain_z=%.5f liquid_z=%.5f height_result=%.5f\n",
+                        i,k,raw[2],raw[0],raw[1],grid->Height(raw[2],raw[0]),
+                        grid->getLiquidLevel(raw[2],raw[0]),support);
+                    if(!validSupport || grid->getLiquidLevel(raw[2],raw[0])>z) dry=false;
                     normalized.emplace_back(raw[2],raw[0],z);
                 }
                 int blocked=0;
@@ -440,8 +495,17 @@ int main(int argc,char** argv) {
                 }
                 float startOffset=normalized.empty() ? -1.f : (normalized.front()-G3D::Vector3(p[0],p[1],p[2])).length();
                 float endOffset=normalized.empty() ? -1.f : (normalized.back()-G3D::Vector3(p[3],p[4],p[5])).length();
-                printf("ground_path_probe=%zu dry=%d blocked_segments=%d body_height=%.5f start_offset=%.5f end_offset=%.5f\n",
-                    i,dry,blocked,groundBodyHeight,startOffset,endOffset);
+                printf("ground_path_probe=%zu dry=%d missing_ground_samples=%u blocked_segments=%d body_height=%.5f start_offset=%.5f end_offset=%.5f\n",
+                    i,dry,missingGround,blocked,groundBodyHeight,startOffset,endOffset);
+                if(townhallRegression) {
+                    ++townhallVerified;
+                    assert(dry && startOffset<.01f);
+                    if(i==0) assert(blocked>0); // Original wall is still blocked.
+                    if(i==1) assert(!blocked && endOffset<.01f && corridor[count-1]==br
+                        && !(status&(DT_OUT_OF_NODES|DT_PARTIAL_RESULT|DT_BUFFER_TOO_SMALL)));
+                    if(i==2) assert(!blocked && length==200 && (smoothStatus&DT_BUFFER_TOO_SMALL));
+                    if(i==3) assert(endOffset>3.f && (status&DT_OUT_OF_NODES));
+                }
             }
         }
     }
@@ -461,6 +525,10 @@ int main(int argc,char** argv) {
         printf("capacity=%d full_directed_node_pairs=%d/20\n",capacity,full);
     }
     dtFreeNavMeshQuery(query); dtFreeNavMesh(mesh);
+    if(townhallRegression) {
+        assert(townhallVerified==4); // Missing/failed queries must not skip acceptance.
+        puts("Townhall dry-static geometry regression PASS (not a live movement replay)");
+    }
 }
 '''
     flags = (args.build / "src/common/CMakeFiles/common.dir/flags.make").read_text()

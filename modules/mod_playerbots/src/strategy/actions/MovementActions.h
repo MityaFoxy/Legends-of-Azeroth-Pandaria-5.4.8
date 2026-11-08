@@ -8,6 +8,7 @@ class PlayerbotAI;
 class Unit;
 class WorldObject;
 class Position;
+class ChatHandler;
 
 #define ANGLE_45_DEG (static_cast<float>(M_PI) / 4.f)
 #define ANGLE_90_DEG M_PI_2
@@ -74,6 +75,9 @@ protected:
     };
 
 private:
+    // The opt-in query fixture can plan from a recorded position without
+    // relocating a player, dispatching movement or exposing a gameplay API.
+    friend bool HandleNavigationReplayTest(ChatHandler* handler);
     // Per-search evidence; never retained as movement state or used to select a route.
     struct NavigationDiagnostics
     {
@@ -95,7 +99,7 @@ private:
     bool ValidateWaterConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     bool ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     Movement::PointsArray SearchForBestPath(float x, float y, float z, bool& usingNavigation,
-        bool normalOnly = false, uint32 recoveryAttempt = 0);
+        bool normalOnly = false, uint32 recoveryAttempt = 0, G3D::Vector3 const* startPosition = nullptr);
     bool CanStartGroundMovement(float x, float y, float z);
     void TrackGroundMovement(float x, float y, float z, bool normalOnly, bool backwards);
     void LogStuckResult(char const* outcome, uint32 attempts, bool warning = true);

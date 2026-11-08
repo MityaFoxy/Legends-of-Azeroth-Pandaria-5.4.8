@@ -723,11 +723,51 @@ void PathGenerator::BuildPointPath(const float *startPoint, const float *endPoin
 
 void PathGenerator::NormalizePath()
 {
+    Unit const* unit = _source->ToUnit();
+    // Fear/confusion and native chase use the shared query, bypassing the bot
+    // planner. Their normalized ground paths must not cross BG collision either.
+    bool const battlegroundPlayer = unit && unit->GetTypeId() == TYPEID_PLAYER
+        && unit->GetMap()->IsBattlegroundOrArena() && !unit->IsFlying() && !unit->IsFalling()
+        && !unit->GetTransport() && !unit->GetVehicle();
+    bool const battlegroundGroundPlayer = battlegroundPlayer && !unit->IsInWater() && !unit->IsUnderWater();
+    // Native Charge/chase/fear use shared queries. Their water polygons also
+    // describe the surface, not a swimmer's feet. Preserve genuine water-walk
+    // permission and ghost/flight/transport movement; keep shared NPC scope.
+    bool const normalizeSwimmingPath = (_privateQuery || battlegroundPlayer) && unit
+        && unit->CanSwim() && !unit->CanFly() && !unit->IsFalling()
+        && !unit->GetTransport() && !unit->GetVehicle()
+        && !unit->HasAuraType(SPELL_AURA_WATER_WALK) && !unit->HasAuraType(SPELL_AURA_GHOST);
+    bool const requireGroundSupport = (_privateQuery || battlegroundGroundPlayer) && unit
+        && !unit->CanFly() && !unit->IsFalling() && !unit->GetTransport() && !unit->GetVehicle();
     for (uint32 i = 0; i < _pathPoints.size(); ++i)
     {
         float surfaceZ = _pathPoints[i].z;
         float groundZ = INVALID_HEIGHT;
         _source->UpdateAllowedPositionZ(_pathPoints[i].x, _pathPoints[i].y, _pathPoints[i].z, &groundZ);
+        // UpdateAllowedPositionZ leaves z unchanged if its height query fails.
+        // A dry navmesh vertex below the terrain can therefore survive as an
+        // underground spline point even when body-height VMAP LOS is clear.
+        // Reject that corridor and let the caller search for another route.
+        if (requireGroundSupport && (!std::isfinite(groundZ) || groundZ <= INVALID_HEIGHT)
+            && _source->GetMap()->GetLiquidStatus(_source->GetPhaseMask(), _pathPoints[i].x,
+                _pathPoints[i].y, _pathPoints[i].z, MAP_ALL_LIQUIDS, nullptr,
+                _source->GetCollisionHeight()) == LIQUID_MAP_NO_WATER)
+        {
+            _failureReason = "invalid-ground-height";
+            TC_LOG_DEBUG("movement.path", "event=path-support-rejected guid={} map={} instance={} from=({},{},{}) goal=({},{},{}) point={} raw=({},{},{}) normalizedZ={} groundZ={} groundFromAbove={} phaseMask={} privateQuery={}",
+                _source->GetGUID().GetCounter(), _source->GetMapId(), _source->GetInstanceId(),
+                GetStartPosition().x, GetStartPosition().y, GetStartPosition().z,
+                GetEndPosition().x, GetEndPosition().y, GetEndPosition().z, i,
+                _pathPoints[i].x, _pathPoints[i].y, surfaceZ, _pathPoints[i].z, groundZ,
+                _source->GetMapHeight(_pathPoints[i].x, _pathPoints[i].y, MAX_HEIGHT),
+                _source->GetPhaseMask(), bool(_privateQuery));
+            // Retain the failure location and its normalized predecessor for
+            // a bounded detour query, as for a blocked body segment below.
+            // This prefix is still NOPATH: its collision pass has not run.
+            _pathPoints.resize(i + 1);
+            _type = PATHFIND_NOPATH;
+            return;
+        }
         // Some coarse water polygons span dry cells in the liquid height map.
         // Dropping their surface points to the bottom destroys the corridor:
         // the resulting spline crosses steep banks and cannot be replanned.
@@ -751,35 +791,27 @@ void PathGenerator::NormalizePath()
                 return;
             }
         }
-        if (_privateQuery)
-            if (Unit const* unit = _source->ToUnit())
-                if (unit->CanSwim() && !unit->HasAuraType(SPELL_AURA_WATER_WALK))
-                {
-                    LiquidData liquid{};
-                    G3D::Vector3& point = _pathPoints[i];
-                    if (_source->GetMap()->GetLiquidStatus(_source->GetPhaseMask(), point.x, point.y, point.z,
-                        MAP_ALL_LIQUIDS, &liquid, _source->GetCollisionHeight()) != LIQUID_MAP_NO_WATER
-                        && std::fabs(point.z - liquid.level) <= 0.75f && liquid.level > liquid.depth_level)
-                    {
-                        // Navmesh stores the water plane, not a swimmer's feet.
-                        // Standing exactly on that plane reports WATER_WALK and
-                        // prevents both swimming animation and swimming speed.
-                        // ADT liquid depth can be below a VMAP rock or bridge.
-                        // Preserve the support found by UpdateAllowedPositionZ;
-                        // sinking the path into it makes every exit fail LOS.
-                        point.z = std::max(std::max(groundZ, liquid.depth_level),
-                            liquid.level - std::max(0.1f, _source->GetMinHeightInWater()));
-                    }
-                }
+        if (normalizeSwimmingPath)
+        {
+            LiquidData liquid{};
+            G3D::Vector3& point = _pathPoints[i];
+            if (_source->GetMap()->GetLiquidStatus(_source->GetPhaseMask(), point.x, point.y, point.z,
+                MAP_ALL_LIQUIDS, &liquid, _source->GetCollisionHeight()) != LIQUID_MAP_NO_WATER
+                && std::fabs(point.z - liquid.level) <= 0.75f && liquid.level > liquid.depth_level)
+            {
+                // Navmesh stores the water plane, not a swimmer's feet.
+                // Standing exactly on that plane reports WATER_WALK and
+                // prevents both swimming animation and swimming speed.
+                // ADT liquid depth can be below a VMAP rock or bridge.
+                // Preserve the support found by UpdateAllowedPositionZ;
+                // sinking the path into it makes every exit fail LOS.
+                point.z = std::max(std::max(groundZ, liquid.depth_level),
+                    liquid.level - std::max(0.1f, _source->GetMinHeightInWater()));
+            }
+        }
     }
 
-    Unit const* unit = _source->ToUnit();
-    // Fear/confusion and native chase use the shared query, bypassing the bot
-    // planner. Their normalized ground paths must not cross BG collision either.
-    bool const battlegroundGroundPlayer = unit && unit->GetTypeId() == TYPEID_PLAYER
-        && unit->GetMap()->IsBattlegroundOrArena() && !unit->IsFlying() && !unit->IsFalling()
-        && !unit->GetTransport() && !unit->GetVehicle() && !unit->IsInWater() && !unit->IsUnderWater();
-    if ((_privateQuery || battlegroundGroundPlayer) && unit)
+    if ((_privateQuery || battlegroundGroundPlayer || normalizeSwimmingPath) && unit)
     {
         float const bodyHeight = _source->GetCollisionHeight() * 0.5f;
         if (!_privateQuery && !_pathPoints.empty())

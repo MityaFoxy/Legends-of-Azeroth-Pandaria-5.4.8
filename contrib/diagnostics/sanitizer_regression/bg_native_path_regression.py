@@ -33,14 +33,16 @@ source = r'''
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
+#define TC_LOG_DEBUG(...) do {} while (0)
 using uint32=std::uint32_t;
 using dtPolyRef=unsigned long long;
 constexpr dtPolyRef INVALID_POLYREF=0;
 constexpr int VERTEX_SIZE=3, NAV_WATER=2, NAV_MAGMA=4, NAV_SLIME=8;
-constexpr int TYPEID_PLAYER=4, TYPEID_UNIT=3, SPELL_AURA_WATER_WALK=1;
+constexpr int TYPEID_PLAYER=4, TYPEID_UNIT=3, SPELL_AURA_WATER_WALK=1, SPELL_AURA_GHOST=2;
 constexpr int MAP_ALL_LIQUIDS=15, LIQUID_MAP_NO_WATER=0;
 constexpr int PATHFIND_NORMAL=1, PATHFIND_NOPATH=8;
 constexpr float INVALID_HEIGHT=-100000;
@@ -56,10 +58,15 @@ namespace VMAP { enum class ModelIgnoreFlags { Nothing }; }
 struct LiquidData {float level=0, depth_level=0;};
 struct Map {
     bool battleground=true;
+    bool liquid=false;
+    float liquidLevel=5,depthLevel=0;
     mutable std::vector<std::pair<G3D::Vector3,G3D::Vector3>> rays;
     std::function<bool(G3D::Vector3,G3D::Vector3)> clear=[](auto,auto){return true;};
     bool IsBattlegroundOrArena() const {return battleground;}
-    int GetLiquidStatus(uint32,float,float,float,int,LiquidData*,float) const {return LIQUID_MAP_NO_WATER;}
+    int GetLiquidStatus(uint32,float,float,float,int,LiquidData* data,float) const {
+        if(data) {data->level=liquidLevel;data->depth_level=depthLevel;}
+        return liquid?1:LIQUID_MAP_NO_WATER;
+    }
     bool isInLineOfSight(float x,float y,float z,float tx,float ty,float tz,uint32 phase,VMAP::ModelIgnoreFlags) const {
         assert(phase==7); rays.push_back({{x,y,z},{tx,ty,tz}});
         return clear({x,y,z},{tx,ty,tz});
@@ -71,23 +78,29 @@ struct Unit {
     const char* failure=nullptr;
     Map map;
     bool isUnit=true, player=true, flying=false, falling=false, transport=false, vehicle=false, water=false, underwater=false;
+    bool swimmer=false,waterWalk=false,ghost=false;
+    float minWaterHeight=.1f;
     float height=2.541018f;
     std::function<float(G3D::Vector3)> normalize=[](auto p){return p.z;};
+    std::function<float(G3D::Vector3)> support;
     Unit const* ToUnit() const {return isUnit?this:nullptr;}
     int GetTypeId() const {return player?TYPEID_PLAYER:TYPEID_UNIT;}
     Map const* GetMap() const {return &map;}
     bool IsFlying() const {return flying;}
+    bool CanFly() const {return flying;}
     bool IsFalling() const {return falling;}
     void* GetTransport() const {return transport?(void*)this:nullptr;}
     void* GetVehicle() const {return vehicle?(void*)this:nullptr;}
     bool IsInWater() const {return water;}
     bool IsUnderWater() const {return underwater;}
-    bool CanSwim() const {return false;}
-    bool HasAuraType(int) const {return false;}
-    float GetMinHeightInWater() const {return .1f;}
+    bool CanSwim() const {return swimmer;}
+    bool HasAuraType(int type) const {return type==SPELL_AURA_WATER_WALK?waterWalk:ghost;}
+    float GetMinHeightInWater() const {return minWaterHeight;}
     float GetCollisionHeight() const {return height;}
     uint32 GetPhaseMask() const {return 7;}
-    void UpdateAllowedPositionZ(float x,float y,float& z,float* ground) const {z=normalize({x,y,z});*ground=z;}
+    void UpdateAllowedPositionZ(float x,float y,float& z,float* ground) const {
+        z=normalize({x,y,z});*ground=support?support({x,y,z}):z;
+    }
 };
 struct Query {int findNearestPoly(float*,float*,int*,dtPolyRef* ref,float*) {*ref=1;return 0;}};
 struct Mesh {int getPolyFlags(dtPolyRef,unsigned short* flags) {*flags=1;return 0;}};
@@ -163,6 +176,51 @@ int main() {
     assert(std::fabs(path._pathPoints[0].z-2.3f)<.0001f);
     unit.normalize=[](auto p){return p.z;};
 
+    // Recorded AB splines for GUID39/40/53 contain dry terrain vertices
+    // below the height query's origin. Native UpdateAllowedPositionZ leaves
+    // z untouched when no ground is found: clear VMAP LOS is insufficient.
+    for (auto raw : {G3D::Vector3{870.987915f,834.832703f,-60.492588f},
+                     G3D::Vector3{870.826599f,835.759888f,-60.292694f},
+                     G3D::Vector3{1151.489014f,824.657715f,-103.191864f}}) {
+        for (bool privateQuery : {false,true}) {
+            reset(); path._privateQuery=privateQuery;
+            path.start=raw; path._pathPoints={raw,raw};
+            unit.support=[](auto){return INVALID_HEIGHT-100000;};
+            path.NormalizePath();
+            assert(path._type==PATHFIND_NOPATH && std::string(path._failureReason)=="invalid-ground-height");
+        }
+    }
+    reset(); unit.support=[](auto){return std::numeric_limits<float>::quiet_NaN();};
+    path.NormalizePath(); assert(path._type==PATHFIND_NOPATH);
+    // Water and transport/flight/fall motion do not require a dry ground ray.
+    unit.support=[](auto){return INVALID_HEIGHT;};
+    reset(); unit.map.liquid=true; path.NormalizePath();
+    assert(path._type==PATHFIND_NORMAL); unit.map.liquid=false;
+    for(bool* skip:{&unit.flying,&unit.falling,&unit.transport,&unit.vehicle}) {
+        reset(); *skip=true; path.NormalizePath(); *skip=false;
+        assert(path._type==PATHFIND_NORMAL);
+    }
+    // Shared non-BG/NPC queries retain their existing behavior.
+    path._privateQuery=false;
+    for(bool* included:{&unit.isUnit,&unit.player,&unit.map.battleground}) {
+        reset(); *included=false; path.NormalizePath(); *included=true;
+        assert(path._type==PATHFIND_NORMAL);
+    }
+    unit.support={};
+
+    // A support failure retains the last supported point and the first bad
+    // point for bounded detour planning, never the unvalidated tail. The path
+    // itself must remain forbidden, including when point zero has no support.
+    for (unsigned failed : {0u, 1u, 2u}) {
+        reset(); path._privateQuery=true;
+        path._pathPoints={{0,0,0},{1,0,0},{2,0,0},{3,0,0}};
+        unit.support=[failed](auto p) {return p.x==float(failed)?INVALID_HEIGHT:p.z;};
+        path.NormalizePath();
+        assert(path._type==PATHFIND_NOPATH && std::string(path._failureReason)=="invalid-ground-height");
+        assert(path._pathPoints.size()==failed+1 && path._pathPoints.back().x==float(failed));
+    }
+    unit.support={}; path._privateQuery=false;
+
     // The shared-query extension is limited to BG players on ordinary ground.
     unit.map.clear=[](auto,auto){return false;};
     for(bool* skip:{&unit.flying,&unit.falling,&unit.transport,&unit.vehicle,&unit.water,&unit.underwater}) {
@@ -184,7 +242,7 @@ int main() {
     init.args.path={{9,9,9},{10,10,10}};
     init.MoveTo(c,true,false);
     assert(init.args.path.empty());
-    for(auto reason:{"path-body-obstructed","path-start-obstructed"}) {
+    for(auto reason:{"path-body-obstructed","path-start-obstructed","invalid-ground-height"}) {
         unit.failure=reason; init.args.path={{9,9,9}};
         init.MoveTo(c,true,false); assert(init.args.path.empty());
     }
@@ -194,6 +252,47 @@ int main() {
     init.MoveTo(c,true,false); assert(init.args.path.size()==2 && init.args.path.back().x==c.x);
     unit.failure="path-body-obstructed";
     init.MoveTo(c,false,false); assert(init.args.path.size()==2); // Explicit non-path motion.
+
+    // Native GUID39 Charge spline93300 starts in water but ends at the water
+    // plane without a water-walk aura. Use the logged geometry and controlled
+    // support/liquid data with the actual NormalizePath, not a copied policy.
+    Unit swimmer; PathGenerator wet{&swimmer};
+    auto resetWater=[&] {
+        swimmer=Unit{}; swimmer.swimmer=true; swimmer.water=true;
+        swimmer.map.liquid=true; swimmer.map.liquidLevel=-66.889992f;
+        swimmer.map.depthLevel=-79.791824f; swimmer.minWaterHeight=1.203f;
+        swimmer.support=[&](auto){return swimmer.map.depthLevel;};
+        wet._privateQuery=false; wet._type=PATHFIND_NORMAL; wet._failureReason=nullptr;
+        wet.start={1088.201416f,1090.506470f,-68.092987f};
+        wet._pathPoints={wet.start,{1082.f,1086.f,-66.889992f},{1078.465820f,1083.517944f,-66.889992f}};
+    };
+    for(bool privateQuery:{false,true}) for(bool inWater:{false,true}) {
+        resetWater(); wet._privateQuery=privateQuery; swimmer.water=inWater;
+        wet.NormalizePath(); assert(wet._type==PATHFIND_NORMAL);
+        for(auto p:wet._pathPoints) assert(p.z<swimmer.map.liquidLevel-.1f);
+        assert(!swimmer.map.rays.empty()); // Changed underwater points must pass body LOS.
+    }
+    // Real water-walk permission, ghost movement and unrelated locomotion stay
+    // outside immersion. Shared NPC/outside-BG behavior is not expanded.
+    for(bool* skip:{&swimmer.waterWalk,&swimmer.ghost,&swimmer.flying,&swimmer.falling,
+                   &swimmer.transport,&swimmer.vehicle}) {
+        resetWater(); *skip=true; wet.NormalizePath();
+        assert(wet._pathPoints.back().z==swimmer.map.liquidLevel);
+    }
+    for(bool* included:{&swimmer.player,&swimmer.isUnit,&swimmer.swimmer,&swimmer.map.battleground,&swimmer.map.liquid}) {
+        resetWater(); *included=false; wet.NormalizePath();
+        assert(wet._pathPoints.back().z==-66.889992f);
+    }
+    resetWater(); wet._privateQuery=true; swimmer.map.battleground=false;
+    wet.NormalizePath(); assert(wet._pathPoints.back().z<swimmer.map.liquidLevel-.1f);
+    // A VMAP rock just below the surface is higher than the ADT liquid bottom.
+    // Immersion may not push the bot underneath that actual support.
+    resetWater(); float rock=swimmer.map.liquidLevel-.05f;
+    swimmer.support=[&](auto){return rock;}; wet.NormalizePath();
+    assert(std::fabs(wet._pathPoints.back().z-rock)<.00001f);
+    resetWater(); swimmer.map.clear=[](auto,auto to){return to.x>1080.f;};
+    wet.NormalizePath(); assert(wet._type==PATHFIND_NOPATH);
+    assert(std::string(wet._failureReason)=="path-body-obstructed");
 }
 '''
 env=dict(os.environ,ASAN_OPTIONS='halt_on_error=1:detect_leaks=1',UBSAN_OPTIONS='halt_on_error=1')
@@ -207,9 +306,18 @@ with tempfile.TemporaryDirectory(prefix='loa-native-path-') as tmp:
     assert result.returncode==0,result.stderr
     print('Native BG path normalization: passed under ASan/UBSan')
     for label,old,new in (
-        ('shared-query validation', '(_privateQuery || battlegroundGroundPlayer)', '(_privateQuery)'),
+        ('shared-query validation', '(_privateQuery || battlegroundGroundPlayer || normalizeSwimmingPath)', '(_privateQuery)'),
+        ('shared swimmer immersion', '(_privateQuery || battlegroundPlayer)', '(_privateQuery)'),
+        ('water-walk permission', '!unit->HasAuraType(SPELL_AURA_WATER_WALK)', 'true'),
+        ('ghost permission', '!unit->HasAuraType(SPELL_AURA_GHOST)', 'true'),
+        ('water support', 'std::max(std::max(groundZ, liquid.depth_level),', 'std::max(liquid.depth_level,'),
         ('actual first segment', 'std::min<size_t>(2, _pathPoints.size())', 'std::min<size_t>(1, _pathPoints.size())'),
         ('collision direct fallback', 'args.path.clear();', 'args.path.resize(2);'),
+        ('missing ground accepted', '(!std::isfinite(groundZ) || groundZ <= INVALID_HEIGHT)', 'false'),
+        ('lost support failure location',
+         '// This prefix is still NOPATH: its collision pass has not run.\n            _pathPoints.resize(i + 1);',
+         '// Mutation: retain an unvalidated tail after missing support.'),
+        ('invalid-ground direct fallback', ' || reason == "invalid-ground-height"', ''),
     ):
         assert old in source
         result=run(source.replace(old,new))

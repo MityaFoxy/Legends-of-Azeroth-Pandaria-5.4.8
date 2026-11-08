@@ -5167,7 +5167,10 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 
     setDeathState(ALIVE);
 
-    SetWaterWalking(false, true);
+    // Ghost movement is server state too. packetOnly leaves the ghost flag
+    // behind for players without a client movement acknowledgement (bots).
+    // A surviving water-walk aura still grants its normal movement permission.
+    SetWaterWalking(HasAuraType(SPELL_AURA_WATER_WALK));
     if (!HasUnitState(UNIT_STATE_STUNNED))
         SetRooted(false);
 

@@ -184,9 +184,9 @@ namespace Movement
                 MovebyPath(path.GetPath());
                 return;
             }
-            // A collision veto must not become an unchecked straight segment.
+            // A collision/support veto must not become an unchecked straight segment.
             std::string const reason = path.GetPathFailureReason();
-            if (reason == "path-body-obstructed" || reason == "path-start-obstructed")
+            if (reason == "path-body-obstructed" || reason == "path-start-obstructed" || reason == "invalid-ground-height")
             {
                 args.path.clear();
                 return;

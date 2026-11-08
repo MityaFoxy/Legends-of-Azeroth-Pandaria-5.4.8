@@ -55,6 +55,15 @@ assert "TrackGroundMovement(x, y, z, normal_only, backwards)" in move_to
 
 source = r"""
 #include <algorithm>
+struct ActionExecutionTrace {
+ explicit ActionExecutionTrace(bool = false) {}
+ static bool Enabled() { return false; }
+ static bool Fail(char const*) { return false; }
+ template<class T> static void Target(T const*) {}
+ static void Spell(unsigned, int = -1) {}
+ bool GetRawResult() const { return false; }
+ template<class... T> void Finish(T...) const {}
+};
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -297,7 +306,7 @@ struct MovementAction {
     Unit* bot;
     LastMovement last;
     std::string getName() const { return "fixture movement"; }
-    Movement::PointsArray SearchForBestPath(float,float,float,bool&,bool=false,uint32=0);
+    Movement::PointsArray SearchForBestPath(float,float,float,bool&,bool=false,uint32=0,G3D::Vector3 const* =nullptr);
     void LogNavigationResult(char const*,char const*,uint32,uint32,float,float,float,bool,NavigationDiagnostics const* =nullptr);
     bool CanStartGroundMovement(float,float,float);
     void TrackGroundMovement(float,float,float,bool,bool);
@@ -455,6 +464,16 @@ void searchTests() {
     assert(same(queries[2].from,queries[1].to) && same(queries[4].from,queries[3].to));
     assert(queries[1].to.y>0 && queries[3].to.y<0 && same(bot.position,{0,0,0}));
     assert(hasLog("info","alternative-route"));
+
+    // A rejected unsupported corridor still permits a complete native detour;
+    // if none exists, normal-only movement must not use direct fallback.
+    reset(); action.last={}; replies={bad("invalid-ground-height"),Route{},Route{}};
+    path=action.SearchForBestPath(100,0,0,navigation,true);
+    assert(navigation && path.size()==3 && queries.size()==3 && same(path.back(),{100,0,0}));
+    assert(hasLog("info","alternative-route"));
+    reset(); action.last={}; replies=std::deque<Route>(10,bad("invalid-ground-height"));
+    assert(action.SearchForBestPath(100,0,0,navigation,true).empty() && navigation);
+    assert(hasLog("warn","rejected") && !hasLog("warn","fallback-direct"));
 
     // A reachable intermediate point is NOT a complete alternative.
     reset(); action.last={}; Route incomplete; incomplete.type=PATHFIND_INCOMPLETE;
@@ -661,6 +680,75 @@ void obstructionSearchTests() {
         path=action.SearchForBestPath(100,0,0,navigation,true);
         assert(path.empty() && navigation && queries.size()==budget);
     }
+}
+void obstructionHeightTests() {
+    // Native Farm replay found the first unsupported point far ahead of the
+    // source. A bounded bypass must be centred on the preceding supported
+    // point, not on the source or the subterranean point itself.
+    for (float floor : {-60.f, 0.f, 100.f}) {
+        reset(); config.navigationMaxAttempts=5;
+        Unit bot; bot.position={0,0,floor}; bot.bridgeSurface=floor; bot.ground=floor-4.f;
+        MovementAction action{&bot}; bool navigation=true;
+        G3D::Vector3 goal{100,0,floor};
+        routeFor=[&](auto const& from,auto const& to) {
+            if (std::fabs(to.z-floor)>.01f) return bad("destination-not-reached");
+            if ((to.x>=80.f && std::fabs(to.y)>=8.f) ||
+                (from.x>=80.f && std::fabs(from.y)>=8.f)) return Route{};
+            Route r=bad("invalid-ground-height"); r.automatic=false;
+            r.points={from,{89,0,floor},{90,0,floor-1.6f}};
+            return r;
+        };
+        auto path=action.SearchForBestPath(goal.x,goal.y,goal.z,navigation,true);
+        assert(navigation && queries.size()==3 && path.size()==3 && same(path.back(),goal));
+        assert(queries[1].to.x>=80 && std::fabs(queries[1].to.z-floor)<.01f);
+        assert(std::none_of(path.begin(),path.end(),[&](auto p){return p.z<floor;}));
+        // Failure at the source provides no supported anchor. Do not invent
+        // one or return the rejected prefix as a usable partial route.
+        reset(); action.last={};
+        routeFor=[](auto const& from,auto const&) {
+            Route r=bad("invalid-ground-height");r.automatic=false;r.points={from};return r;
+        };
+        assert(action.SearchForBestPath(goal.x,goal.y,goal.z,navigation,true).empty());
+        assert(queries.size()<=5);
+        // The native fixture supplies a historical start without relocation;
+        // the same real planner must query that start and leave the unit intact.
+        reset(); action.last={}; replies={Route{}};
+        G3D::Vector3 recorded{-5,0,floor};
+        path=action.SearchForBestPath(goal.x,goal.y,goal.z,navigation,true,0,&recorded);
+        assert(navigation && path.size()==2 && same(path.front(),recorded));
+        assert(same(queries.front().from,recorded) && same(bot.position,{0,0,floor}));
+    }
+    // Townhall: the blocked endpoint is above a nearby VMAP floor. Raising
+    // the waypoint ray again puts that floor beyond its 4 m search distance,
+    // selecting unreachable terrain underneath. Exercise the actual planner
+    // over translated floors and at both sides of the finite ray boundary.
+    for (float floor : {-9.91029f, 0.f, 100.f})
+        for (float rise : {0.f, 1.f, 2.f, 2.49f, 2.51f}) {
+            reset(); config.navigationMaxAttempts=5;
+            Unit bot; bot.position={0,0,floor}; bot.bridgeSurface=floor;
+            bot.ground=floor-4.f;
+            MovementAction action{&bot}; bool navigation=true;
+            G3D::Vector3 goal{100,0,floor};
+            routeFor=[&](G3D::Vector3 const& from,G3D::Vector3 const& to) {
+                if (same(from,bot.position) && same(to,goal)) {
+                    Route blocked=bad("path-body-obstructed"); blocked.automatic=false;
+                    blocked.points={from,{19,0,floor},{20,0,floor+rise}};
+                    return blocked;
+                }
+                // A path to the terrain under this floor cannot reach it.
+                if (std::fabs(to.z-floor)>.01f) return bad("destination-not-reached");
+                return Route{};
+            };
+            auto path=action.SearchForBestPath(goal.x,goal.y,goal.z,navigation,true);
+            assert(navigation && queries.size()<=5);
+            if (rise<=2.49f) {
+                assert(path.size()==3 && same(path.back(),goal));
+                assert(std::fabs(path[1].z-floor)<.01f && queries.size()==3);
+            } else {
+                // Do not extend the ray or accept underground waypoints.
+                assert(path.empty() && queries.size()==5);
+            }
+        }
 }
 void endpointObstructionTests() {
     // Exact starts/goals/blocked endpoints from the three remaining AB refusals.
@@ -1033,7 +1121,7 @@ void stuckTests() {
     assert(!state.exhausted && state.attempts==0 && same(state.goal,{200,0,0}));
     assert(hasLog("debug","ground-movement-started"));
 }
-int main() { connectionTests(); searchTests(); continuationTests(); obstructionSearchTests(); endpointObstructionTests(); diagnosticTests(); startMismatchDiagnosticsTests(); activeSplineDiagnosticsTests(); logTests(); executionTests(); stuckTests(); }
+int main() { connectionTests(); searchTests(); continuationTests(); obstructionSearchTests(); obstructionHeightTests(); endpointObstructionTests(); diagnosticTests(); startMismatchDiagnosticsTests(); activeSplineDiagnosticsTests(); logTests(); executionTests(); stuckTests(); }
 """
 production_only = "--production-only" in sys.argv[3:]
 if production_only:
@@ -1088,7 +1176,11 @@ with tempfile.TemporaryDirectory(prefix="loa-navigation-recovery-") as directory
              "return delta.x * delta.x + delta.y * delta.y + delta.z * delta.z < 1.0f;"),
             ("double-height-offset", "GetMapHeight(point.x, point.y, point.z, true, 4.0f)",
              "GetMapHeight(point.x, point.y, point.z + 2.0f, true, 4.0f)"),
+            ("double-obstruction-height-offset", "origin.z + (aroundObstruction ? 0.0f : 8.0f)",
+             "origin.z + (aroundObstruction ? 2.0f : 8.0f)"),
             ("lost-endpoint-detour", "if (aroundObstruction && horizontal <= 0.1f)", "if (false)"),
+            ("lost-support-detour", 'if (std::string(reason) == "invalid-ground-height" && points.size() >= 2)', 'if (false)'),
+            ("underground-detour-origin", "obstruction = points[points.size() - 2];", "obstruction = points.back();"),
             ("narrow-obstruction-ring", "((variant % 8) / 2)", "(variant / 8)"),
             ("height-candidates-spend-budget", "aroundObstruction && !recoveryAttempt ? 32 : limit", "limit"),
             ("lost-waypoint-reason", 'reason = "waypoint-not-reached";', 'reason = "none";'),

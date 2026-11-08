@@ -37,6 +37,9 @@
 #include "MoveSplineInit.h"
 #include "PathGenerator.h"
 #include "ObjectAccessor.h"
+#include "Log.h"
+#include "Map.h"
+#include "Timer.h"
 #include <cassert>
 #include <algorithm>
 #include <cmath>
@@ -921,7 +924,26 @@ void MotionMaster::MoveCharge(PathGenerator const& path)
     Movement::MoveSplineInit init(_owner);
     init.MovebyPath(path.GetPath());
     init.SetVelocity(SPEED_CHARGE);
-    init.Launch();
+    int32 const duration = init.Launch();
+    // Opt-in evidence of the actual native Charge spline, independent of a
+    // bot action's OK result or a later periodic position sample.
+    if (duration > 0 && _owner->GetTypeId() == TYPEID_PLAYER && _owner->GetMap()->IsBattlegroundOrArena()
+        && !_owner->GetTransport() && !_owner->GetVehicle() && sLog->ShouldLog("movement.charge", LOG_LEVEL_DEBUG))
+    {
+        auto const end = _owner->movespline->FinalDestination();
+        LiquidData liquid{};
+        auto const status = _owner->GetMap()->GetLiquidStatus(_owner->GetPhaseMask(), end.x, end.y, end.z,
+            MAP_ALL_LIQUIDS, &liquid, _owner->GetCollisionHeight());
+        float const ground = _owner->GetMapHeight(end.x, end.y, end.z);
+        TC_LOG_DEBUG("movement.charge",
+            "event=charge-path GUID={} sample_ms={} map={} instance={} spline_id={} duration_ms={} points={} query_nodes={} end_x={} end_y={} end_z={} liquid_status={} liquid_level={} liquid_depth={} ground_valid={} ground_z={} water_walk_aura={} water_walk_flag={} spline_velocity={}",
+            _owner->GetGUID().GetCounter(), getMSTime(), _owner->GetMapId(), _owner->GetInstanceId(),
+            _owner->movespline->GetId(), duration, path.GetPath().size(), path.GetPathQueryNodeLimit(),
+            end.x, end.y, end.z, uint32(status), liquid.level, liquid.depth_level,
+            std::isfinite(ground) && ground > INVALID_HEIGHT, ground,
+            _owner->HasAuraType(SPELL_AURA_WATER_WALK), _owner->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING),
+            _owner->movespline->Velocity());
+    }
 }
 
 void MotionMaster::MoveSeekAssistance(float x, float y, float z)

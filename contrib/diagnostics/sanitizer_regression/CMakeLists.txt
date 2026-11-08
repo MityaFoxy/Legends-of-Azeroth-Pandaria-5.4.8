@@ -44,6 +44,8 @@ add_test(NAME spell_storage_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/spell_storage_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME bg_native_path_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/bg_native_path_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME resurrection_waterwalk_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/resurrection_waterwalk_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
@@ -153,6 +155,9 @@ add_test(NAME battleground_test_regression COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(battleground_test_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME bg_resurrection_telemetry_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/bg_resurrection_telemetry_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME playerbot_liquid_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_liquid_audit_regression.py)
+set_tests_properties(playerbot_liquid_audit_regression PROPERTIES LABELS "battleground;soak" TIMEOUT 60)
 add_test(NAME bg_graveyard_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/bg_graveyard_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME combat_removal_regression COMMAND ${Python3_EXECUTABLE}

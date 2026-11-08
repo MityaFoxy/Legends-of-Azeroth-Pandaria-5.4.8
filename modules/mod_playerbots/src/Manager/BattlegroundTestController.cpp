@@ -6,16 +6,21 @@
 #include "BattlegroundMgr.h"
 #include "BotFactory.h"
 #include "Creature.h"
+#include "LastMovementValue.h"
 #include "Log.h"
 #include "Map.h"
+#include "MotionMaster.h"
+#include "MoveSpline.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 #include "StartingArea.h"
+#include "SpellAuraEffects.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
@@ -46,12 +51,14 @@ namespace
         uint32 lastRequest = 0;
         uint32 lastReadinessLog = 0;
         uint32 lastReadinessRepair = 0;
+        uint32 lastLiquidSample = 0;
         QueueReadinessIssue readinessIssue = QueueReadinessIssue::None;
         bool requested = false;
         bool logged = false;
         bool finished = false;
         bool readinessRepairAttempted = false;
         bool initialQueueDelayStarted = false;
+        bool liquidSampled = false;
         std::string phase;
     };
 
@@ -213,8 +220,11 @@ namespace
                     break;
                 }
 
+        // GetMapHeight already adds Z_OFFSET_FIND_HEIGHT. An extra four metres
+        // can select a roof above a correctly grounded bot. Keep the raw ground
+        // delta and log movement/liquid state so swimming and jumps stay visible.
         float groundZ = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(),
-            bot->GetPositionZ() + 4.0f);
+            bot->GetPositionZ());
         bool groundValid = std::isfinite(groundZ) && groundZ > INVALID_HEIGHT;
         float groundDelta = groundValid ? bot->GetPositionZ() - groundZ : 0.0f;
         PlayerbotAI* ai = GET_PLAYERBOT_AI(bot);
@@ -225,14 +235,18 @@ namespace
         bool targetInMap = target && bot->IsInMap(target);
 
         TC_LOG_INFO("playerbots.bgtest",
-            "Bot={} GUID={} phase={} level={} faction={} map={} instance={} bg_status={} bg_team={} queue={} alive={} ghost={} waiting_resurrect={} combat={} casting={} controlled={} moving={} ground_delta={} ground_valid={} hp_pct={} x={} y={} z={} ai_state={} target_guid={} target_alive={} target_distance={} target_los={} score_a={} score_h={} damage_done={} healing_done={} killing_blows={} deaths={} bases_assaulted={} bases_defended={} matches={} completed={}",
+            "Bot={} GUID={} phase={} level={} faction={} map={} instance={} bg_status={} bg_team={} queue={} alive={} ghost={} waiting_resurrect={} combat={} casting={} controlled={} moving={} ground_delta={} ground_valid={} in_water={} under_water={} swimming={} falling={} flying={} charging={} on_transport={} water_walk_aura={} water_walk_flag={} hp_pct={} x={} y={} z={} ai_state={} target_guid={} target_alive={} target_distance={} target_los={} score_a={} score_h={} damage_done={} healing_done={} killing_blows={} deaths={} bases_assaulted={} bases_defended={} matches={} completed={}",
             bot->GetName(), bot->GetGUID().GetCounter(), phase, bot->GetLevel(), bot->GetTeam(),
             bot->GetMapId(), bg ? bg->GetInstanceID() : 0, bg ? uint32(bg->GetStatus()) : 0,
             bg ? bot->GetBGTeam() : bot->GetTeam(), bot->InBattlegroundQueue(), bot->IsAlive(),
             bot->HasPlayerFlag(PLAYER_FLAGS_GHOST), bot->HasAura(SPELL_WAITING_FOR_RESURRECT),
             bot->IsInCombat(), bot->HasUnitState(UNIT_STATE_CASTING),
             bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED),
-            bot->isMoving(), groundDelta, groundValid, bot->GetHealthPct(), bot->GetPositionX(),
+            bot->isMoving(), groundDelta, groundValid, bot->IsInWater(), bot->IsUnderWater(),
+            bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), bot->IsFalling(), bot->IsFlying(),
+            bot->HasUnitState(UNIT_STATE_CHARGING), bot->GetTransport() != nullptr,
+            bot->HasAuraType(SPELL_AURA_WATER_WALK), bot->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING),
+            bot->GetHealthPct(), bot->GetPositionX(),
             bot->GetPositionY(), bot->GetPositionZ(), ai ? int(ai->GetState()) : -1,
             target ? target->GetGUID().GetCounter() : 0, target && target->IsAlive(),
             targetInMap ? bot->GetDistance(target) : -1.0f, targetInMap && bot->IsWithinLOSInMap(target),
@@ -245,6 +259,95 @@ namespace
         state.phase = phase;
         state.lastLog = now;
         state.logged = true;
+    }
+
+    void LogLiquidMotion(Player* bot, State& state, uint32 now)
+    {
+        // Observation only, inside the opt-in BG controller. Keep a separate
+        // throttle: this must not alter phase/lifecycle or navigation logging.
+        if (!bot->IsAlive() || (state.liquidSampled && getMSTimeDiff(state.lastLiquidSample, now) < 2000))
+            return;
+        state.lastLiquidSample = now;
+        state.liquidSampled = true;
+
+        LiquidData liquid{};
+        auto const status = bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), bot->GetPositionX(),
+            bot->GetPositionY(), bot->GetPositionZ(), MAP_ALL_LIQUIDS, &liquid, bot->GetCollisionHeight());
+        float const surfaceDelta = bot->GetPositionZ() - liquid.level;
+        float const minSwimDepth = std::max(0.1f, bot->GetMinHeightInWater());
+        // Keep the original surface observations, and add the adjacent swimming
+        // band as positive evidence that the corrected native paths were used.
+        if (status == LIQUID_MAP_NO_WATER || !std::isfinite(liquid.level) || !std::isfinite(liquid.depth_level)
+            || surfaceDelta > 0.15f || surfaceDelta < -(minSwimDepth + 0.75f)
+            || liquid.level - liquid.depth_level <= 2.0f)
+            return;
+
+        // A geometric WATER_WALK status says nothing about spell permission.
+        // Read applied water-walk effects directly, independently of log caps.
+        auto const& waterWalkEffects = bot->GetAuraEffectsByType(SPELL_AURA_WATER_WALK);
+        constexpr size_t MaxWaterWalkEffects = 16;
+        size_t effectCount = 0;
+        std::string waterWalkAuras;
+        for (AuraEffect const* effect : waterWalkEffects)
+        {
+            if (effectCount++ >= MaxWaterWalkEffects)
+                break;
+            if (!waterWalkAuras.empty())
+                waterWalkAuras += ';';
+            // spell ID : effect index : remaining ms : caster GUID
+            waterWalkAuras += std::to_string(effect->GetId()) + ':' + std::to_string(effect->GetEffIndex())
+                + ':' + std::to_string(effect->GetBase()->GetDuration())
+                + ':' + std::to_string(effect->GetCasterGUID().GetRawValue());
+        }
+
+        auto const& spline = bot->movespline->_Spline();
+        auto const& controls = spline.getPoints();
+        constexpr size_t MaxSplinePoints = 256;
+        size_t const recorded = std::min(controls.size(), MaxSplinePoints);
+        std::string points;
+        for (size_t i = 0; i < recorded; ++i)
+        {
+            if (i)
+                points += ';';
+            auto const& point = controls[i];
+            points += std::to_string(i) + ':' + std::to_string(point.x) + ','
+                + std::to_string(point.y) + ',' + std::to_string(point.z);
+        }
+        GroundMovementState tracked;
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(bot))
+            if (auto* value = ai->GetAiObjectContext()->GetValue<LastMovement&>("last movement"))
+                tracked = value->Get().groundMovement;
+        float const ground = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        bool const groundValid = std::isfinite(ground) && ground > INVALID_HEIGHT;
+        auto const end = bot->movespline->FinalDestination();
+
+        // No phase= field: this diagnostic is not a BG lifecycle transition.
+        // Raw control points belong to the executing spline, not a candidate
+        // route. Transport/cyclic/nonlinear state is explicit for later review.
+        TC_LOG_INFO("playerbots.bgtest",
+            "event={} GUID={} sample_ms={} level={} map={} instance={} phase_mask={} x={} y={} z={} liquid_status={} cached_liquid_status={} liquid_entry={} liquid_flags={} liquid_level={} liquid_depth={} surface_delta={} min_swim_depth={} ground_valid={} ground_z={} ground_delta={} water_walk_aura={} water_walk_effects={} water_walk_omitted={} water_walk_auras='{}' water_walk_flag={} in_water={} under_water={} swimming={} can_swim={} can_fly={} falling={} flying={} charging={} on_transport={} on_vehicle={} movement_flags={} combat={} casting={} controlled={} moving={} motion_type={} controlled_motion_type={} spline_id={} spline_initialized={} spline_finalized={} spline_falling={} spline_velocity={} run_speed={} swim_speed={} spline_mode={} spline_cyclic={} spline_transport={} spline_first={} spline_last={} spline_current={} spline_point_count={} spline_points_omitted={} spline_points='{}' spline_end=({},{},{}) tracked={} tracked_active={} tracked_map={} tracked_instance={} tracked_spline={} tracked_goal=({},{},{}) tracked_endpoint=({},{},{})",
+            std::fabs(surfaceDelta) <= 0.15f ? "liquid-surface" : "liquid-motion",
+            bot->GetGUID().GetCounter(), now, bot->GetLevel(), bot->GetMapId(), bot->GetInstanceId(),
+            bot->GetPhaseMask(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            uint32(status), uint32(bot->GetLiquidStatus()), liquid.entry, liquid.type_flags, liquid.level,
+            liquid.depth_level, surfaceDelta, minSwimDepth, groundValid, ground,
+            groundValid ? bot->GetPositionZ() - ground : 0.0f, !waterWalkEffects.empty(), waterWalkEffects.size(),
+            waterWalkEffects.size() - std::min(waterWalkEffects.size(), MaxWaterWalkEffects), waterWalkAuras,
+            bot->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING), bot->IsInWater(), bot->IsUnderWater(),
+            bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING), bot->CanSwim(), bot->CanFly(), bot->IsFalling(),
+            bot->IsFlying(), bot->HasUnitState(UNIT_STATE_CHARGING), bot->GetTransport() != nullptr,
+            bot->GetVehicle() != nullptr, bot->GetUnitMovementFlags(), bot->IsInCombat(),
+            bot->HasUnitState(UNIT_STATE_CASTING),
+            bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED),
+            bot->isMoving(), uint32(bot->GetMotionMaster()->GetCurrentMovementGeneratorType()),
+            uint32(bot->GetMotionMaster()->GetMotionSlotType(MOTION_SLOT_CONTROLLED)),
+            bot->movespline->GetId(), bot->movespline->Initialized(), bot->movespline->Finalized(),
+            bot->movespline->isFalling(), bot->movespline->Velocity(), bot->GetSpeed(MOVE_RUN), bot->GetSpeed(MOVE_SWIM),
+            uint32(spline.mode()), spline.isCyclic(), bot->movespline->onTransport, spline.first(), spline.last(),
+            bot->movespline->_currentSplineIdx(), controls.size(), controls.size() - recorded, points,
+            end.x, end.y, end.z, tracked.tracked, tracked.active, tracked.mapId, tracked.instanceId,
+            tracked.splineId, tracked.goal.x, tracked.goal.y, tracked.goal.z,
+            tracked.endpoint.x, tracked.endpoint.y, tracked.endpoint.z);
     }
 
     void LogResurrection(Player* bot, State& state, uint32 now)
@@ -410,6 +513,8 @@ void BattlegroundTest::Update(uint32 diff)
             char const* phase = bg->GetStatus() != STATUS_IN_PROGRESS ? "preparation"
                 : !bot->IsAlive() ? "dead" : bot->IsInCombat() ? "combat" : "objective";
             LogState(bot, state, phase, now);
+            if (bg->GetStatus() == STATUS_IN_PROGRESS)
+                LogLiquidMotion(bot, state, now);
             if (bg->GetStatus() == STATUS_IN_PROGRESS && !bot->IsAlive()
                 && RequestReady(state, now, 2000))
             {
