@@ -34,7 +34,7 @@ class HunterStingTest : public WorldScript
 public:
     HunterStingTest() : WorldScript("playerbot_hunter_sting_test") { }
 
-    bool Start(ObjectGuid guid)
+    bool Start(ObjectGuid guid, bool rotation = false)
     {
         if (_guid)
             return false;
@@ -44,9 +44,11 @@ public:
         _next = 0;
         _setup = false;
         _targets = {};
+        _rotation = rotation;
+        _sawPrimary = _sawSecondary = _sawMark = _sawDamage = _sawBlackArrow = false;
         if (!sRandomPlayerbotMgr->GetPlayerBot(guid))
             sRandomPlayerbotMgr->AddPlayerBot(guid, 0);
-        TC_LOG_INFO("playerbots", "Sting fixture started guid={}", guid.GetCounter());
+        TC_LOG_INFO("playerbots", "Sting fixture started guid={} rotation={}", guid.GetCounter(), rotation);
         return true;
     }
 
@@ -92,7 +94,7 @@ public:
         if (!_guid)
             return;
         _elapsed += diff;
-        if (_elapsed > 90000)
+        if (_elapsed > (_rotation ? 240000u : 90000u))
         {
             Finish(false, "timeout");
             return;
@@ -115,6 +117,7 @@ public:
                 return;
             }
             _setup = true;
+            _requiresBlackArrow = bot->HasSpell(3674);
             _map = bot->GetMapId();
             _instance = bot->GetInstanceId();
             _oldSelection = bot->GetTarget();
@@ -125,7 +128,8 @@ public:
             {
                 _pet = pet->GetGUID();
                 _petReact = pet->GetReactState();
-                pet->SetReactState(REACT_PASSIVE);
+                if (!_rotation)
+                    pet->SetReactState(REACT_PASSIVE);
             }
             bot->StopMoving();
             for (size_t i = 0; i < _targets.size(); ++i)
@@ -133,7 +137,7 @@ public:
                 Position pos;
                 bot->GetNearPoint(nullptr, pos.m_positionX, pos.m_positionY, pos.m_positionZ,
                     12.0f, bot->GetOrientation() + (float(i) - 1.0f) * 0.35f);
-                TempSummon* target = bot->GetMap()->SummonCreature(30, pos, nullptr, 120s);
+                TempSummon* target = bot->GetMap()->SummonCreature(30, pos, nullptr, _rotation ? 300s : 120s);
                 if (!target)
                 {
                     Finish(false, "summon failed");
@@ -147,16 +151,18 @@ public:
                 target->IsAIEnabled = false;
                 target->SetReactState(REACT_PASSIVE);
                 target->SetFaction(14);
-                target->SetMaxHealth(400000 - uint32(i) * 100000);
+                target->SetMaxHealth((400000 - uint32(i) * 100000) * (_rotation ? 100 : 1));
                 target->SetHealth(target->GetMaxHealth());
                 target->GetThreatManager().AddThreat(bot, 1.0f);
             }
             ai->GetAiObjectContext()->GetValue<Unit*>("current target")->Set(bot->GetMap()->GetCreature(_targets[0]));
+            _rotationStarted = _elapsed;
             _next = _elapsed + 2000;
         }
         // CastSpell may set its own delay. Maintain isolation only for this
         // bounded fixture; world spell events and natural regeneration continue.
-        ai->SetNextCheckDelay(90000);
+        if (!_rotation)
+            ai->SetNextCheckDelay(90000);
         if (_elapsed < _next)
             return;
         if (!bot->IsAlive() || bot->GetMapId() != _map || bot->GetInstanceId() != _instance)
@@ -175,6 +181,37 @@ public:
             }
         }
         auto* context = ai->GetAiObjectContext();
+        if (_rotation)
+        {
+            // Observe the ordinary Engine. Do not call Trigger/Action, change
+            // its strategies, inject auras or repeatedly set its chosen target.
+            Unit* current = context->GetValue<Unit*>("current target")->Get();
+            for (Creature* target : targets)
+            {
+                bool const sting = target->HasAura(StingAura, _guid);
+                _sawPrimary |= sting && target == current;
+                _sawSecondary |= sting && target != current;
+                _sawMark |= target->HasAura(1130);
+                _sawBlackArrow |= target->HasAura(3674, _guid);
+                _sawDamage |= target->GetHealth() < target->GetMaxHealth();
+                TC_LOG_INFO("playerbots", "Sting rotation guid={} elapsed_ms={} target={} current={} hp={} max_hp={} sting={} mark={} black_arrow={} focus={} spec={} known_black_arrow={}",
+                    _guid.GetCounter(), _elapsed - _rotationStarted, target->GetGUID().GetCounter(),
+                    target == current, target->GetHealth(), target->GetMaxHealth(), sting,
+                    target->HasAura(1130), target->HasAura(3674, _guid), bot->GetPower(POWER_FOCUS),
+                    bot->GetTalentSpecialization(), bot->HasSpell(3674));
+            }
+            if (_elapsed - _rotationStarted >= 120000)
+            {
+                TC_LOG_INFO("playerbots", "Sting rotation summary guid={} primary={} secondary={} mark={} damage={} black_arrow={} requires_black_arrow={} known_serpent_spread={}",
+                    _guid.GetCounter(), _sawPrimary, _sawSecondary, _sawMark, _sawDamage, _sawBlackArrow,
+                    _requiresBlackArrow, bot->HasSpell(87935));
+                Finish(_sawPrimary && _sawSecondary && _sawMark && _sawDamage && (!_requiresBlackArrow || _sawBlackArrow),
+                    "native Engine rotation observation");
+                return;
+            }
+            _next = _elapsed + 1000;
+            return;
+        }
         // Combat began after login: refresh the normal activity predicate,
         // whose cached pre-combat result can otherwise last five seconds.
         bool const cachedActivity = ai->AllowActivity(ALL_ACTIVITY);
@@ -288,6 +325,9 @@ private:
     ReactStates _petReact = REACT_PASSIVE;
     uint32 _elapsed = 0, _next = 0, _phase = 0, _map = 0, _instance = 0, _health = 0;
     bool _setup = false;
+    bool _rotation = false, _sawPrimary = false, _sawSecondary = false, _sawMark = false, _sawDamage = false;
+    bool _sawBlackArrow = false, _requiresBlackArrow = false;
+    uint32 _rotationStarted = 0;
 };
 
 HunterStingTest* Test = nullptr;
@@ -303,12 +343,14 @@ bool HandleHunterStingTest(ChatHandler* handler, std::string const& operation)
         return false;
     if (operation == "start")
         return Test->Start(guid);
+    if (operation == "rotation")
+        return Test->Start(guid, true);
     if (operation == "cleanup")
     {
         Test->Finish(false, "console cleanup");
         return true;
     }
-    handler->SendSysMessage("Usage: npcbot stingtest start/cleanup (opt-in native fixture; results in playerbots log)");
+    handler->SendSysMessage("Usage: npcbot stingtest start/rotation/cleanup (opt-in native fixture; results in playerbots log)");
     return false;
 }
 

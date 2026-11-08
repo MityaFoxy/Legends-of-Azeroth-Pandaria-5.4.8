@@ -121,6 +121,27 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(result["stages"][0]["measured_seconds"], 0)
 
+    def test_full_cycle_waits_for_same_bot_in_active_second_match(self):
+        observed = soak.BGObservations(60)
+
+        def event(phase, status=3, matches=1, completed=0, guid=7):
+            return (f"Bot=Test GUID={guid} phase={phase} level=60 map=529 instance=1 "
+                    f"bg_status={status} bg_team=469 damage_done=10 "
+                    f"matches={matches} completed={completed}")
+
+        observed.consume([event(phase) for phase in ('combat', 'dead', 'resurrected')], 1)
+        observed.consume([event('completed', status=4, completed=1),
+                          event('entered', status=2, matches=2, completed=1),
+                          event('preparation', status=2, matches=2, completed=1)], 2)
+        self.assertFalse(observed.summary()['full_cycle_observed'])
+        # Someone else's active match must not complete this bot's cycle.
+        observed.consume([event('objective', matches=2, completed=1, guid=8)], 3)
+        self.assertFalse(observed.summary()['full_cycle_observed'])
+        # Entered is emitted only once, before preparation: wait for the
+        # subsequent active objective/combat event of the same bot.
+        observed.consume([event('objective', matches=2, completed=1)], 4)
+        self.assertTrue(observed.summary()['full_cycle_observed'])
+
     def test_unknown_in_compressed_rotation_fails_acceptance_but_collects_all_levels(self):
         code, result = self.run_supervisor(
             lambda level: record(level=level) + record(level=level, guid=2, team=67),

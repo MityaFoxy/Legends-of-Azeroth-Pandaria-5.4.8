@@ -18,6 +18,7 @@ import time
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--run', type=Path, required=True)
 parser.add_argument('--guid', type=int, required=True)
+parser.add_argument('--rotation', action='store_true', help='Observe the ordinary Engine for two minutes without pausing AI')
 args = parser.parse_args()
 if args.guid <= 0:
     parser.error('--guid must be positive')
@@ -27,6 +28,7 @@ sys.path.insert(0, str(repo / 'contrib/diagnostics'))
 from hunter_pet_recovery import Connection
 from playerbot_multilevel_soak import prepare, signal_owned_server, container_path, write_json, digest
 from playerbot_action_audit import audit_actions
+from hunter_rotation_audit import audit_rotation
 from sanitizer_soak import stamp, optional_overlay, check_disk_space, disk_space, memory
 
 os.umask(0o077)
@@ -34,6 +36,7 @@ run.mkdir(parents=True, exist_ok=False)
 runtime = Path('/home/user/wow-mop-build/loa-runtime')
 work = runtime.parent
 server = inhibitor = None
+before = None
 stop_requested = False
 state = {'status': 'building', 'started': stamp()}
 
@@ -106,7 +109,9 @@ try:
     bots = stage / 'playerbots.conf'
     bots.write_text(optional_overlay(bots.read_text(), {'AiPlayerbot.BattlegroundTest': '0', 'AiPlayerbot.DisableRandomLevels': '1', 'AiPlayerbot.RandomBotAutologin': '0', 'AiPlayerbot.RandomBotLoginAtStartup': '0', 'AiPlayerbot.RandomBotJoinBG': '0', 'AiPlayerbot.RandomBotJoinLfg': '0', 'AiPlayerbot.BotAutologin': '0'}))
     manifest = json.loads((prepared / 'manifest.json').read_text())
-    manifest['purpose'] = f'One existing Hunter GUID {args.guid}, three temporary native threat-list NPCs, injected native CC auras and real Serpent Sting Action casts; no permanent grants or equipment/spec/level changes'
+    mode = ('ordinary Engine rotation, no AI pause or injected CC' if args.rotation
+            else 'injected native CC auras and real Serpent Sting Action casts with AI paused')
+    manifest['purpose'] = f'One existing Hunter GUID {args.guid}, three temporary native threat-list NPCs, {mode}; no permanent grants or equipment/spec/level changes'
     manifest['stages'][0]['config_sha256'] = {p.name: digest(p) for p in (conf, bots)}
     write_json(prepared / 'manifest.json', manifest)
     offline()
@@ -130,12 +135,12 @@ try:
         console = (run / 'console.log').read_text(errors='replace')
         if not requested and 'World initialized' in console:
             signal_owned_server('loa-build', container_path(stage / 'worldserver.pid', work), binary, config, probe=True)
-            server.stdin.write(b'npcbot stingtest start\n')
+            server.stdin.write(b'npcbot stingtest rotation\n' if args.rotation else b'npcbot stingtest start\n')
             server.stdin.flush()
             requested = True
         full_log = stage / 'Logs/PlayerbotFull.log'
         lines = full_log.read_text(errors='replace').splitlines() if full_log.exists() else []
-        rows = [line for line in lines if 'Sting fixture ' in line]
+        rows = [line for line in lines if 'Sting fixture ' in line or 'Sting rotation summary' in line]
         (run / 'fixture.log').write_text('\n'.join(rows) + '\n')
         finished = [row for row in rows if 'Sting fixture finished' in row]
         status(status='observing', fixture=rows)
@@ -169,19 +174,44 @@ finally:
     if inhibitor is not None and inhibitor.poll() is None:
         os.killpg(inhibitor.pid, signal.SIGTERM)
         inhibitor.wait()
+    # Preserve the postcondition evidence even when the fixture/coverage fails.
+    if before is not None:
+        try:
+            offline()
+            after = protected_state()
+            write_json(run / 'protected-after.json', after)
+            unchanged = before == after
+            status(protected_state_unchanged=unchanged, post_shutdown_online=0)
+            if not unchanged:
+                raise RuntimeError('Protected character state changed')
+        except Exception as error:
+            previous = state.get('error')
+            status(status='failed', error=f'{previous}; {error}' if previous else str(error))
     if state['status'] == 'observed':
         try:
             assert not db.query('SELECT guid FROM characters WHERE online<>0;').strip(), 'Stale online characters'
             audit = audit_actions(stage / 'Logs')
             write_json(run / 'action-audit.json', audit)
-            # This fixture invokes native factories directly with AI paused.
-            # Zero autonomous decisions is valid here, not in a behavior soak.
+            # The CC mode invokes factories with AI paused; rotation mode below
+            # additionally requires successful ordinary Engine decisions.
             assert not audit['unknown_count'], audit
-            offline()
-            after = protected_state()
-            write_json(run / 'protected-after.json', after)
-            assert before == after, 'Protected character state changed'
-            status(protected_state_unchanged=True)
+            if args.rotation:
+                import collections
+                import gzip
+                actions = collections.defaultdict(collections.Counter)
+                for path in sorted((stage / 'Logs').glob('PlayerbotBehavior.log*')):
+                    opener = gzip.open if path.suffix == '.gz' else open
+                    with opener(path, 'rt', errors='replace') as stream:
+                        for line in stream:
+                            if f'GUID={args.guid} ' in line and ' decision=A:' in line:
+                                name, sep, outcome = line.split(' decision=A:', 1)[1].rstrip().rpartition(' - ')
+                                if sep:
+                                    actions[name][outcome] += 1
+                write_json(run / 'rotation-actions.json', actions)
+                rotation = audit_rotation(actions, rows, args.guid)
+                write_json(run / 'rotation-audit.json', rotation)
+                if not rotation['passed']:
+                    raise RuntimeError('; '.join(rotation['errors']))
             status(status='passed', post_shutdown_online=0, unknown_actions=audit['unknown_count'])
         except Exception as error:
             status(status='failed', error=str(error))

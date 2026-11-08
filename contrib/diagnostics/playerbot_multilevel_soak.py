@@ -133,7 +133,9 @@ class BGObservations:
                 self.actors["damage"].add(guid)
             if phase == "combat" and values.get("bg_status") == "3":
                 self.last_combat = now
-            if phase == "entered" and int(values.get("matches", 0)) >= 2 and int(values.get("completed", 0)) >= 1:
+            # Entered may precede preparation. Count the later active match,
+            # including its objective/combat event when no new entered is sent.
+            if values.get("bg_status") == "3" and int(values.get("matches", 0)) >= 2 and int(values.get("completed", 0)) >= 1:
                 self.actors["reentered"].add(guid)
             for index, key in enumerate(("score_a", "score_h")):
                 self.max_scores[index] = max(self.max_scores[index], int(values.get(key, 0)))
@@ -191,6 +193,16 @@ def prepare(args):
             "AiPlayerbot.RandomBotJoinLfg": "0", "AiPlayerbot.RandomBotAutoJoinBG": "0",
         })
         stage_world, stage_bots = full_bot_logging_overlay(stage_world, stage_bots)
+        if getattr(args, "rotation_diagnostics", False):
+            stage_world = optional_overlay(stage_world, {
+                "Console.Enable": "1", "AiPlayerbot.SpellDiagnostics": "1",
+                "AiPlayerbot.EquipmentDiagnostics": "1",
+            })
+        if getattr(args, "liquid_diagnostics", False):
+            stage_world = optional_overlay(stage_world, {
+                "Appender.PlayerbotBG": "2,2,7,PlayerbotBG.log,a,67108864",
+                "Logger.movement.charge": "2,PlayerbotBG",
+            })
         (stage / "worldserver.conf").write_text(stage_world)
         (stage / "playerbots.conf").write_text(stage_bots)
         stages.append({"level": level, "directory": stage.name,
@@ -305,6 +317,7 @@ def execute(args):
             reached = None
             dip = None
             control_verified = False
+            last_diagnostic = 0
             result = {"level": spec["level"], "started": stamp(), "status": "starting"}
             results.append(result)
             with (stage / "Logs/console.log").open("xb", buffering=0) as output:
@@ -313,6 +326,7 @@ def execute(args):
                     "--workdir", container_path(stage, args.work_root), args.build_container,
                     container_path(binary, args.work_root), "-c",
                     container_path(stage / "worldserver.conf", args.work_root)],
+                    stdin=subprocess.PIPE if getattr(args, "rotation_diagnostics", False) else None,
                     stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
                 event("stage_started", level=spec["level"], pid=process.pid)
                 try:
@@ -333,6 +347,21 @@ def execute(args):
                         inspect_console(console.sample())
                         count = int(db.query(f"SELECT COUNT(*) FROM characters c JOIN `{db.auth}`.account a "
                                              "ON a.id=c.account WHERE c.online=1 AND a.username REGEXP '^RNDBOT[0-9]+$';").strip())
+                        if getattr(args, "rotation_diagnostics", False) and count >= manifest["bots"] and now - last_diagnostic >= 60:
+                            # Console-only, read-only diagnostics. No casting,
+                            # spell grants, equipment changes or AI pauses.
+                            rows = db.query(f"SELECT c.guid,c.class FROM characters c JOIN `{db.auth}`.account a "
+                                            "ON a.id=c.account WHERE c.online=1 AND a.username REGEXP '^RNDBOT[0-9]+$' "
+                                            "AND c.class IN (1,2,3) ORDER BY c.guid;")
+                            for row in rows.splitlines():
+                                guid, bot_class = map(int, row.split())
+                                commands = ([f"npcbot spellcheck {guid} {spell}" for spell in (883,136,982,1130,1978,3674)]
+                                            if bot_class == 3 else [f"npcbot equipmentcheck {guid}"])
+                                for command in commands:
+                                    process.stdin.write((command + "\n").encode())
+                            process.stdin.flush()
+                            last_diagnostic = now
+                            event("read_only_diagnostics", level=spec["level"])
                         usage = resources()
                         compress_rotated_bot_log(args.run)
                         if reached is None:
@@ -431,6 +460,8 @@ def main():
     parser.add_argument("--bots", type=int, default=100)
     parser.add_argument("--minutes-per-level", type=int, default=20)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--rotation-diagnostics", action="store_true",
+                        help="Sample native Hunter spellbooks and Protection candidates through read-only console probes")
     args = parser.parse_args()
     os.umask(0o077)
     args.run = args.run.resolve()

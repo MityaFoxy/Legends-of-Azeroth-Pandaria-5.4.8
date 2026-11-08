@@ -91,6 +91,9 @@ set_tests_properties(hunter_pet_recovery_regression PROPERTIES LABELS "hunter;cl
 add_test(NAME playerbot_multilevel_soak_regression COMMAND ${Python3_EXECUTABLE}
   ${LOA_SOURCE_DIR}/contrib/tests/playerbot_multilevel_soak_regression.py)
 set_tests_properties(playerbot_multilevel_soak_regression PROPERTIES LABELS "soak" TIMEOUT 60)
+add_test(NAME hunter_rotation_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/hunter_rotation_audit_regression.py)
+set_tests_properties(hunter_rotation_audit_regression PROPERTIES LABELS "hunter;soak" TIMEOUT 60)
 add_test(NAME tank_equipment_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/tank_equipment_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(tank_equipment_regression PROPERTIES LABELS "class-ai" TIMEOUT 600
@@ -102,6 +105,9 @@ add_test(NAME leak_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/leak_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME instance_save_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/instance_save_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+# The test builds its own local debug information. Keep symbolization local:
+# remote debuginfod failures must not crash llvm-symbolizer during mutations.
+set_tests_properties(instance_save_regression PROPERTIES ENVIRONMENT "DEBUGINFOD_URLS=")
 set_tests_properties(leak_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME cleanup_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/cleanup_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})

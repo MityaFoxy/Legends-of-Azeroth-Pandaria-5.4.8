@@ -11,6 +11,11 @@ text = (root / "src/server/game/Handlers/SkillHandler.cpp").read_text()
 start = text.index("void WorldSession::HandeSetTalentSpecialization(")
 end = text.index("\nvoid WorldSession::HandleLearnTalentOpcode", start)
 handler = text[start:end]
+# Keep the real enum's valid range: a SPEC_NONE-only double makes legitimate
+# specialization IDs undefined values under Clang's enum sanitizer.
+definitions = (root / "src/server/game/Miscellaneous/SharedDefines.h").read_text()
+enum_start = definitions.index("enum Specializations\n")
+specializations = definitions[enum_start:definitions.index("\n};", enum_start) + 3]
 source = r'''
 #include <array>
 #include <cassert>
@@ -18,7 +23,8 @@ source = r'''
 #include <limits>
 using uint32 = std::uint32_t;
 constexpr uint32 MAX_TALENT_TABS = 4, PLAYER_FIELD_CURRENT_SPEC_ID = 1;
-enum Specializations { SPEC_NONE = 0 };
+'''
+source += specializations + r'''
 namespace dbc {
 std::array<uint32, 4> specs{102, 103, 104, 105};
 auto GetClassSpecializations(uint32) { return specs; }
