@@ -222,6 +222,11 @@ public:
     bool TellError(std::string const text);
 private:
     bool _isBotInitializing;
+    void RememberDefaultDruidGroupRole();
+    void UpdateDefaultDruidGroupRole();
+    bool _automaticDruidRole = false;
+    bool _druidRoleGrouped = false;
+    std::vector<std::string> _druidRoleStrategies;
 
 protected:
     Player* bot;

@@ -85,6 +85,9 @@ set_tests_properties(druid_ai_regression PROPERTIES LABELS "druid;class-ai" TIME
 add_test(NAME druid_control_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/druid_control_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(druid_control_regression PROPERTIES LABELS "druid;class-ai" TIMEOUT 600)
+add_test(NAME druid_group_role_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_group_role_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_group_role_regression PROPERTIES LABELS "druid;class-ai;battleground" TIMEOUT 600)
 add_test(NAME dispel_filter_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/dispel_filter_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(dispel_filter_regression PROPERTIES LABELS "druid;class-ai;dispel" TIMEOUT 120)

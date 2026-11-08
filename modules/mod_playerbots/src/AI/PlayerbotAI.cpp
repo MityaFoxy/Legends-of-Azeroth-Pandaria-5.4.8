@@ -135,6 +135,7 @@ PlayerbotAI::PlayerbotAI(Player* bot)
     _engines[BOT_STATE_COMBAT] = AiFactory::createCombatEngine(bot, this, _aiObjectContext);
     _engines[BOT_STATE_NON_COMBAT] = AiFactory::createNonCombatEngine(bot, this, _aiObjectContext);
     _engines[BOT_STATE_DEAD] = AiFactory::createDeadEngine(bot, this, _aiObjectContext);
+    RememberDefaultDruidGroupRole();
 
     _currentEngine = _engines[BOT_STATE_NON_COMBAT];
     _currentState = BOT_STATE_NON_COMBAT;
@@ -771,6 +772,57 @@ void PlayerbotAI::ResetStrategies()
 
     for (uint8 i = 0; i < BOT_STATE_MAX; i++)
         _engines[i]->Init();
+    RememberDefaultDruidGroupRole();
+}
+
+void PlayerbotAI::RememberDefaultDruidGroupRole()
+{
+    // Only a freshly constructed default configuration owns this transition.
+    // The factory has always selected heal in a group and caster while solo.
+    _automaticDruidRole = !IsRealPlayer() && !HasRealPlayerMaster() &&
+        sRandomPlayerbotMgr->IsRandomBot(bot) &&
+        bot->GetSpecialization() == SPEC_DRUID_RESTORATION;
+    _druidRoleGrouped = bot->GetGroup() != nullptr;
+    _druidRoleStrategies = _engines[BOT_STATE_COMBAT]->GetStrategies();
+}
+
+void PlayerbotAI::UpdateDefaultDruidGroupRole()
+{
+    if (!_automaticDruidRole)
+        return;
+    if (IsRealPlayer() || HasRealPlayerMaster() || !sRandomPlayerbotMgr->IsRandomBot(bot) ||
+        bot->GetSpecialization() != SPEC_DRUID_RESTORATION)
+    {
+        _automaticDruidRole = false;
+        return;
+    }
+
+    bool const grouped = bot->GetGroup() != nullptr;
+    if (grouped == _druidRoleGrouped)
+        return;
+    Engine* engine = _engines[BOT_STATE_COMBAT];
+    // Preserve changes made directly to an Engine as well as public commands.
+    if (engine->GetStrategies() != _druidRoleStrategies)
+    {
+        _automaticDruidRole = false;
+        return;
+    }
+
+    // Change only the role-specific strategies from AiFactory's solo override.
+    // Do not reset other engines, select a master, or interrupt native spells.
+    if (grouped)
+    {
+        engine->removeStrategy("caster aoe", false);
+        engine->removeStrategy("caster debuff", false);
+        engine->addStrategy("heal", false); // removes sibling caster
+    }
+    else
+        engine->addStrategiesNoInit("caster", "caster aoe", "caster debuff", nullptr);
+    engine->Init();
+    _druidRoleGrouped = grouped;
+    _druidRoleStrategies = engine->GetStrategies();
+    TC_LOG_DEBUG("playerbots", "Default Druid role GUID={} grouped={} bg={} heal={}",
+        bot->GetGUID().GetCounter(), grouped, bot->InBattleground(), engine->HasStrategy("heal"));
 }
 
 void PlayerbotAI::ReInitCurrentEngine()
@@ -811,6 +863,12 @@ void PlayerbotAI::ChangeStrategy(std::string const names, BotState type)
     if (!e)
         return;
 
+    // Explicit combat edits take ownership even when a command reaffirms the
+    // current strategy. A read-only query must not disable automatic defaults.
+    if (type == BOT_STATE_COMBAT)
+        for (std::string const& command : split(names, ','))
+            if (!command.empty() && (command[0] == '+' || command[0] == '-' || command[0] == '~'))
+                _automaticDruidRole = false;
     e->ChangeStrategy(names);
 }
 
@@ -820,6 +878,8 @@ void PlayerbotAI::ClearStrategies(BotState type)
     if (!e)
         return;
 
+    if (type == BOT_STATE_COMBAT)
+        _automaticDruidRole = false;
     e->removeAllStrategies();
 }
 
@@ -888,6 +948,9 @@ void PlayerbotAI::DoNextAction(bool min)
         }
     }
 
+    // BG raids bypass AcceptInvitationAction and its strategy reset. Refresh
+    // the default healer role before objective logic can consume this AI tick.
+    UpdateDefaultDruidGroupRole();
     if (ArathiBasinPlayerbot::DoNextAction(this))
         return;
 
