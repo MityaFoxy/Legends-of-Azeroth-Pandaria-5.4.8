@@ -5,6 +5,7 @@ import contextlib
 import gzip
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -38,6 +39,28 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(soak.snapshot_binary(source, destination), "copy")
             copy.assert_called_once_with(source, destination)
 
+    def test_execution_diagnostics_do_not_enable_console_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "worldserver.conf").write_text("")
+            (runtime / "playerbots.conf").write_text("")
+            binary = root / "worldserver"
+            binary.write_text("fake executable")
+            args = argparse.Namespace(run=root / "test", runtime=runtime, binary=binary,
+                                      work_root=root, build_container="build-test", mysql_container="db-test",
+                                      levels=[80], bots=100, minutes_per_level=1,
+                                      execution_diagnostics=True, rotation_diagnostics=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                soak.prepare(args)
+            world = (args.run / "level-80-bots-100/worldserver.conf").read_text()
+            manifest = json.loads((args.run / "manifest.json").read_text())
+            self.assertIn("AiPlayerbot.ExecutionDiagnostics = 1\n", world)
+            self.assertIn("Console.Enable = 0\n", world)
+            self.assertTrue(manifest["execution_diagnostics"])
+            self.assertFalse(manifest["rotation_diagnostics"])
+
     def run_supervisor(self, rows, online=100, console="", inhibitor_failed=False, levels=(60,),
                        behavior="2026-11-06_05:00:00 TRACE [playerbots.behavior] Bot=Test GUID=1 map=529 instance=1 decision=A:melee - OK\n",
                        rotated_unknown=False):
@@ -54,6 +77,9 @@ class SupervisorTests(unittest.TestCase):
                                       levels=list(levels), bots=100, minutes_per_level=1)
             with contextlib.redirect_stdout(io.StringIO()):
                 soak.prepare(args)
+            prepared_world = next(args.run.glob("level-*-bots-*/worldserver.conf")).read_text()
+            self.assertIn("Logger.playerbots = 1,PlayerbotFull\n", prepared_world)
+            self.assertNotIn("Logger.playerbots = 1,PlayerbotFull Console\n", prepared_world)
             manifest_path = args.run / "manifest.json"
             manifest = json.loads(manifest_path.read_text())
             self.assertIn(manifest["binary_snapshot"], ("reflink", "copy"))
@@ -66,6 +92,7 @@ class SupervisorTests(unittest.TestCase):
                 def __init__(self, inhibitor=False):
                     self.pid = 100000 + len(children)
                     self.returncode = 1 if inhibitor and inhibitor_failed else None
+                    self.stdin = None
                     children.append(self)
 
                 def poll(self):
@@ -78,7 +105,7 @@ class SupervisorTests(unittest.TestCase):
             class Database:
                 auth = "auth"
 
-                def query(self, sql):
+                def query(self, sql, timeout=120):
                     return "0" if "online<>0" in sql else str(online)
 
             def spawn(command, **kw):
@@ -262,6 +289,25 @@ class SupervisorTests(unittest.TestCase):
                 1, "podman", stderr="PermissionError: [Errno 1] Operation not permitted")):
             with self.assertRaisesRegex(RuntimeError, "PermissionError"):
                 soak.signal_owned_server("container", "/pid", "/binary", "/config")
+
+    def test_console_diagnostics_never_block_on_a_full_pipe(self):
+        read_fd, write_fd = os.pipe()
+        stream = os.fdopen(write_fd, "wb", buffering=0)
+        writer = soak.NonBlockingConsole(stream)
+        try:
+            while True:
+                try:
+                    os.write(write_fd, b"x" * 4096)
+                except BlockingIOError:
+                    break
+            result = writer.enqueue(["npcbot equipmentcheck 1"])
+            self.assertEqual(result["status"], "partial")
+            self.assertGreater(result["pending_bytes"], 0)
+            skipped = writer.enqueue(["npcbot equipmentcheck 2"])
+            self.assertEqual(skipped["reason"], "previous-batch-pending")
+        finally:
+            writer.close()
+            os.close(read_fd)
 
     def test_log_tail_preserves_partial_line_across_rotation(self):
         with tempfile.TemporaryDirectory() as directory:

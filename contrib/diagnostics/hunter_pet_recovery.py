@@ -92,10 +92,11 @@ class Connection:
         self.command = ["podman", "exec", "-i", "-e", "MYSQL_PWD", container]
         self.env = dict(os.environ, MYSQL_PWD=self.password)
 
-    def query(self, sql):
-        result = subprocess.run([*self.command, "mysql", "--connect-timeout=5", "-u", self.user,
+    def query(self, sql, timeout=120):
+        connect_timeout = max(1, min(5, int(timeout)))
+        result = subprocess.run([*self.command, "mysql", f"--connect-timeout={connect_timeout}", "-u", self.user,
                                  "--batch", "--raw", "--skip-column-names", self.characters],
-                                input=sql, text=True, env=self.env, capture_output=True, timeout=120)
+                                input=sql, text=True, env=self.env, capture_output=True, timeout=timeout)
         if result.returncode:
             raise RuntimeError(result.stderr.replace(self.password, "<redacted>"))
         return result.stdout

@@ -26,6 +26,9 @@ from sanitizer_soak import (check_disk_space, compress_rotated_bot_log,
 
 
 SERVER_USER = "0"
+RESOURCE_INTERVAL_SECONDS = 5
+DATABASE_TIMEOUT_SECONDS = 4
+MAX_CONSOLE_PENDING_BYTES = 256 * 1024
 SERVER_CONTROL_SCRIPT = """import json,os,signal,sys,time
 from pathlib import Path
 pidfile,binary,config,mode=sys.argv[1:]
@@ -110,6 +113,42 @@ class LogTail:
     def close(self):
         if self.file:
             self.file.close()
+
+
+class NonBlockingConsole:
+    """Best-effort console input that can never stall resource supervision."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.fd = stream.fileno()
+        self.pending = b""
+        os.set_blocking(self.fd, False)
+
+    def flush(self):
+        if not self.pending:
+            return {"written_bytes": 0, "pending_bytes": 0}
+        try:
+            written = os.write(self.fd, self.pending)
+        except BlockingIOError:
+            written = 0
+        except BrokenPipeError as error:
+            raise RuntimeError("Worldserver console input closed") from error
+        self.pending = self.pending[written:]
+        return {"written_bytes": written, "pending_bytes": len(self.pending)}
+
+    def enqueue(self, commands):
+        if self.pending:
+            return {"status": "skipped", "reason": "previous-batch-pending",
+                    "pending_bytes": len(self.pending)}
+        payload = "".join(command + "\n" for command in commands).encode()
+        if len(payload) > MAX_CONSOLE_PENDING_BYTES:
+            raise RuntimeError("Console diagnostic batch exceeds 256 KiB")
+        self.pending = payload
+        result = self.flush()
+        return {"status": "sent" if not self.pending else "partial", **result}
+
+    def close(self):
+        self.stream.close()
 
 
 class BGObservations:
@@ -207,6 +246,15 @@ def prepare(args):
             "AiPlayerbot.RandomBotJoinLfg": "0", "AiPlayerbot.RandomBotAutoJoinBG": "0",
         })
         stage_world, stage_bots = full_bot_logging_overlay(stage_world, stage_bots)
+        # Playerbot TRACE is already retained in rotated dedicated files. Do
+        # not duplicate that high-volume stream into the unrotated stdout log.
+        stage_world = optional_overlay(stage_world, {
+            "Logger.playerbots": "1,PlayerbotFull",
+        })
+        if getattr(args, "execution_diagnostics", False):
+            stage_world = optional_overlay(stage_world, {
+                "AiPlayerbot.ExecutionDiagnostics": "1",
+            })
         if getattr(args, "rotation_diagnostics", False):
             stage_world = optional_overlay(stage_world, {
                 "Console.Enable": "1", "AiPlayerbot.SpellDiagnostics": "1",
@@ -231,6 +279,8 @@ def prepare(args):
         "build_container": args.build_container, "mysql_container": args.mysql_container,
         "work_root": str(args.work_root), "runtime": str(args.runtime),
         "startup_timeout_seconds": 1800, "sanitizer_run": False,
+        "execution_diagnostics": bool(getattr(args, "execution_diagnostics", False)),
+        "rotation_diagnostics": bool(getattr(args, "rotation_diagnostics", False)),
     })
     print("Prepared " + str(args.run), flush=True)
 
@@ -239,6 +289,9 @@ def execute(args):
     manifest = json.loads((args.run / "manifest.json").read_text())
     for key in ("runtime", "work_root", "build_container", "mysql_container"):
         if str(getattr(args, key)) != manifest[key]:
+            raise RuntimeError("Prepared/run option mismatch: " + key)
+    for key in ("execution_diagnostics", "rotation_diagnostics"):
+        if bool(getattr(args, key, False)) != bool(manifest.get(key, False)):
             raise RuntimeError("Prepared/run option mismatch: " + key)
     if (args.run / "result.json").exists() or (args.run / "events.jsonl").exists():
         raise RuntimeError("Run already started; prepare a new artifact directory")
@@ -311,7 +364,8 @@ def execute(args):
                         ["podman", "exec", args.build_container, "pgrep", "-x", "worldserver"]):
             if subprocess.run(command, capture_output=True).returncode != 1:
                 raise RuntimeError("worldserver already running or status unavailable")
-        if int(db.query("SELECT COUNT(*) FROM characters WHERE online<>0;").strip()):
+        if int(db.query("SELECT COUNT(*) FROM characters WHERE online<>0;",
+                        timeout=DATABASE_TIMEOUT_SECONDS).strip()):
             raise RuntimeError("Characters already marked online; inspect before starting")
         inhibitor = subprocess.Popen([
             "systemd-inhibit", "--what=sleep:idle:handle-lid-switch", "--mode=block",
@@ -334,6 +388,7 @@ def execute(args):
             dip = None
             control_verified = False
             last_diagnostic = 0
+            console_writer = None
             result = {"level": spec["level"], "started": stamp(), "status": "starting"}
             results.append(result)
             with (stage / "Logs/console.log").open("xb", buffering=0) as output:
@@ -343,14 +398,24 @@ def execute(args):
                     container_path(binary, args.work_root), "-c",
                     container_path(stage / "worldserver.conf", args.work_root)],
                     stdin=subprocess.PIPE if getattr(args, "rotation_diagnostics", False) else None,
-                    stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                    stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+                    bufsize=0)
+                if process.stdin is not None:
+                    console_writer = NonBlockingConsole(process.stdin)
                 event("stage_started", level=spec["level"], pid=process.pid)
                 try:
                     while True:
+                        iteration_started = time.monotonic()
                         if stop_requested:
                             raise RuntimeError("Stop requested")
                         if process.poll() is not None:
                             raise RuntimeError("Unexpected server exit: " + str(process.returncode))
+                        usage = resources()
+                        compressed = compress_rotated_bot_log(args.run)
+                        if compressed:
+                            event("log_compressed", level=spec["level"], **compressed)
+                        if console_writer is not None:
+                            console_writer.flush()
                         if not control_verified and (stage / "worldserver.pid").exists():
                             signal_owned_server(args.build_container,
                                                 container_path(stage / "worldserver.pid", args.work_root),
@@ -362,24 +427,22 @@ def execute(args):
                         observation.consume(bg.sample(), now)
                         inspect_console(console.sample())
                         count = int(db.query(f"SELECT COUNT(*) FROM characters c JOIN `{db.auth}`.account a "
-                                             "ON a.id=c.account WHERE c.online=1 AND a.username REGEXP '^RNDBOT[0-9]+$';").strip())
+                                             "ON a.id=c.account WHERE c.online=1 AND a.username REGEXP '^RNDBOT[0-9]+$';",
+                                             timeout=DATABASE_TIMEOUT_SECONDS).strip())
                         if getattr(args, "rotation_diagnostics", False) and count >= manifest["bots"] and now - last_diagnostic >= 60:
                             # Console-only, read-only diagnostics. No casting,
                             # spell grants, equipment changes or AI pauses.
                             rows = db.query(f"SELECT c.guid,c.class FROM characters c JOIN `{db.auth}`.account a "
                                             "ON a.id=c.account WHERE c.online=1 AND a.username REGEXP '^RNDBOT[0-9]+$' "
-                                            "AND c.class IN (1,2,3) ORDER BY c.guid;")
+                                            "AND c.class IN (1,2,3) ORDER BY c.guid;", timeout=DATABASE_TIMEOUT_SECONDS)
+                            commands = []
                             for row in rows.splitlines():
                                 guid, bot_class = map(int, row.split())
-                                commands = ([f"npcbot spellcheck {guid} {spell}" for spell in (883,136,982,1130,1978,3674)]
-                                            if bot_class == 3 else [f"npcbot equipmentcheck {guid}"])
-                                for command in commands:
-                                    process.stdin.write((command + "\n").encode())
-                            process.stdin.flush()
+                                commands.extend([f"npcbot spellcheck {guid} {spell}" for spell in (883,136,982,1130,1978,3674)]
+                                                if bot_class == 3 else [f"npcbot equipmentcheck {guid}"])
+                            diagnostic = console_writer.enqueue(commands)
                             last_diagnostic = now
-                            event("read_only_diagnostics", level=spec["level"])
-                        usage = resources()
-                        compress_rotated_bot_log(args.run)
+                            event("read_only_diagnostics", level=spec["level"], **diagnostic)
                         if reached is None:
                             if control_verified and count >= manifest["bots"] and observation.ready():
                                 reached = now
@@ -401,7 +464,8 @@ def execute(args):
                               bg=result["bg"], resources=usage)
                         if elapsed >= spec["seconds"]:
                             break
-                        time.sleep(15)
+                        time.sleep(max(0, RESOURCE_INTERVAL_SECONDS -
+                                       (time.monotonic() - iteration_started)))
                 finally:
                     graceful_stop()
                     try:
@@ -411,6 +475,8 @@ def execute(args):
                             inspect_console(rows)
                         result.update(bg=observation.summary(), exit_code=process.returncode, ended=stamp())
                     finally:
+                        if console_writer is not None:
+                            console_writer.close()
                         bg.close()
                         console.close()
             if process.returncode != 0:
@@ -478,6 +544,8 @@ def main():
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--rotation-diagnostics", action="store_true",
                         help="Sample native Hunter spellbooks and Protection candidates through read-only console probes")
+    parser.add_argument("--execution-diagnostics", action="store_true",
+                        help="Retain per-action execution reasons without interactive console probes")
     args = parser.parse_args()
     os.umask(0o077)
     args.run = args.run.resolve()
