@@ -18,6 +18,7 @@
 #include "RandomPlayerbotMgr.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
@@ -50,6 +51,41 @@
 #include "SharedDefines.h"
 #include "Unit.h"
 #include "World.h"
+
+namespace
+{
+constexpr uint32 PandarenFactionQuest = 31450;
+constexpr float PandarenHomebindTolerance = 1.0f;
+
+bool IsSelectedPandaren(Player const* bot)
+{
+    return bot && (bot->GetRace() == RACE_PANDAREN_ALLIANCE || bot->GetRace() == RACE_PANDAREN_HORDE);
+}
+
+bool HasCompletedPandarenFactionQuest(Player const* bot)
+{
+    return bot && (bot->IsQuestRewarded(PandarenFactionQuest)
+        || bot->GetQuestStatus(PandarenFactionQuest) == QUEST_STATUS_COMPLETE);
+}
+
+void CompletePandarenFactionQuest(Player* bot)
+{
+    if (bot && !HasCompletedPandarenFactionQuest(bot))
+        bot->CompleteQuest(PandarenFactionQuest, true, true);
+}
+
+bool HasExpectedPandarenHomebind(Player const* bot, WorldLocation const& start)
+{
+    if (!IsSelectedPandaren(bot))
+        return false;
+
+    uint32 expectedMap = bot->GetRace() == RACE_PANDAREN_HORDE ? 1 : 0;
+    return start.GetMapId() == expectedMap && bot->m_homebindMapId == expectedMap
+        && std::fabs(bot->m_homebindX - start.GetPositionX()) <= PandarenHomebindTolerance
+        && std::fabs(bot->m_homebindY - start.GetPositionY()) <= PandarenHomebindTolerance
+        && std::fabs(bot->m_homebindZ - start.GetPositionZ()) <= PandarenHomebindTolerance;
+}
+}
 
 RandomPlayerbotMgr::RandomPlayerbotMgr()
     : PlayerbotHolder(),
@@ -831,15 +867,60 @@ void RandomPlayerbotMgr::OnBotLoginInternal(Player* const bot)
             static const uint32 JOIN_THE_ALLIANCE = 1;
             static const uint32 JOIN_THE_HORDE = 0;
 
+            // Random bots skip the Wandering Isle story. Complete its native
+            // faction-choice objective before asking the core to leave map
+            // 860, just as the existing Goblin and Worgen preparation below
+            // completes their final starting-area quests.
+            CompletePandarenFactionQuest(bot);
+            if (!HasCompletedPandarenFactionQuest(bot))
+            {
+                TC_LOG_ERROR("playerbots", "Could not complete Pandaren faction quest for {} ({}); faction selection was not attempted.",
+                    bot->GetName().c_str(), bot->GetGUID().GetCounter());
+                return;
+            }
+
             WorldPacket packet(CMSG_SELECT_FACTION);
             packet << (std::rand() % 2 ? JOIN_THE_HORDE : JOIN_THE_ALLIANCE);
 
             WorldSession* session = bot->GetSession();
             session->HandleSelectFactionOpcode(packet);
 
-            TC_LOG_INFO("playerbots", "{} Assigned to faction: {}", bot->GetName().c_str(),
-                bot->GetTeamId() == TEAM_ALLIANCE ? "Alliance" : "Horde");
+            if (bot->GetRace() == RACE_PANDAREN_NEUTRAL)
+                TC_LOG_ERROR("playerbots", "Pandaren faction transfer failed for {} ({}); the bot remains neutral on map {}.",
+                    bot->GetName().c_str(), bot->GetGUID().GetCounter(), bot->GetMapId());
+            else
+                TC_LOG_INFO("playerbots", "{} Assigned to faction: {}", bot->GetName().c_str(),
+                    bot->GetTeamId() == TEAM_ALLIANCE ? "Alliance" : "Horde");
         });        
+    }
+    else if (IsSelectedPandaren(bot) && bot->GetMapId() == 860)
+    {
+        // Older runs could save the selected race before TeleportTo rejected
+        // the transfer. Recover only when the persisted homebind agrees with
+        // the race/class start data written by the original handler.
+        bot->AddDelayedEvent(5000, [bot]()
+        {
+            WorldLocation start = bot->GetStartPosition();
+            if (!HasExpectedPandarenHomebind(bot, start))
+            {
+                TC_LOG_ERROR("playerbots", "Refusing ambiguous Pandaren faction recovery for {} ({}): race {} map {} homebind {} does not match start map {}.",
+                    bot->GetName().c_str(), bot->GetGUID().GetCounter(), uint32(bot->GetRace()), bot->GetMapId(),
+                    bot->m_homebindMapId, start.GetMapId());
+                return;
+            }
+
+            CompletePandarenFactionQuest(bot);
+            if (!HasCompletedPandarenFactionQuest(bot) || !bot->TeleportTo(start))
+            {
+                TC_LOG_ERROR("playerbots", "Could not resume Pandaren faction transfer for {} ({}) from map {} to map {}.",
+                    bot->GetName().c_str(), bot->GetGUID().GetCounter(), bot->GetMapId(), start.GetMapId());
+                return;
+            }
+
+            bot->SaveToDB();
+            TC_LOG_INFO("playerbots", "Resumed interrupted Pandaren faction transfer for {} ({}) from map 860 to map {}.",
+                bot->GetName().c_str(), bot->GetGUID().GetCounter(), start.GetMapId());
+        });
     }
     if (bot->GetRace() == RACE_GOBLIN && bot->GetLevel() == 1)
     {
@@ -1230,31 +1311,32 @@ void RandomPlayerbotMgr::RandomTeleportForLevel(Player* bot)
     }
 }
 
-const RandomPlayerbotMgr::city* RandomPlayerbotMgr::GetCityForPlayer(Player* player)
+const RandomPlayerbotMgr::city* RandomPlayerbotMgr::GetCityForPlayer(Player* player) const
 {
-    if (_city_cache_data.empty()) return nullptr;
+    if (!player) return nullptr;
 
-    std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-    std::shuffle(_city_cache_data.begin(), _city_cache_data.end(), gen);
-
+    // Reservoir sampling keeps equal chances without reordering shared data
+    // or changing the objects referenced by another caller's returned pointer.
+    city const* selected = nullptr;
+    uint32 eligible = 0;
     for (const auto& city_data : _city_cache_data)
     {
         if (player->GetLevel() < city_data.min_level || player->GetLevel() > city_data.max_level || city_data.team_disabled == player->GetTeam())
             continue;
-        return &city_data;
+        if (urand(1, ++eligible) == 1)
+            selected = &city_data;
     }
 
-    return nullptr;
+    return selected;
 }
 
-const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Player* player)
+const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Player* player) const
 {
-    if (_farm_cache_data.empty()) return nullptr;
+    if (!player || _farm_cache_data.empty()) return nullptr;
 
-    std::mt19937 gen(std::chrono::system_clock::now().time_since_epoch().count());
-    std::shuffle(_farm_cache_data.begin(), _farm_cache_data.end(), gen);
-
-    for (auto& zone : _farm_cache_data)
+    farm_spot const* selected = nullptr;
+    uint32 eligibleZones = 0;
+    for (auto const& zone : _farm_cache_data)
     {
         if (player->GetLevel() < zone.min_level || player->GetLevel() > zone.max_level || zone.team_disabled == player->GetTeam())
             continue;
@@ -1285,17 +1367,27 @@ const RandomPlayerbotMgr::farm_spot* RandomPlayerbotMgr::GetFarmZoneForPlayer(Pl
             }
         }
 
-        auto& spots = zone.spots;
-        std::shuffle(spots.begin(), spots.end(), gen);
-        for (auto& spot : spots)
+        farm_spot const* candidate = nullptr;
+        uint32 eligibleSpots = 0;
+        for (auto const& spot : zone.spots)
         {
             if (player->GetLevel() >= spot.min_level && player->GetLevel() <= spot.max_level)
             {
-                // -- 
-                TC_LOG_DEBUG("playerbots", "Farm spot found for : {} - level: {}", player->GetName().c_str(), player->GetLevel());
-                return &spot;
+                if (urand(1, ++eligibleSpots) == 1)
+                    candidate = &spot;
             }
         }
+
+        // Choose zones uniformly, then spots within each zone, as before.
+        // Sampling all spots together would favor zones with more entries.
+        if (candidate && urand(1, ++eligibleZones) == 1)
+            selected = candidate;
+    }
+
+    if (selected)
+    {
+        TC_LOG_DEBUG("playerbots", "Farm spot found for : {} - level: {}", player->GetName().c_str(), player->GetLevel());
+        return selected;
     }
 
     TC_LOG_WARN("playerbots", "No valid zone farm found for {} level: {}", player->GetName().c_str(), player->GetLevel());

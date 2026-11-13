@@ -56,6 +56,10 @@ set(g3dlib_STAT_SRCS
 
 add_library(g3dlib STATIC ${g3dlib_STAT_SRCS})
 
+# Apply the core's allocator policy to the implementation as well as callers.
+# Defining this only on common leaves G3D's private buffer pool enabled.
+target_compile_definitions(g3dlib PUBLIC NO_BUFFERPOOL)
+
 target_include_directories(g3dlib
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)

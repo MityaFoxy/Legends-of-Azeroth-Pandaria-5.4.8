@@ -1136,18 +1136,18 @@ void BattlegroundMgr::CreateInitialBattlegrounds(bool reload /*= false*/)
     TC_LOG_INFO("server.loading", ">> Loaded {} battlegrounds in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
 }
 
-void BattlegroundMgr::BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid guid, Player* player, BattlegroundTypeId bgTypeId)
+bool BattlegroundMgr::BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid guid, Player* player, BattlegroundTypeId bgTypeId)
 {
     if (!player)
-        return;
+        return false;
 
     BattlegroundDataContainer::iterator it = bgDataStore.find(bgTypeId);
-    if (it == bgDataStore.end())
-        return;
+    if (it == bgDataStore.end() || it->second.m_Battlegrounds.empty())
+        return false;
 
     PvPDifficultyEntry const* bracketEntry = sDBCManager.GetBattlegroundBracketByLevel(it->second.m_Battlegrounds.begin()->second->GetMapId(), player->GetLevel());
     if (!bracketEntry)
-        return;
+        return false;
 
     uint32 winnerConquest = (player->GetRandomWinner() ? sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_CONQUEST_LAST) : sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_CONQUEST_FIRST)) / CURRENCY_PRECISION;
     uint32 winnerHonor = (player->GetRandomWinner() ? sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_HONOR_LAST) : sWorld->getIntConfig(CONFIG_BG_REWARD_WINNER_HONOR_FIRST)) / CURRENCY_PRECISION;
@@ -1193,6 +1193,8 @@ void BattlegroundMgr::BuildBattlegroundListPacket(WorldPacket* data, ObjectGuid 
 
     for (auto&& clientId : clientIds)
         *data << uint32(clientId);
+
+    return true;
 }
 
 void BattlegroundMgr::SendToBattleground(Player* player, uint32 instanceId, BattlegroundTypeId bgTypeId)

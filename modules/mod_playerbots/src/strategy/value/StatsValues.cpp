@@ -35,20 +35,9 @@ bool IsDeadValue::Calculate()
 
 bool PetIsDeadValue::Calculate()
 {
-    if (!bot->GetPet())
-    {
-        uint32 ownerid = bot->GetGUID().GetCounter();
-        QueryResult result = CharacterDatabase.PQuery("SELECT id FROM character_pet WHERE owner = {}", ownerid);
-        if (!result)
-            return false;
-
-        return true;
-    }
-
-    if (bot->GetPetGUID() && !bot->GetPet())
-        return true;
-
-    return bot->GetPet() && bot->GetPet()->getDeathState() != DeathState::ALIVE;
+    // Stored ownership (including dismissed/stabled pets) is not a death state.
+    Pet* pet = bot->GetPet();
+    return pet && !pet->IsAlive();
 }
 
 Unit* RageValue::GetTarget()

@@ -76,6 +76,8 @@ void InstanceSaveManager::Unload()
 
         delete save;
     }
+    m_instanceSaveById.clear();
+    lock_instLists = false;
 }
 
 /*

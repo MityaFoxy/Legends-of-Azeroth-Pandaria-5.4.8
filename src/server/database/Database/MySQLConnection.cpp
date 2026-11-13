@@ -30,6 +30,7 @@
 #include <errmsg.h>
 #include "MySQLWorkaround.h"
 #include <mysqld_error.h>
+#include <string_view>
 
 MySQLConnectionInfo::MySQLConnectionInfo(std::string const& infoString)
 {
@@ -65,11 +66,7 @@ MySQLConnection::~MySQLConnection()
 void MySQLConnection::Close()
 {
     // Stop the worker thread before the statements are cleared
-    if (m_workerThread)
-    {
-        m_workerThread->join();
-        m_workerThread.reset();
-    }
+    StopWorkerThread();
 
     m_stmts.clear();
 
@@ -149,6 +146,15 @@ uint32 MySQLConnection::Open()
 
     if (m_Mysql)
     {
+        char const* serverInfo = mysql_get_server_info(m_Mysql);
+        if (serverInfo && std::string_view(serverInfo).find("MariaDB") != std::string_view::npos)
+        {
+            TC_LOG_ERROR("sql.driver", "MariaDB servers are not supported; please use MySQL 5.7 or newer");
+            mysql_close(m_Mysql);
+            m_Mysql = nullptr;
+            return 1;
+        }
+
         if (!m_reconnecting)
         {
             TC_LOG_INFO("sql.sql", "MySQL client library: {}", mysql_get_client_info());
@@ -428,18 +434,23 @@ void MySQLConnection::StartWorkerThread(Trinity::Asio::IoContext* context)
 {
     m_workerThread = std::make_unique<std::thread>([context]
     {
-        boost::asio::executor_work_guard executorWorkGuard = boost::asio::make_work_guard(context->get_executor());
-
         context->run();
     });
+    m_workerThreadId = m_workerThread->get_id();
+}
+
+void MySQLConnection::StopWorkerThread()
+{
+    if (m_workerThread)
+    {
+        m_workerThread->join();
+        m_workerThread.reset();
+    }
 }
 
 std::thread::id MySQLConnection::GetWorkerThreadId() const
 {
-    if (m_workerThread)
-        return m_workerThread->get_id();
-
-    return {};
+    return m_workerThreadId;
 }
 
 bool MySQLConnection::LockIfReady()

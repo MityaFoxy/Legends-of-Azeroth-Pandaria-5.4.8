@@ -51,6 +51,10 @@ class DatabaseWorkerPool
 
         void Close();
 
+        //! Terminal drain: call only after query producers have stopped, never from an SQL worker.
+        //! Keeps connections available for final synchronous shutdown queries until Close().
+        void StopAsyncWorkers();
+
         //! Prepares all prepared statements
         bool PrepareStatements();
 
@@ -227,9 +231,11 @@ class DatabaseWorkerPool
 
         struct QueueSizeTracker;
         friend QueueSizeTracker;
+        struct AsyncWork;
 
         //! Queue shared by async worker threads.
         std::unique_ptr<Trinity::Asio::IoContext> _ioContext;
+        std::unique_ptr<AsyncWork> _asyncWork;
         std::atomic<size_t> _queueSize;
         std::array<std::vector<std::unique_ptr<T>>, IDX_SIZE> _connections;
         std::unique_ptr<MySQLConnectionInfo> _connectionInfo;

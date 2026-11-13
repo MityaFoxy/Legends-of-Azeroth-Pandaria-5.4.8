@@ -38,7 +38,19 @@ def main():
                         metavar=("X", "Y", "Z"), help="Additional exact position to audit")
     parser.add_argument("--probe-line", type=float, nargs=6, action="append", default=[],
                         help="Probe a hypothetical direct segment X Y Z X Y Z (not a replay of the run)")
+    parser.add_argument("--inspect-obstacles", action="store_true",
+                        help="Probe loaded AB fence/building collision models (not live bot movement)")
+    parser.add_argument("--ground-body-height", type=float,
+                        help="Also normalize dry static ground paths and check LOS at this body height; no dynamic/water replay")
+    parser.add_argument("--townhall-regression", action="store_true",
+                        help="Assert the recorded GUID35 dry-static obstruction and native waypoint-height repair on AB data")
     args = parser.parse_args()
+    if args.ground_body_height is not None and (not math.isfinite(args.ground_body_height) or args.ground_body_height <= 0):
+        parser.error("ground body height must be finite and positive")
+    if args.townhall_regression:
+        if args.probe_line:
+            parser.error("Townhall regression supplies its own route fixtures")
+        args.ground_body_height = 0.63261503
     maps = (args.source / "src/server/game/Maps/Map.cpp").read_text()
     paths = (args.source / "src/server/game/Movement/PathGenerator.cpp").read_text()
     ab = (args.source / "src/server/game/Battlegrounds/Zones/BattlegroundAB.h").read_text()
@@ -61,9 +73,13 @@ def main():
     source = r'''
 #include <vector>
 #include <array>
+#include <cstring>
 #include <G3D/Plane.h>
 #include <G3D/System.h>
 #include "VMapManager2.h"
+#include "MapTree.h"
+#include "ModelInstance.h"
+#include <G3D/Ray.h>
 #include "Errors.h"
 #include "Log.h"
 #include "DetourNavMesh.h"
@@ -74,7 +90,6 @@ def main():
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -139,6 +154,37 @@ struct GridMap {
                       "float GridMap::getLiquidLevel("):
         source += body(maps, signature) + "\n"
     source += r'''
+struct GroundProbe {
+    VMAP::VMapManager2& vmap;
+    std::map<std::pair<int,int>,std::unique_ptr<GridMap>>& grids;
+    uint32 GetId() const { return 529; }
+    float GetGridHeight(float x,float y) const {
+        return grids.at({int(32-x/SIZE_OF_GRIDS),int(32-y/SIZE_OF_GRIDS)})->Height(x,y);
+    }
+    float GetHeight(float,float,float,bool,float) const;
+};
+'''
+    defines_source = (args.source / "src/server/game/Miscellaneous/SharedDefines.h").read_text()
+    for name in ("GROUND_HEIGHT_TOLERANCE", "Z_OFFSET_FIND_HEIGHT"):
+        value = re.search(r"(?:constexpr float|float const) " + name + r" = ([^;]+);", defines_source).group(1)
+        source += f"constexpr float {name} = {value};\n"
+    source += body(maps, "float Map::GetHeight(float x,").replace("Map::GetHeight", "GroundProbe::GetHeight").replace(
+        "VMAP::VMapFactory::createOrGetVMapManager()", "&vmap") + "\n"
+    if args.townhall_regression:
+        # Keep the native WorldObject offset and the production waypoint query.
+        # Only the map adapter omits dynamic gameobjects, absent from this replay.
+        objects = (args.source / "src/server/game/Entities/Object/Object.cpp").read_text()
+        map_header = (args.source / "src/server/game/Maps/Map.h").read_text()
+        max_height = re.search(r"#define MAX_HEIGHT\s+(\S+)", map_header).group(1)
+        source += f"constexpr float MAX_HEIGHT = {max_height};\n"
+        source += "struct AuditObject { GroundProbe& ground; float GetMapHeight(float,float,float,bool,float) const; };\n"
+        source += body(objects, "float WorldObject::GetMapHeight(").replace(
+            "WorldObject::", "AuditObject::").replace("GetMap()->GetHeight(GetPhaseMask(),", "ground.GetHeight(") + "\n"
+        movement = (args.source / "modules/mod_playerbots/src/strategy/actions/MovementActions.cpp").read_text()
+        query = re.search(r"float wz = bot->GetMapHeight\(wx, wy, origin\.z.*?;", movement, re.S).group(0)
+        source += "float WaypointHeight(AuditObject* bot,float wx,float wy,G3D::Vector3 const& origin,bool aroundObstruction) {\n"
+        source += query + "\nreturn wz;\n}\n"
+    source += r'''
 // Actual core smoothing bodies, with only world logging supplied by a double.
 constexpr int VERTEX_SIZE=3, MAX_PATH_LENGTH=200, MAX_POINT_PATH_LENGTH=200;
 constexpr float SMOOTH_PATH_STEP_SIZE=4.f, SMOOTH_PATH_SLOP=.3f;
@@ -149,6 +195,8 @@ struct SmoothProbe {
     dtNavMesh const* _navMesh;
     dtNavMeshQuery const* _navMeshQuery;
     dtQueryFilter _filter;
+    bool _privateQuery=true;
+    char const* _failureReason=nullptr;
     AuditSource owner;
     AuditSource const* _source=&owner;
     uint32 FixupCorridor(dtPolyRef*,uint32,uint32,dtPolyRef const*,uint32);
@@ -164,8 +212,11 @@ struct SmoothProbe {
     # Validate literals before embedding user-supplied positions in the fixture.
     if any(not math.isfinite(v) for p in (*points, *args.probe_line) for v in p):
         raise ValueError("Non-finite coordinates")
-    source += "static std::vector<std::array<float,6>> const lines = {" + ",".join(
+    source += "static std::vector<std::array<float,6>> lines = {" + ",".join(
         "{" + ",".join(f"{v:.9e}f" for v in p) + "}" for p in args.probe_line) + "};\n"
+    source += f"static bool const inspectObstacles = {'true' if args.inspect_obstacles else 'false'};\n"
+    source += f"static bool const townhallRegression = {'true' if args.townhall_regression else 'false'};\n"
+    source += f"static float const groundBodyHeight = {args.ground_body_height or 0:.9e}f;\n"
     source += r'''
 struct TileHeader {uint32 magic,dtVersion,version,size; char liquids,pad[3];};
 static_assert(sizeof(TileHeader)==20);
@@ -203,6 +254,51 @@ int main(int argc,char** argv) {
         assert(status==VMAP::VMAP_LOAD_RESULT_OK);
     }
     printf("valid_mmap_tiles=%u terrain_tiles=%zu\n",tiles,grids.size());
+    if (inspectObstacles) {
+        VMAP::InstanceTreeMap trees; vmap.getInstanceMapTree(trees);
+        assert(trees.count(529));
+        VMAP::ModelInstance* models=nullptr; uint32 count=0;
+        trees.at(529)->getModelInstances(models,count);
+        std::map<std::string,std::array<unsigned,3>> totals;
+        for (uint32 i=0;i<count;++i) {
+            auto& model=models[i];
+            if (!model.getWorldModel() || (model.name.find("fence")==std::string::npos
+                && model.name.find("house")==std::string::npos
+                && model.name.find("mill")==std::string::npos
+                && model.name.find("smith")==std::string::npos
+                && model.name.find("stable")==std::string::npos
+                && model.name.find("barn")==std::string::npos)) continue;
+            auto& stats=totals[model.name]; ++stats[0];
+            auto low=model.getBounds().low(),high=model.getBounds().high();
+            // Horizontal rays through a grid of model-local world bounds.
+            // This verifies that the loaded instance really blocks rays,
+            // not merely that a similarly named .vmo file exists on disk.
+            for (int axis=0;axis<2;++axis) for (int row=1;row<10;++row) for (int level=1;level<10;++level) {
+                G3D::Vector3 a=low+(high-low)*0.5f,b=a;
+                a[axis]=low[axis]-1; b[axis]=high[axis]+1;
+                a[1-axis]=b[1-axis]=low[1-axis]+(high[1-axis]-low[1-axis])*float(row)/10;
+                a.z=b.z=low.z+(high.z-low.z)*float(level)/10;
+                float length=(b-a).length(); if (length<=0) continue;
+                G3D::Ray ray=G3D::Ray::fromOriginAndDirection(a,(b-a)/length);
+                ++stats[1];
+                if (!model.intersectRay(ray,length,true,VMAP::ModelIgnoreFlags::Nothing)) continue;
+                ++stats[2];
+                if (stats[2]==1) {
+                    // The VMAP coordinate conversion is its own inverse.
+                    auto worldA=vmap.convertPositionToInternalRep(a.x,a.y,a.z);
+                    auto worldB=vmap.convertPositionToInternalRep(b.x,b.y,b.z);
+                    bool clear=vmap.isInLineOfSight(529,worldA.x,worldA.y,worldA.z,
+                        worldB.x,worldB.y,worldB.z,VMAP::ModelIgnoreFlags::Nothing);
+                    assert(!clear);
+                    printf("static_obstacle_example model=%s spawn=%u from=(%.5f,%.5f,%.5f) to=(%.5f,%.5f,%.5f) los_clear=%d\n",
+                        model.name.c_str(),model.ID,worldA.x,worldA.y,worldA.z,worldB.x,worldB.y,worldB.z,clear);
+                }
+            }
+        }
+        for (auto const& [name,stats]:totals)
+            printf("static_obstacle_model=%s loaded_instances=%u tested_rays=%u blocked_rays=%u\n",
+                name.c_str(),stats[0],stats[1],stats[2]);
+    }
     auto query=dtAllocNavMeshQuery(); assert(dtStatusSucceed(query->init(mesh,1024)));
     auto resetQuery=[&](int capacity) {
         // Detour init() grows pools but never shrinks them. Each measurement
@@ -228,11 +324,92 @@ int main(int argc,char** argv) {
         float distance=ref?std::sqrt(std::pow(closest[2]-x,2)+std::pow(closest[0]-y,2)+std::pow(closest[1]-z,2)):-1;
         printf("sample=%d xyz=(%.5f,%.5f,%.5f) terrain_z=%.5f static_vmap_z=%.5f liquid_z=%.5f nearest_z=%.5f poly_flags=%u poly_distance=%.5f ref=%llu\n",
             id,x,y,z,terrain,collision,liquid,ref?closest[1]:INVALID_HEIGHT,poly?poly->flags:0,distance,static_cast<unsigned long long>(ref));
+        if (ref) printf("sample_projection=%d nearest=(%.5f,%.5f,%.5f) climb=%.5f\n",
+            id,closest[2],closest[0],closest[1],tile->header->walkableClimb);
+        if(groundBodyHeight>0) {
+            GroundProbe ground{vmap,grids};
+            printf("sample_ground=%d z=%.5f\n",id,ground.GetHeight(x,y,z+Z_OFFSET_FIND_HEIGHT,true,4.f));
+        }
     };
     for(int i=0;i<5;++i) sample(i,nodes[i][0],nodes[i][1],nodes[i][2]);
     float x,y,z; int id=5; while(scanf("%f %f %f",&x,&y,&z)==3) sample(id++,x,y,z);
+'''
+    if args.townhall_regression:
+        source += r'''
+    GroundProbe townhallGround{vmap,grids};
+    AuditObject object{townhallGround};
+    G3D::Vector3 const start{1307.0289f,1313.9961f,-9.504376f};
+    G3D::Vector3 const goal{851.8919f,1148.902f,11.548326f};
+    G3D::Vector3 const obstacle{1308.7755f,1315.9424f,-8.359013f};
+    // Existing ring variant 1: forward -2, side -8, radius unchanged.
+    float dx=goal.x-obstacle.x,dy=goal.y-obstacle.y,horizontal=std::hypot(dx,dy);
+    float wx=obstacle.x+(-2.f*dx+8.f*dy)/horizontal;
+    float wy=obstacle.y+(-2.f*dy-8.f*dx)/horizontal;
+    float floor=WaypointHeight(&object,wx,wy,obstacle,true);
+    float buried=object.GetMapHeight(wx,wy,obstacle.z+2.f,true,4.f);
+    printf("townhall_waypoint=(%.5f,%.5f) selected_z=%.5f double_offset_z=%.5f\n",wx,wy,floor,buried);
+    assert(std::fabs(floor-(-9.592f))<.02f && floor-buried>3.f);
+    lines={
+        {start.x,start.y,start.z,goal.x,goal.y,goal.z},
+        {start.x,start.y,start.z,wx,wy,floor},
+        {wx,wy,floor,goal.x,goal.y,goal.z},
+        {start.x,start.y,start.z,wx,wy,buried}
+    };
+'''
+    source += r'''
+    unsigned townhallVerified = 0;
     for(size_t i=0;i<lines.size();++i) {
         auto const& p=lines[i];
+        if (groundBodyHeight>0) {
+            GroundProbe ground{vmap,grids};
+            G3D::Vector3 from{p[0],p[1],p[2]}, to{p[3],p[4],p[5]};
+            float distance=(to-from).length();
+            int steps=std::max(1,int(std::ceil(distance/0.25f)));
+            bool supported=true, oldSupported=true, dry=true;
+            for(int step=0;step<=steps;++step) {
+                auto point=from+(to-from)*(float(step)/steps);
+                auto& grid=grids.at({int(32-point.x/SIZE_OF_GRIDS),int(32-point.y/SIZE_OF_GRIDS)});
+                float water=grid->getLiquidLevel(point.x,point.y);
+                if (water>INVALID_HEIGHT && point.z<=water+0.75f) dry=false;
+                // Match WorldObject::GetMapHeight's implicit offset exactly.
+                float height=ground.GetHeight(point.x,point.y,point.z+Z_OFFSET_FIND_HEIGHT,true,4.f);
+                float oldHeight=ground.GetHeight(point.x,point.y,point.z+2.f+Z_OFFSET_FIND_HEIGHT,true,4.f);
+                supported &= std::isfinite(height) && height>INVALID_HEIGHT && std::fabs(point.z-height)<=2.f;
+                oldSupported &= std::isfinite(oldHeight) && oldHeight>INVALID_HEIGHT && std::fabs(point.z-oldHeight)<=2.f;
+                printf("connector_sample=%zu t=%.5f z=%.5f ground=%.5f double_offset_ground=%.5f\n",
+                    i,float(step)/steps,point.z,height,oldHeight);
+            }
+            bool los=vmap.isInLineOfSight(529,from.x,from.y,from.z+groundBodyHeight,
+                to.x,to.y,to.z+groundBodyHeight,VMAP::ModelIgnoreFlags::Nothing);
+            printf("dry_static_connector=%zu dry=%d length=%.5f body_los=%d supported=%d double_offset_supported=%d\n",
+                i,dry,distance,los,supported,oldSupported);
+        }
+        for (float height:{0.5f,1.0f,2.0f}) {
+            printf("static_line_probe=%zu height=%.1f los_clear=%d\n",i,height,
+                vmap.isInLineOfSight(529,p[0],p[1],p[2]+height,p[3],p[4],p[5]+height,VMAP::ModelIgnoreFlags::Nothing));
+            // Identify the closest static model on this hypothetical segment.
+            // This is not the actual normalized route or dynamic BG collision.
+            VMAP::InstanceTreeMap trees; vmap.getInstanceMapTree(trees);
+            VMAP::ModelInstance* models=nullptr; uint32 modelCount=0;
+            trees.at(529)->getModelInstances(models,modelCount);
+            auto a=vmap.convertPositionToInternalRep(p[0],p[1],p[2]+height);
+            auto b=vmap.convertPositionToInternalRep(p[3],p[4],p[5]+height);
+            float distance=(b-a).length();
+            if (distance>0) {
+                auto direction=(b-a)/distance;
+                auto ray=G3D::Ray::fromOriginAndDirection(a,direction);
+                VMAP::ModelInstance const* hit=nullptr;
+                for (uint32 model=0;model<modelCount;++model)
+                    if (models[model].getWorldModel()
+                        && models[model].intersectRay(ray,distance,false,VMAP::ModelIgnoreFlags::Nothing)) hit=&models[model];
+                if (hit) {
+                    auto position=a+direction*distance;
+                    auto world=vmap.convertPositionToInternalRep(position.x,position.y,position.z);
+                    printf("static_line_hit=%zu height=%.1f model=%s spawn=%u hit=(%.5f,%.5f,%.5f)\n",
+                        i,height,hit->name.c_str(),hit->ID,world.x,world.y,world.z);
+                }
+            }
+        }
         int steps=std::max(1,int(std::ceil(std::hypot(p[3]-p[0],p[4]-p[1]))));
         int dryBelow=0; float maxDepth=0,worst[3]={};
         for(int step=0;step<=steps;++step) {
@@ -255,6 +432,17 @@ int main(int argc,char** argv) {
             resetQuery(capacity);
             float a[3]={p[1],p[2],p[0]},b[3]={p[4],p[5],p[3]},tmp[3];
             dtPolyRef ar=nearest(p[0],p[1],p[2],tmp),br=nearest(p[3],p[4],p[5],tmp);
+            if (ar && br && capacity==1024) {
+                float projected[3]; bool overStart=false;
+                assert(dtStatusSucceed(query->closestPointOnPoly(ar,b,projected,&overStart)));
+                printf("endpoint_on_start_poly=%zu start_ref=%llu end_ref=%llu over_start=%d projected=(%.5f,%.5f,%.5f) offset=%.5f\n",
+                    i,static_cast<unsigned long long>(ar),static_cast<unsigned long long>(br),overStart,
+                    projected[2],projected[0],projected[1],dtVdist(b,projected));
+                bool overEnd=false;
+                assert(dtStatusSucceed(query->closestPointOnPoly(br,b,projected,&overEnd)));
+                printf("endpoint_on_selected_poly=%zu over_end=%d projected=(%.5f,%.5f,%.5f) offset=%.5f\n",
+                    i,overEnd,projected[2],projected[0],projected[1],dtVdist(b,projected));
+            }
             dtPolyRef corridor[200]; int count=0;
             dtStatus status=query->findPath(ar,br,a,b,&filter,corridor,&count,200);
             if(dtStatusFailed(status) || !count) continue;
@@ -277,6 +465,48 @@ int main(int argc,char** argv) {
             }
             printf("raw_smooth_probe=%zu capacity=%d query_status=%x complete_corridor=%d polygons=%d smooth_status=%x points=%d dry_terrain_below_samples=%d max_depth=%.5f\n",
                 i,capacity,status,corridor[count-1]==br,count,smoothStatus,length,dry,worstDepth);
+            if (groundBodyHeight>0 && capacity==4096) {
+                GroundProbe ground{vmap,grids};
+                std::vector<G3D::Vector3> normalized;
+                bool dry=true;
+                unsigned missingGround=0;
+                for(int k=0;k<length;++k) {
+                    auto raw=smooth+3*k;
+                    float support=ground.GetHeight(raw[2],raw[0],raw[1]+Z_OFFSET_FIND_HEIGHT,true,50.f);
+                    // Native UpdateAllowedPositionZ keeps raw z when no height
+                    // is found; do not invent a spline at INVALID_HEIGHT.
+                    bool validSupport=std::isfinite(support) && support>INVALID_HEIGHT;
+                    float z=validSupport ? support : raw[1];
+                    if(!validSupport) ++missingGround;
+                    auto& grid=grids.at({int(32-raw[2]/SIZE_OF_GRIDS),int(32-raw[0]/SIZE_OF_GRIDS)});
+                    if(!validSupport) printf("ground_missing_sample=%zu point=%d raw=(%.5f,%.5f,%.5f) terrain_z=%.5f liquid_z=%.5f height_result=%.5f\n",
+                        i,k,raw[2],raw[0],raw[1],grid->Height(raw[2],raw[0]),
+                        grid->getLiquidLevel(raw[2],raw[0]),support);
+                    if(!validSupport || grid->getLiquidLevel(raw[2],raw[0])>z) dry=false;
+                    normalized.emplace_back(raw[2],raw[0],z);
+                }
+                int blocked=0;
+                for(size_t k=1;dry && k<normalized.size();++k) {
+                    auto a=normalized[k-1],b=normalized[k];
+                    if(vmap.isInLineOfSight(529,a.x,a.y,a.z+groundBodyHeight,b.x,b.y,b.z+groundBodyHeight,VMAP::ModelIgnoreFlags::Nothing)) continue;
+                    if(!blocked) printf("ground_first_block=%zu segment=%zu from=(%.5f,%.5f,%.5f) to=(%.5f,%.5f,%.5f) raw_z=(%.5f,%.5f)\n",
+                        i,k,a.x,a.y,a.z,b.x,b.y,b.z,smooth[3*(k-1)+1],smooth[3*k+1]);
+                    ++blocked;
+                }
+                float startOffset=normalized.empty() ? -1.f : (normalized.front()-G3D::Vector3(p[0],p[1],p[2])).length();
+                float endOffset=normalized.empty() ? -1.f : (normalized.back()-G3D::Vector3(p[3],p[4],p[5])).length();
+                printf("ground_path_probe=%zu dry=%d missing_ground_samples=%u blocked_segments=%d body_height=%.5f start_offset=%.5f end_offset=%.5f\n",
+                    i,dry,missingGround,blocked,groundBodyHeight,startOffset,endOffset);
+                if(townhallRegression) {
+                    ++townhallVerified;
+                    assert(dry && startOffset<.01f);
+                    if(i==0) assert(blocked>0); // Original wall is still blocked.
+                    if(i==1) assert(!blocked && endOffset<.01f && corridor[count-1]==br
+                        && !(status&(DT_OUT_OF_NODES|DT_PARTIAL_RESULT|DT_BUFFER_TOO_SMALL)));
+                    if(i==2) assert(!blocked && length==200 && (smoothStatus&DT_BUFFER_TOO_SMALL));
+                    if(i==3) assert(endOffset>3.f && (status&DT_OUT_OF_NODES));
+                }
+            }
         }
     }
     for(int capacity:{1024,2048,4096,8192}) {
@@ -295,6 +525,10 @@ int main(int argc,char** argv) {
         printf("capacity=%d full_directed_node_pairs=%d/20\n",capacity,full);
     }
     dtFreeNavMeshQuery(query); dtFreeNavMesh(mesh);
+    if(townhallRegression) {
+        assert(townhallVerified==4); // Missing/failed queries must not skip acceptance.
+        puts("Townhall dry-static geometry regression PASS (not a live movement replay)");
+    }
 }
 '''
     flags = (args.build / "src/common/CMakeFiles/common.dir/flags.make").read_text()

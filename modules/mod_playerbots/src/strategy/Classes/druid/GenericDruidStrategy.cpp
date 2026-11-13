@@ -83,7 +83,7 @@ private:
     static ActionNode* entangling_roots_on_cc([[maybe_unused]] PlayerbotAI* botAI)
     {
         return new ActionNode("entangling roots on cc",
-                              /*P*/ NextAction::array(0, new NextAction("caster form"), nullptr),
+                              /*P*/ nullptr, // DruidCcAction consults native shapeshift requirements.
                               /*A*/ nullptr,
                               /*C*/ nullptr);
     }
@@ -129,12 +129,15 @@ void DruidCureStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     // ACTION_DISPEL + 2), nullptr)));
     triggers.push_back(
         new TriggerNode("party member cure poison",
-                        NextAction::array(0, new NextAction("abolish poison on party", ACTION_DISPEL + 1), nullptr)));
+                        NextAction::array(0, new NextAction("cure poison on party", ACTION_DISPEL + 1), nullptr)));
     
     triggers.push_back(
         new TriggerNode("party member remove curse",
                         NextAction::array(0, new NextAction("remove curse on party", ACTION_DISPEL + 7), NULL)));
-    
+
+    triggers.push_back(
+        new TriggerNode("party member cure magic",
+                        NextAction::array(0, new NextAction("nature's cure on party", ACTION_DISPEL + 7), nullptr)));
 }
 
 void DruidBoostStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)

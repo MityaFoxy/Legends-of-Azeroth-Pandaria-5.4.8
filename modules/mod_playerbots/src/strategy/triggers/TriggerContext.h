@@ -57,6 +57,15 @@ public:
         creators["party member low health"] = &TriggerContext::PartyMemberLowHealth;
         creators["party member medium health"] = &TriggerContext::PartyMemberMediumHealth;
         creators["party member almost full health"] = &TriggerContext::PartyMemberAlmostFullHealth;
+        creators["critical aoe heal"] = &TriggerContext::critical_aoe_heal;
+        creators["low aoe heal"] = &TriggerContext::low_aoe_heal;
+        creators["medium aoe heal"] = &TriggerContext::medium_aoe_heal;
+        creators["almost full aoe heal"] = &TriggerContext::almost_full_aoe_heal;
+        creators["group heal setting"] = &TriggerContext::group_heal_setting;
+        creators["medium group heal setting"] = &TriggerContext::medium_group_heal_setting;
+        creators["party member dead"] = &TriggerContext::party_member_dead;
+        creators["combat party member dead"] = &TriggerContext::combat_party_member_dead;
+        creators["healer should attack"] = &TriggerContext::healer_should_attack;
 
         creators["dead"] = &TriggerContext::Dead;
         creators["corpse near"] = &TriggerContext::corpse_near;
@@ -117,6 +126,17 @@ private:
     static Trigger* PartyMemberLowHealth(PlayerbotAI* botAI) { return new PartyMemberLowHealthTrigger(botAI); }
     static Trigger* PartyMemberMediumHealth(PlayerbotAI* botAI) { return new PartyMemberMediumHealthTrigger(botAI); }
     static Trigger* PartyMemberAlmostFullHealth(PlayerbotAI* botAI) { return new PartyMemberAlmostFullHealthTrigger(botAI); }
+    static Trigger* critical_aoe_heal(PlayerbotAI* botAI) { return new AoeHealTrigger(botAI, "critical aoe heal", "critical", 2); }
+    static Trigger* low_aoe_heal(PlayerbotAI* botAI) { return new AoeHealTrigger(botAI, "low aoe heal", "low", 2); }
+    static Trigger* medium_aoe_heal(PlayerbotAI* botAI) { return new AoeHealTrigger(botAI, "medium aoe heal", "medium", 2); }
+    static Trigger* almost_full_aoe_heal(PlayerbotAI* botAI) { return new AoeHealTrigger(botAI, "almost full aoe heal", "almost full", 2); }
+    // Existing AoeInGroupTrigger policy; mappings preserved from the original
+    // playerbot framework (mod-playerbots 405f8119), not new health thresholds.
+    static Trigger* group_heal_setting(PlayerbotAI* botAI) { return new AoeInGroupTrigger(botAI, "group heal setting", "almost full"); }
+    static Trigger* medium_group_heal_setting(PlayerbotAI* botAI) { return new AoeInGroupTrigger(botAI, "medium group heal setting", "medium"); }
+    static Trigger* party_member_dead(PlayerbotAI* botAI) { return new PartyMemberDeadTrigger(botAI); }
+    static Trigger* combat_party_member_dead(PlayerbotAI* botAI) { return new CombatPartyMemberDeadTrigger(botAI); }
+    static Trigger* healer_should_attack(PlayerbotAI* botAI) { return new HealerShouldAttackTrigger(botAI); }
     static Trigger* LightRageAvailable(PlayerbotAI* botAI) { return new LightRageAvailableTrigger(botAI); }
     static Trigger* MediumRageAvailable(PlayerbotAI* botAI) { return new MediumRageAvailableTrigger(botAI); }
     static Trigger* HighRageAvailable(PlayerbotAI* botAI) { return new HighRageAvailableTrigger(botAI); }

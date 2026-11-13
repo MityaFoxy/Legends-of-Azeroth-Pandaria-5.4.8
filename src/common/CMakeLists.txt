@@ -18,7 +18,6 @@ file(GLOB_RECURSE sources_Configuration Configuration/*.cpp Configuration/*.h)
 file(GLOB_RECURSE sources_Containers Containers/*.cpp Containers/*.h Containers/Utilities/*.cpp Containers/Utilities/*.h)
 file(GLOB_RECURSE sources_Cryptography Cryptography/*.cpp Cryptography/*.h Cryptography/Authentication/*.cpp Cryptography/Authentication/*.h)
 file(GLOB_RECURSE sources_DataStores DataStores/*.cpp DataStores/*.h)
-file(GLOB_RECURSE sources_Hacks Hacks/*.cpp Hacks/*.h)
 file(GLOB_RECURSE sources_IPLocation IPLocation/*.cpp IPLocation/*.h)
 file(GLOB_RECURSE sources_Logging Logging/*.cpp Logging/*.h)
 file(GLOB_RECURSE sources_Threading Threading/*.cpp Threading/*.h)
@@ -32,7 +31,6 @@ source_group(Configuration FILES ${sources_Configuration})
 source_group(Containers FILES ${sources_Containers})
 source_group(Cryptography FILES ${sources_Cryptography})
 source_group(DataStores FILES ${sources_DataStores})
-source_group(Hacks FILES ${sources_Hacks})
 source_group(IPLocation FILES ${sources_IPLocation})
 source_group(Logging FILES ${sources_Logging})
 source_group(Threading FILES ${sources_Threading})
@@ -56,7 +54,6 @@ set(common_STAT_SRCS
   ${sources_Cryptography}
   ${sources_DataStores}
   ${sources_Debugging}
-  ${sources_Hacks}
   ${sources_IPLocation}
   ${sources_Logging} 
   ${sources_Threading} 
@@ -87,7 +84,6 @@ target_include_directories(common
     ${CMAKE_CURRENT_SOURCE_DIR}/Cryptography/Authentication  
     ${CMAKE_CURRENT_SOURCE_DIR}/DataStores
     ${CMAKE_CURRENT_SOURCE_DIR}/Debugging
-    ${CMAKE_CURRENT_SOURCE_DIR}/Hacks
     ${CMAKE_CURRENT_SOURCE_DIR}/IPLocation
     ${CMAKE_CURRENT_SOURCE_DIR}/Logging
     ${CMAKE_CURRENT_SOURCE_DIR}/Threading
@@ -111,9 +107,6 @@ target_link_libraries(common
 )
 
 add_dependencies(common revision.h)
-
-# Preserve the existing core buffer-pool policy independently of the allocator.
-target_compile_definitions(common PUBLIC NO_BUFFERPOOL)
 
 # Generate precompiled header
 if (USE_COREPCH)

@@ -31,6 +31,7 @@ EndScriptData */
 #include "ScriptMgr.h"
 #include "ServiceMgr.h"
 #include "ServiceBoost.h"
+#include "StringConvert.h"
 
 class character_commandscript : public CommandScript
 {
@@ -465,13 +466,19 @@ public:
             return false;
 
         int32 oldlevel = target ? target->GetLevel() : Player::GetLevelFromDB(targetGuid);
-        int32 newlevel = levelStr ? atoi(levelStr) : oldlevel;
+        int32 newlevel = oldlevel;
+        if (levelStr)
+        {
+            auto parsed = Trinity::StringTo<int32>(levelStr[0] == '+' ? levelStr + 1 : levelStr);
+            if (!parsed)
+                return false;
+            newlevel = *parsed;
+        }
 
         if (newlevel < 1)
             return false;                                       // invalid level
 
-        if (newlevel > STRONG_MAX_LEVEL)                         // hardcoded maximum level
-            newlevel = STRONG_MAX_LEVEL;
+        newlevel = std::min<int32>(newlevel, DEFAULT_MAX_LEVEL);
 
         HandleCharacterLevel(target, targetGuid, oldlevel, newlevel, handler);
         if (!handler->GetSession() || handler->GetSession()->GetPlayer() != target)      // including player == NULL
@@ -839,14 +846,16 @@ public:
             return false;
 
         int32 oldlevel = target ? target->GetLevel() : Player::GetLevelFromDB(targetGuid);
-        int32 addlevel = levelStr ? atoi(levelStr) : 1;
-        int32 newlevel = oldlevel + addlevel;
-
-        if (newlevel < 1)
-            newlevel = 1;
-
-        if (newlevel > STRONG_MAX_LEVEL)                         // hardcoded maximum level
-            newlevel = STRONG_MAX_LEVEL;
+        int32 addlevel = 1;
+        if (levelStr)
+        {
+            auto parsed = Trinity::StringTo<int32>(levelStr[0] == '+' ? levelStr + 1 : levelStr);
+            if (!parsed)
+                return false;
+            addlevel = *parsed;
+        }
+        // Widen before adding so even a valid INT32_MAX increment cannot wrap.
+        int32 newlevel = std::clamp<int64>(int64(oldlevel) + addlevel, 1, DEFAULT_MAX_LEVEL);
 
         HandleCharacterLevel(target, targetGuid, oldlevel, newlevel, handler);
 

@@ -213,6 +213,10 @@ void BotFactory::InitPet()
     {
         if (bot->GetClass() != CLASS_HUNTER)
             return;
+
+        // Call Pet 1 uses the first active slot; an unsummoned pet still owns it.
+        if (bot->GetPetIdBySlot(PET_SLOT_ACTIVE_FIRST))
+            return;
  
         Map* map = bot->GetMap();
         if (!map)
@@ -269,7 +273,19 @@ void BotFactory::InitPet()
  
             pet->InitTalentForLevel();
  
-            pet->SavePetToDB();
+            // Follow native Spell::EffectTameCreature registration and transaction ordering.
+            // Selectively adapted from NotCronky's Hunter AI fix:
+            // https://github.com/NotCronky/Legends-of-Azeroth-Pandaria-5.4.8/commit/969150c0d398039e993a88913fe71a528b74dc41
+            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+            bot->AddNewPet(newPetSlot, pet);
+            bot->SetCurrentPetId(pet->GetCharmInfo()->GetPetNumber(), trans);
+            pet->SavePetToDB(trans);
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_PET_SLOT_BY_ID);
+            stmt->setUInt8(0, newPetSlot);
+            stmt->setUInt32(1, bot->GetGUID().GetCounter());
+            stmt->setUInt32(2, pet->GetCharmInfo()->GetPetNumber());
+            trans->Append(stmt);
+            CharacterDatabase.CommitTransaction(trans);
             bot->PetSpellInitialize();
             break;
         }
@@ -317,7 +333,20 @@ void BotFactory::InitTalentsTree(bool reset)
         // -- Select spec
         if (bot->GetLevel() >= 10)
         {
-            uint32 tab = std::rand() % 3;
+            auto const specializations = dbc::GetClassSpecializations(bot->GetClass());
+            std::vector<uint32> tabs;
+            for (uint32 tab = 0; tab < specializations.size(); ++tab)
+                if (specializations[tab] != Specializations::SPEC_NONE)
+                    tabs.push_back(tab);
+
+            if (tabs.empty())
+            {
+                TC_LOG_ERROR("playerbots", "No specializations found for bot {} (class {})",
+                    bot->GetName(), uint32(bot->GetClass()));
+                return;
+            }
+
+            uint32 tab = tabs[urand(0, uint32(tabs.size()) - 1)];
             WorldPacket p(CMSG_SET_PRIMARY_TALENT_TREE);
             p << tab;
             bot->GetSession()->HandeSetTalentSpecialization(p);

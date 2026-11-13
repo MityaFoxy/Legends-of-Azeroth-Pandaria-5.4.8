@@ -9,14 +9,128 @@ target_include_directories(sanitizer_regression PRIVATE
 target_compile_options(sanitizer_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
 target_link_options(sanitizer_regression PRIVATE -fsanitize=address,undefined)
 enable_testing()
+find_package(OpenSSL REQUIRED)
+add_executable(bignumber_ownership_regression bignumber_ownership_regression.cpp)
+target_include_directories(bignumber_ownership_regression PRIVATE ${LOA_SOURCE_DIR}/src/common)
+target_link_libraries(bignumber_ownership_regression PRIVATE OpenSSL::Crypto)
+target_compile_options(bignumber_ownership_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_link_options(bignumber_ownership_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME bignumber_ownership_regression COMMAND bignumber_ownership_regression)
+find_package(ZLIB REQUIRED)
+add_library(zlib ALIAS ZLIB::ZLIB)
+add_subdirectory(${LOA_SOURCE_DIR}/dep/g3dlite g3dlite)
+target_compile_options(g3dlib PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+add_executable(g3d_allocator_regression g3d_allocator_regression.cpp)
+target_link_libraries(g3d_allocator_regression PRIVATE g3dlib ${CMAKE_DL_LIBS})
+target_compile_options(g3d_allocator_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_link_options(g3d_allocator_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME g3d_allocator_regression COMMAND g3d_allocator_regression)
 add_test(NAME sanitizer_regression COMMAND sanitizer_regression)
 set_tests_properties(sanitizer_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME action_execution_trace_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/action_execution_trace_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(action_execution_trace_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 600)
+add_test(NAME refusal_diagnostics_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/refusal_diagnostics_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(refusal_diagnostics_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 600)
+add_test(NAME playerbot_failed_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_failed_audit_regression.py)
+set_tests_properties(playerbot_failed_audit_regression PROPERTIES LABELS "class-ai;diagnostics" TIMEOUT 60)
+add_test(NAME heroic_leap_landing_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/heroic_leap_landing_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME earth_elemental_threat_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/earth_elemental_threat_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME bg_test_roster_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_test_roster_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME battleground_list_packet_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_list_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME condition_loader_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/condition_loader_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME player_level_cap_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/player_level_cap_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME spell_storage_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/spell_storage_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME bg_native_path_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_native_path_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME resurrection_waterwalk_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/resurrection_waterwalk_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_party_backport_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME playerbot_factory_cache_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_factory_cache_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(playerbot_factory_cache_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME playerbot_cast_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_cast_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(playerbot_cast_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME action_factory_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/action_factory_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+add_test(NAME combat_formation_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/combat_formation_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME oil_action_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/oil_action_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME mana_potion_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/mana_potion_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME database_shutdown_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/database_shutdown_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME stay_line_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/stay_line_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(action_factory_regression combat_formation_regression oil_action_regression stay_line_regression mana_potion_regression database_shutdown_regression PROPERTIES
+  LABELS "class-ai" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME rogue_ai_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/rogue_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+add_test(NAME druid_ai_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_ai_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_ai_regression PROPERTIES LABELS "druid;class-ai" TIMEOUT 600)
+add_test(NAME druid_control_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_control_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_control_regression PROPERTIES LABELS "druid;class-ai" TIMEOUT 600)
+add_test(NAME druid_group_role_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/druid_group_role_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(druid_group_role_regression PROPERTIES LABELS "druid;class-ai;battleground" TIMEOUT 600)
+add_test(NAME dispel_filter_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/dispel_filter_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(dispel_filter_regression PROPERTIES LABELS "druid;class-ai;dispel" TIMEOUT 120)
+set_tests_properties(rogue_ai_regression playerbot_cast_regression
+  playerbot_party_backport_regression playerbot_factory_cache_regression
+  PROPERTIES LABELS "rogue;class-ai" TIMEOUT 600)
+add_test(NAME hunter_pet_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/hunter_pet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(hunter_pet_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 600)
+add_test(NAME hunter_pet_trigger_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/hunter_pet_trigger_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(hunter_pet_trigger_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME pet_state_value_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/pet_state_value_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(pet_state_value_regression PROPERTIES LABELS "class-ai" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME hunter_pet_recovery_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/hunter_pet_recovery_regression.py)
+set_tests_properties(hunter_pet_recovery_regression PROPERTIES LABELS "hunter;class-ai" TIMEOUT 60)
+add_test(NAME playerbot_multilevel_soak_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_multilevel_soak_regression.py)
+set_tests_properties(playerbot_multilevel_soak_regression PROPERTIES LABELS "soak" TIMEOUT 60)
+add_test(NAME hunter_rotation_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/hunter_rotation_audit_regression.py)
+set_tests_properties(hunter_rotation_audit_regression PROPERTIES LABELS "hunter;soak" TIMEOUT 60)
+add_test(NAME tank_equipment_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tank_equipment_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+set_tests_properties(tank_equipment_regression PROPERTIES LABELS "class-ai" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME lifecycle_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")
 add_test(NAME leak_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/leak_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME instance_save_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/instance_save_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
+# The test builds its own local debug information. Keep symbolization local:
+# remote debuginfod failures must not crash llvm-symbolizer during mutations.
+set_tests_properties(instance_save_regression PROPERTIES ENVIRONMENT "DEBUGINFOD_URLS=")
 set_tests_properties(leak_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME cleanup_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/cleanup_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
@@ -37,6 +151,8 @@ set_tests_properties(bot_behavior_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIO
 add_test(NAME map_script_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/map_script_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(map_script_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME script_command_ownership_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/script_command_ownership_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME spell_loot_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/spell_loot_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(spell_loot_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
@@ -51,12 +167,22 @@ add_test(NAME vehicle_condition_registry_regression COMMAND ${Python3_EXECUTABLE
 add_test(NAME movement_path_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/movement_path_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(movement_path_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME tank_face_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tank_face_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(tank_face_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME navigation_recovery_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/navigation_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(navigation_recovery_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME battleground_test_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_test_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_test_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME bg_resurrection_telemetry_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_resurrection_telemetry_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME playerbot_liquid_audit_regression COMMAND ${Python3_EXECUTABLE}
+  ${LOA_SOURCE_DIR}/contrib/tests/playerbot_liquid_audit_regression.py)
+set_tests_properties(playerbot_liquid_audit_regression PROPERTIES LABELS "battleground;soak" TIMEOUT 60)
+add_test(NAME bg_graveyard_recovery_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/bg_graveyard_recovery_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME combat_removal_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/combat_removal_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(combat_removal_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
@@ -66,11 +192,17 @@ set_tests_properties(battleground_group_lifecycle_regression PROPERTIES ENVIRONM
 add_test(NAME battleground_starting_area_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/battleground_starting_area_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(battleground_starting_area_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME pandaren_faction_transfer_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/pandaren_faction_transfer_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(pandaren_faction_transfer_regression PROPERTIES LABELS "playerbots;starting-area" TIMEOUT 600
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME playerbot_bg_bracket_distribution_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_bg_bracket_distribution_regression.py ${LOA_SOURCE_DIR})
 add_test(NAME battleground_resurrection_regression COMMAND ${Python3_EXECUTABLE}
-  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+  ${CMAKE_CURRENT_SOURCE_DIR}/battleground_resurrection_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(battleground_resurrection_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME ab_resilient_victory_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/ab_resilient_victory_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME path_query_budget_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/path_query_budget_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(path_query_budget_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")

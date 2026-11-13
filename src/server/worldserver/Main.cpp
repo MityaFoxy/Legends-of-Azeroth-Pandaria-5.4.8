@@ -236,6 +236,9 @@ extern int main(int argc, char** argv)
 
     auto outdoorPvpMgrHandle = Trinity::make_unique_ptr_with_deleter(sOutdoorPvPMgr, [](OutdoorPvPMgr* mgr) { mgr->Die(); });
 
+    // Destroy remaining saves after sessions and maps, while groups and databases still exist.
+    auto instanceSaveMgrHandle = Trinity::make_unique_ptr_with_deleter(sInstanceSaveMgr, [](InstanceSaveManager* mgr) { mgr->Unload(); });
+
     // unload all grids (including locked in memory)
     auto mapManagementHandle = Trinity::make_unique_ptr_with_deleter(sMapMgr, [](MapManager* mgr) { mgr->UnloadAll(); });
 
@@ -286,8 +289,7 @@ extern int main(int argc, char** argv)
 
         mgr->StopNetwork();
 
-        ///- Clean database before leaving
-        ClearOnlineAccounts();
+        // Final online cleanup belongs to StopDB, after queued saves finish.
     });
 
     // Set server online (allow connecting now)
@@ -617,6 +619,16 @@ bool StartDB()
 
 void StopDB()
 {
+    // All world/session/map producers have stopped. Drain before the final
+    // synchronous offline update so a queued save cannot restore online=1.
+    CharacterDatabase.StopAsyncWorkers();
+    WorldDatabase.StopAsyncWorkers();
+    LoginDatabase.StopAsyncWorkers();
+#ifdef PLAYERBOTS
+    PlayerbotsDatabase.StopAsyncWorkers();
+#endif
+    ClearOnlineAccounts();
+
     CharacterDatabase.Close();
     WorldDatabase.Close();
     LoginDatabase.Close();

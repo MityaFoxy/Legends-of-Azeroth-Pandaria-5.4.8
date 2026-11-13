@@ -8,6 +8,7 @@ class PlayerbotAI;
 class Unit;
 class WorldObject;
 class Position;
+class ChatHandler;
 
 #define ANGLE_45_DEG (static_cast<float>(M_PI) / 4.f)
 #define ANGLE_90_DEG M_PI_2
@@ -74,15 +75,37 @@ protected:
     };
 
 private:
+    // The opt-in query fixture can plan from a recorded position without
+    // relocating a player, dispatching movement or exposing a gameplay API.
+    friend bool HandleNavigationReplayTest(ChatHandler* handler);
+    friend bool HandleNavigationStartMismatchReplayTest(ChatHandler* handler);
+    // Per-search evidence; never retained as movement state or used to select a route.
+    struct NavigationDiagnostics
+    {
+        char const* primaryReason = "not-queried";
+        uint32 primaryType = 0;
+        char const* stage = "not-queried";
+        char const* lastReason = "not-queried";
+        uint32 lastType = 0;
+        G3D::Vector3 queryFrom{0, 0, 0}, queryTo{0, 0, 0};
+        float endOffset = -1.0f;
+        uint32 mismatchAttempt = 0;
+        char const* mismatchStage = "none";
+        G3D::Vector3 mismatchFrom{0, 0, 0}, mismatchStart{0, 0, 0};
+        uint32 blockedAttempt = 0;
+        char const* blockedStage = "none";
+        G3D::Vector3 blockedFrom{0, 0, 0}, blockedTo{0, 0, 0};
+    };
+
     bool ValidateWaterConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     bool ValidateGroundConnection(G3D::Vector3 const& from, G3D::Vector3 const& to);
     Movement::PointsArray SearchForBestPath(float x, float y, float z, bool& usingNavigation,
-        bool normalOnly = false, uint32 recoveryAttempt = 0);
+        bool normalOnly = false, uint32 recoveryAttempt = 0, G3D::Vector3 const* startPosition = nullptr);
     bool CanStartGroundMovement(float x, float y, float z);
     void TrackGroundMovement(float x, float y, float z, bool normalOnly, bool backwards);
     void LogStuckResult(char const* outcome, uint32 attempts, bool warning = true);
     void LogNavigationResult(char const* outcome, char const* reason, uint32 type, uint32 attempts,
-        float x, float y, float z, bool warning);
+        float x, float y, float z, bool warning, NavigationDiagnostics const* diagnostics = nullptr);
 };
 
 class MoveRandomAction : public MovementAction
@@ -107,12 +130,13 @@ public:
     bool Execute(Event event) override;
 
 protected:
+    bool CanReposition();
     Position AverageGroupPos(float dis = sPlayerbotAIConfig->sightDistance, bool ranged = false, bool self = false);
     Player* NearestGroupMember(float dis = sPlayerbotAIConfig->sightDistance);
     float AverageGroupAngle(Unit* from, bool ranged = false, bool self = false);
     Position GetNearestPosition(const std::vector<Position>& positions);
-    int lastMoveTimer = 0;
-    int moveInterval;
+    uint32 lastMoveTimer = 0;
+    uint32 moveInterval;
 };
 
 class TankFaceAction : public CombatFormationMoveAction
@@ -120,6 +144,7 @@ class TankFaceAction : public CombatFormationMoveAction
 public:
     TankFaceAction(PlayerbotAI* botAI) : CombatFormationMoveAction(botAI, "tank face") {}
 
+    bool isUseful() override { return CanReposition(); }
     bool Execute(Event event) override;
 };
 

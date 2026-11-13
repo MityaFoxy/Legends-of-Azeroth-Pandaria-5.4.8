@@ -11,4 +11,41 @@
 
 class PlayerbotAI;
 
+DEBUFF_CHECKISOWNER_TRIGGER(SerpentStingTrigger, "serpent sting");
+DEBUFF_CHECKISOWNER_TRIGGER(BlackArrowTrigger, "black arrow");
+DEBUFF_TRIGGER(HuntersMarkTrigger, "hunter's mark");
+
+class SerpentStingOnAttackerTrigger : public DebuffOnAttackerTrigger
+{
+public:
+    SerpentStingOnAttackerTrigger(PlayerbotAI* botAI) : DebuffOnAttackerTrigger(botAI, "serpent sting") {}
+
+    Unit* GetTarget() override;
+};
+
+class HunterNoPetTrigger : public NoPetTrigger
+{
+public:
+    HunterNoPetTrigger(PlayerbotAI* botAI) : NoPetTrigger(botAI) {}
+
+    std::string const getName() override { return "hunter no pet"; }
+    bool IsActive() override;
+};
+
+class HuntersPetMediumHealthTrigger : public Trigger
+{
+public:
+    HuntersPetMediumHealthTrigger(PlayerbotAI* botAI) : Trigger(botAI, "hunters pet medium health", 2) {}
+
+    bool IsActive() override;
+};
+
+class HuntersPetDeadTrigger : public Trigger
+{
+public:
+    HuntersPetDeadTrigger(PlayerbotAI* botAI) : Trigger(botAI, "hunters pet dead", 2) {}
+
+    bool IsActive() override;
+};
+
 #endif

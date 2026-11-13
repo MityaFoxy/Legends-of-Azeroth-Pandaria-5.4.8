@@ -59,11 +59,30 @@ class RogueTriggerFactoryInternal : public NamedObjectContext<Trigger>
 public:
     RogueTriggerFactoryInternal()
     {
-
+        creators["combo points available"] = &combo_points;
+        creators["combo points 3 available"] = &combo_points_3;
+        creators["target with combo points almost dead"] = &target_dying;
+        creators["slice and dice"] = &slice_and_dice;
+        creators["kick"] = &kick;
+        creators["kick on enemy healer"] = &kick_on_enemy_healer;
     }
 
 private:
-
+    static Trigger* combo_points(PlayerbotAI* botAI)
+    {
+        return new RogueComboPointsTrigger(botAI, "combo points available", 5);
+    }
+    static Trigger* combo_points_3(PlayerbotAI* botAI)
+    {
+        return new RogueComboPointsTrigger(botAI, "combo points 3 available", 3);
+    }
+    static Trigger* target_dying(PlayerbotAI* botAI) { return new RogueTargetDyingTrigger(botAI); }
+    static Trigger* slice_and_dice(PlayerbotAI* botAI) { return new SliceAndDiceTrigger(botAI); }
+    static Trigger* kick(PlayerbotAI* botAI) { return new InterruptSpellTrigger(botAI, "kick"); }
+    static Trigger* kick_on_enemy_healer(PlayerbotAI* botAI)
+    {
+        return new InterruptEnemyHealerTrigger(botAI, "kick");
+    }
 };
 
 class RogueAiObjectContextInternal : public NamedObjectContext<Action>

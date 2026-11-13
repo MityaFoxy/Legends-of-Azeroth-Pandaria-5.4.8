@@ -291,12 +291,16 @@ void WorldSession::HandleQuestgiverAcceptQuestOpcode(WorldPacket& recvData)
             switch (object->GetTypeId())
             {
                 case TYPEID_UNIT:
+                    // Run both the script-class hook and the creature AI hook. Some older
+                    // escort and starting-zone scripts only implement the ScriptMgr hook.
+                    sScriptMgr->OnQuestAccept(_player, object->ToCreature(), quest);
                     object->ToCreature()->AI()->OnQuestAccept(_player, quest);
                     break;
                 case TYPEID_ITEM:
                 case TYPEID_CONTAINER:
                 {
                     Item* item = (Item*)object;
+                    sScriptMgr->OnQuestAccept(_player, item, quest);
 
                     // destroy not required for quest finish quest starting item
                     bool destroyItem = true;
@@ -337,6 +341,7 @@ void WorldSession::HandleQuestgiverAcceptQuestOpcode(WorldPacket& recvData)
                     break;
                 }
                 case TYPEID_GAMEOBJECT:
+                    sScriptMgr->OnQuestAccept(_player, object->ToGameObject(), quest);
                     object->ToGameObject()->AI()->OnQuestAccept(_player, quest);
                     break;
                 default:

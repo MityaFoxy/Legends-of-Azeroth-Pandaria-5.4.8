@@ -55,7 +55,7 @@ void GenericHunterNonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& tri
 
 void HunterPetStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
-    triggers.push_back(new TriggerNode("no pet", NextAction::array(0, new NextAction("call pet 1", 60.0f), nullptr)));
+    triggers.push_back(new TriggerNode("hunter no pet", NextAction::array(0, new NextAction("call pet 1", 60.0f), nullptr)));
     triggers.push_back(new TriggerNode("has pet", NextAction::array(0, new NextAction("toggle pet spell", 60.0f), nullptr)));
     triggers.push_back(new TriggerNode("hunters pet medium health", NextAction::array(0, new NextAction("mend pet", 60.0f), nullptr)));
     triggers.push_back(new TriggerNode("hunters pet dead", NextAction::array(0, new NextAction("revive pet", 60.0f), nullptr)));

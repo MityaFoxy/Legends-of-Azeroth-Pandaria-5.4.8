@@ -16,6 +16,7 @@
 */
 
 #include <OpenSSLCrypto.h>
+#include "Errors.h"
 #include <openssl/crypto.h>
 
 #if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER < 0x1010000fL
@@ -39,9 +40,14 @@ static void threadIdCallback(CRYPTO_THREADID * id)
     CRYPTO_THREADID_set_numeric(id, std::hash<std::thread::id>()(std::this_thread::get_id()));
 }
 #elif OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/evp.h>
 #include <openssl/provider.h>
-OSSL_PROVIDER* LegacyProvider;
-OSSL_PROVIDER* DefaultProvider;
+
+namespace
+{
+OSSL_PROVIDER* LegacyProvider = nullptr;
+OSSL_PROVIDER* DefaultProvider = nullptr;
+}
 #endif
 
 void OpenSSLCrypto::threadsSetup([[maybe_unused]] boost::filesystem::path const& providerModulePath)
@@ -63,7 +69,13 @@ void OpenSSLCrypto::threadsSetup([[maybe_unused]] boost::filesystem::path const&
     OSSL_PROVIDER_set_default_search_path(nullptr, providerModulePath.string().c_str());
 #endif
     LegacyProvider = OSSL_PROVIDER_load(nullptr, "legacy");
+    WPFatal(LegacyProvider, "OpenSSL legacy provider could not be loaded. RC4 is required by the MoP 5.4.8 session protocol.");
     DefaultProvider = OSSL_PROVIDER_load(nullptr, "default");
+    WPFatal(DefaultProvider, "OpenSSL default provider could not be loaded.");
+
+    EVP_CIPHER* rc4 = EVP_CIPHER_fetch(nullptr, "RC4", "provider=legacy");
+    WPFatal(rc4, "OpenSSL legacy provider does not expose RC4, which is required by the MoP 5.4.8 session protocol.");
+    EVP_CIPHER_free(rc4);
 #endif
 }
 
@@ -78,8 +90,16 @@ void OpenSSLCrypto::threadsCleanup()
     }
     cryptoLocks.resize(0);
 #elif OPENSSL_VERSION_NUMBER >= 0x30000000L
-    OSSL_PROVIDER_unload(LegacyProvider);
-    OSSL_PROVIDER_unload(DefaultProvider);
+    if (LegacyProvider)
+    {
+        OSSL_PROVIDER_unload(LegacyProvider);
+        LegacyProvider = nullptr;
+    }
+    if (DefaultProvider)
+    {
+        OSSL_PROVIDER_unload(DefaultProvider);
+        DefaultProvider = nullptr;
+    }
     OSSL_PROVIDER_set_default_search_path(nullptr, nullptr);
 #endif
 }

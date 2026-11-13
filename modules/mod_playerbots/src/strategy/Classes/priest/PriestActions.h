@@ -182,8 +182,10 @@ public:
         : HealPartyMemberAction(ai, "power word: shield", 15.0f, HealingManaEfficiency::HIGH)
     {
     }
+    std::string const getName() override { return "power word: shield on almost full health below"; }
     bool isUseful() override;
     Unit* GetTarget() override;
+    bool Execute(Event event) override;
 };
 
 class CastPowerWordShieldOnNotFullAction : public HealPartyMemberAction
@@ -193,8 +195,10 @@ public:
         : HealPartyMemberAction(ai, "power word: shield", 5.0f, HealingManaEfficiency::HIGH)
     {
     }
+    std::string const getName() override { return "power word: shield on not full"; }
     bool isUseful() override;
     Unit* GetTarget() override;
+    bool Execute(Event event) override;
 };
 
 class CastMindSearAction : public CastSpellAction

@@ -70,6 +70,8 @@ private:
     std::string const _logger;
     bool const _autoSetup;
     uint32 const _updateFlags;
+    uint32 const _connectionRetryAttempts;
+    uint32 const _connectionRetryInterval;
 
     std::queue<Predicate> _open, _populate, _update, _prepare;
     std::stack<Closer> _close;

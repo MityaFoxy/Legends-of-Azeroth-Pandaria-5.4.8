@@ -7,12 +7,15 @@
 #include "ChooseTargetActions.h"
 #include "FollowActions.h"
 #include "GenericActions.h"
+#include "GenericSpellActions.h"
 #include "PositionAction.h"
 #include "RtiAction.h"
 #include "MovementActions.h"
 #include "RandomBotUpdateAction.h"
 #include "ReachTargetActions.h"
 #include "StayActions.h"
+#include "OilActions.h"
+#include "ManaPotionAction.h"
 
 class PlayerbotAI;
 class ActionContext : public NamedObjectContext<Action>
@@ -30,6 +33,9 @@ public:
         creators["guard"] = &ActionContext::guard;
         creators["runaway"] = &ActionContext::runaway;
         creators["stay"] = &ActionContext::stay;
+        creators["stay line"] = &ActionContext::stay_line;
+        creators["apply oil"] = &ActionContext::apply_oil;
+        creators["mana potion"] = &ActionContext::mana_potion;
         creators["sit"] = &ActionContext::sit;
 
         creators["random bot update"] = &ActionContext::random_bot_update;
@@ -38,6 +44,7 @@ public:
         creators["auto maintenance on levelup"] = &ActionContext::auto_maintenance_on_levelup;
 
         creators["tank face"] = &ActionContext::tank_face;
+        creators["combat formation move"] = &ActionContext::combat_formation_move;
         creators["tank assist"] = &ActionContext::tank_assist;
         creators["set facing"] = &ActionContext::set_facing;
         creators["drop target"] = &ActionContext::drop_target;
@@ -45,6 +52,7 @@ public:
         creators["dps aoe"] = &ActionContext::dps_aoe;
         creators["attack"] = &ActionContext::melee;
         creators["melee"] = &ActionContext::melee;
+        creators["shoot"] = &ActionContext::shoot;
         creators["attack anything"] = &ActionContext::attack_anything;
 
         creators["toggle pet spell"] = &ActionContext::toggle_pet_spell;
@@ -69,6 +77,9 @@ private:
     static Action* flee_to_master(PlayerbotAI* botAI) { return new FleeToMasterAction(botAI); }
     static Action* guard(PlayerbotAI* botAI) { return new GuardAction(botAI); }
     static Action* stay(PlayerbotAI* botAI) { return new StayAction(botAI); }
+    static Action* stay_line(PlayerbotAI* botAI) { return new StayLineAction(botAI); }
+    static Action* apply_oil(PlayerbotAI* botAI) { return new ApplyOilAction(botAI); }
+    static Action* mana_potion(PlayerbotAI* botAI) { return new ManaPotionAction(botAI); }
     static Action* sit(PlayerbotAI* botAI) { return new SitAction(botAI); }
     static Action* runaway(PlayerbotAI* botAI) { return new RunAwayAction(botAI); }
 
@@ -78,12 +89,14 @@ private:
     static Action* auto_maintenance_on_levelup(PlayerbotAI* botAI) { return new AutoMaintenanceOnLevelupAction(botAI); }
 
     static Action* tank_face(PlayerbotAI* botAI) { return new TankFaceAction(botAI); }
+    static Action* combat_formation_move(PlayerbotAI* botAI) { return new CombatFormationMoveAction(botAI); }
     static Action* tank_assist(PlayerbotAI* botAI) { return new TankAssistAction(botAI); }
     static Action* set_facing(PlayerbotAI* botAI) { return new SetFacingTargetAction(botAI); }
     static Action* drop_target(PlayerbotAI* botAI) { return new DropTargetAction(botAI); }
     static Action* dps_assist(PlayerbotAI* botAI) { return new DpsAssistAction(botAI); }
     static Action* dps_aoe(PlayerbotAI* botAI) { return new DpsAoeAction(botAI); }
     static Action* melee(PlayerbotAI* botAI) { return new MeleeAction(botAI); }
+    static Action* shoot(PlayerbotAI* botAI) { return new CastShootAction(botAI); }
     static Action* attack_anything(PlayerbotAI* botAI) { return new AttackAnythingAction(botAI); }
 
     static Action* toggle_pet_spell(PlayerbotAI* ai) { return new TogglePetSpellAutoCastAction(ai); }

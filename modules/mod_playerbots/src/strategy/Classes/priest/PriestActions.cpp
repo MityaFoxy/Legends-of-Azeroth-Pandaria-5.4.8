@@ -21,12 +21,13 @@ bool CastRemoveShadowformAction::Execute(Event event)
 Unit* CastPowerWordShieldOnAlmostFullHealthBelowAction::GetTarget()
 {
     Group* group = bot->GetGroup();
+    if (!group)
+        return nullptr;
     for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
     {
         Player* player = gref->GetSource();
-        if (!player)
-            continue;
-        if (player->isDead())
+        if (!player || !player->IsInWorld() || !player->IsAlive() ||
+            player->GetMap() != bot->GetMap() || !bot->IsValidAssistTarget(player))
         {
             continue;
         }
@@ -34,7 +35,8 @@ Unit* CastPowerWordShieldOnAlmostFullHealthBelowAction::GetTarget()
         {
             continue;
         }
-        if (player->GetDistance2d(bot) > sPlayerbotAIConfig->spellDistance)
+        if (bot->GetDistance(player) > sPlayerbotAIConfig->spellDistance ||
+            (player != bot && !bot->IsWithinLOSInMap(player)))
         {
             continue;
         }
@@ -49,47 +51,30 @@ Unit* CastPowerWordShieldOnAlmostFullHealthBelowAction::GetTarget()
 
 bool CastPowerWordShieldOnAlmostFullHealthBelowAction::isUseful()
 {
-    Group* group = bot->GetGroup();
-    for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
-    {
-        Player* player = gref->GetSource();
-        if (!player)
-            continue;
-        if (player->isDead())
-        {
-            continue;
-        }
-        if (player->GetHealthPct() > sPlayerbotAIConfig->almostFullHealth)
-        {
-            continue;
-        }
-        if (player->GetDistance2d(bot) > sPlayerbotAIConfig->spellDistance)
-        {
-            continue;
-        }
-        if (botAI->HasAnyAuraOf(player, "weakened soul", "power word: shield", nullptr))
-        {
-            continue;
-        }
-        return true;
-    }
-    return false;
+    return GetTarget() && CastSpellAction::isUseful();
+}
+
+bool CastPowerWordShieldOnAlmostFullHealthBelowAction::Execute(Event event)
+{
+    return isUseful() && CastSpellAction::Execute(event);
 }
 
 Unit* CastPowerWordShieldOnNotFullAction::GetTarget()
 {
     Group* group = bot->GetGroup();
+    if (!group)
+        return nullptr;
     MinValueCalculator calc(100);
     for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
     {
         Player* player = gref->GetSource();
-        if (!player)
-            continue;
-        if (player->isDead() || player->IsFullHealth())
+        if (!player || !player->IsInWorld() || !player->IsAlive() || player->IsFullHealth() ||
+            player->GetMap() != bot->GetMap() || !bot->IsValidAssistTarget(player))
         {
             continue;
         }
-        if (player->GetDistance2d(bot) > sPlayerbotAIConfig->spellDistance)
+        if (bot->GetDistance(player) > sPlayerbotAIConfig->spellDistance ||
+            (player != bot && !bot->IsWithinLOSInMap(player)))
         {
             continue;
         }
@@ -104,5 +89,11 @@ Unit* CastPowerWordShieldOnNotFullAction::GetTarget()
 
 bool CastPowerWordShieldOnNotFullAction::isUseful()
 {
-    return GetTarget();
+    return GetTarget() && CastSpellAction::isUseful();
+}
+
+bool CastPowerWordShieldOnNotFullAction::Execute(Event event)
+{
+    // A queued group heal must not fall through to a self-cast after disband.
+    return isUseful() && CastSpellAction::Execute(event);
 }

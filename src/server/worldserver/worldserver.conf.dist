@@ -159,6 +159,23 @@ WorldDatabase.SynchThreads     = 1
 CharacterDatabase.SynchThreads = 2
 
 #
+#    Database.ConnectionRetryAttempts
+#        Description: Total number of attempts made while MySQL is temporarily unavailable during
+#                     server startup. Authentication, schema, and other permanent errors fail
+#                     immediately. Set to 1 to disable retries.
+#        Default:     30
+
+Database.ConnectionRetryAttempts = 30
+
+#
+#    Database.ConnectionRetryInterval
+#        Description: Delay in seconds between startup connection attempts.
+#        Range:       1-60
+#        Default:     1
+
+Database.ConnectionRetryInterval = 1
+
+#
 #    MaxPingTime
 #        Description: Time (in minutes) between database pings.
 #        Default:     30
@@ -875,8 +892,7 @@ SkipCinematics = 0
 #
 #    MaxPlayerLevel
 #        Description: Maximum level that can be reached by players.
-#        Important:   Levels beyond 100 are not recommended at all.
-#        Range:       1-255
+#        Range:       1-90 (hard player limit for MoP, including GM commands)
 #        Default:     90
 
 MaxPlayerLevel = 90
@@ -1813,6 +1829,7 @@ GM.InWhoList.Level = 3
 #
 #    GM.StartLevel
 #        Description: GM character starting level.
+#        Range:       StartPlayerLevel-90
 #        Default:     1
 
 GM.StartLevel = 1

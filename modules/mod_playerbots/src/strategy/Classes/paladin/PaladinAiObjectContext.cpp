@@ -136,12 +136,16 @@ public:
         creators["avenger's shield"] = &PaladinAiObjectContextInternal::avengers_shield;
         creators["exorcism"] = &PaladinAiObjectContextInternal::exorcism;
         creators["judgement"] = &PaladinAiObjectContextInternal::judgement;
+        creators["judgment"] = &PaladinAiObjectContextInternal::judgement;
         creators["divine shield"] = &PaladinAiObjectContextInternal::divine_shield;
         creators["divine protection"] = &PaladinAiObjectContextInternal::divine_protection;
         creators["divine protection on party"] = &PaladinAiObjectContextInternal::divine_protection_on_party;
         creators["hammer of justice"] = &PaladinAiObjectContextInternal::hammer_of_justice;
         creators["flash of light on party"] = &PaladinAiObjectContextInternal::flash_of_light_on_party;
         creators["holy light"] = &PaladinAiObjectContextInternal::holy_light;
+        creators["word of glory"] = &PaladinAiObjectContextInternal::word_of_glory;
+        creators["word of glory on party"] = &PaladinAiObjectContextInternal::word_of_glory_on_party;
+        creators["seal of truth"] = &PaladinAiObjectContextInternal::seal_of_truth;
         creators["holy light on party"] = &PaladinAiObjectContextInternal::holy_light_on_party;
         creators["lay on hands"] = &PaladinAiObjectContextInternal::lay_on_hands;
         creators["lay on hands on party"] = &PaladinAiObjectContextInternal::lay_on_hands_on_party;
@@ -174,6 +178,9 @@ public:
     }
 
 private:
+    static Action* word_of_glory(PlayerbotAI* botAI) { return new CastWordOfGloryAction(botAI); }
+    static Action* word_of_glory_on_party(PlayerbotAI* botAI) { return new CastWordOfGloryOnPartyAction(botAI); }
+    static Action* seal_of_truth(PlayerbotAI* botAI) { return new CastSealOfTruthAction(botAI); }
     static Action* seal_of_command(PlayerbotAI* botAI) { return new CastSealOfCommandAction(botAI); }
     static Action* seal_of_righteousness(PlayerbotAI* botAI) { return new CastSealOfRighteousnessAction(botAI); }
     static Action* seal_of_insight(PlayerbotAI* botAI) { return new CastSealOfInsightAction(botAI); }

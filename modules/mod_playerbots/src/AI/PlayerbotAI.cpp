@@ -15,6 +15,7 @@
 * with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "ActionExecutionTrace.h"
 #include "PlayerbotAI.h"
 
 #include <cmath>
@@ -136,6 +137,7 @@ PlayerbotAI::PlayerbotAI(Player* bot)
     _engines[BOT_STATE_COMBAT] = AiFactory::createCombatEngine(bot, this, _aiObjectContext);
     _engines[BOT_STATE_NON_COMBAT] = AiFactory::createNonCombatEngine(bot, this, _aiObjectContext);
     _engines[BOT_STATE_DEAD] = AiFactory::createDeadEngine(bot, this, _aiObjectContext);
+    RememberDefaultDruidGroupRole();
 
     _currentEngine = _engines[BOT_STATE_NON_COMBAT];
     _currentState = BOT_STATE_NON_COMBAT;
@@ -790,6 +792,57 @@ void PlayerbotAI::ResetStrategies()
 
     for (uint8 i = 0; i < BOT_STATE_MAX; i++)
         _engines[i]->Init();
+    RememberDefaultDruidGroupRole();
+}
+
+void PlayerbotAI::RememberDefaultDruidGroupRole()
+{
+    // Only a freshly constructed default configuration owns this transition.
+    // The factory has always selected heal in a group and caster while solo.
+    _automaticDruidRole = !IsRealPlayer() && !HasRealPlayerMaster() &&
+        sRandomPlayerbotMgr->IsRandomBot(bot) &&
+        bot->GetSpecialization() == SPEC_DRUID_RESTORATION;
+    _druidRoleGrouped = bot->GetGroup() != nullptr;
+    _druidRoleStrategies = _engines[BOT_STATE_COMBAT]->GetStrategies();
+}
+
+void PlayerbotAI::UpdateDefaultDruidGroupRole()
+{
+    if (!_automaticDruidRole)
+        return;
+    if (IsRealPlayer() || HasRealPlayerMaster() || !sRandomPlayerbotMgr->IsRandomBot(bot) ||
+        bot->GetSpecialization() != SPEC_DRUID_RESTORATION)
+    {
+        _automaticDruidRole = false;
+        return;
+    }
+
+    bool const grouped = bot->GetGroup() != nullptr;
+    if (grouped == _druidRoleGrouped)
+        return;
+    Engine* engine = _engines[BOT_STATE_COMBAT];
+    // Preserve changes made directly to an Engine as well as public commands.
+    if (engine->GetStrategies() != _druidRoleStrategies)
+    {
+        _automaticDruidRole = false;
+        return;
+    }
+
+    // Change only the role-specific strategies from AiFactory's solo override.
+    // Do not reset other engines, select a master, or interrupt native spells.
+    if (grouped)
+    {
+        engine->removeStrategy("caster aoe", false);
+        engine->removeStrategy("caster debuff", false);
+        engine->addStrategy("heal", false); // removes sibling caster
+    }
+    else
+        engine->addStrategiesNoInit("caster", "caster aoe", "caster debuff", nullptr);
+    engine->Init();
+    _druidRoleGrouped = grouped;
+    _druidRoleStrategies = engine->GetStrategies();
+    TC_LOG_DEBUG("playerbots", "Default Druid role GUID={} grouped={} bg={} heal={}",
+        bot->GetGUID().GetCounter(), grouped, bot->InBattleground(), engine->HasStrategy("heal"));
 }
 
 void PlayerbotAI::ReInitCurrentEngine()
@@ -830,6 +883,12 @@ void PlayerbotAI::ChangeStrategy(std::string const names, BotState type)
     if (!e)
         return;
 
+    // Explicit combat edits take ownership even when a command reaffirms the
+    // current strategy. A read-only query must not disable automatic defaults.
+    if (type == BOT_STATE_COMBAT)
+        for (std::string const& command : split(names, ','))
+            if (!command.empty() && (command[0] == '+' || command[0] == '-' || command[0] == '~'))
+                _automaticDruidRole = false;
     e->ChangeStrategy(names);
 }
 
@@ -839,6 +898,8 @@ void PlayerbotAI::ClearStrategies(BotState type)
     if (!e)
         return;
 
+    if (type == BOT_STATE_COMBAT)
+        _automaticDruidRole = false;
     e->removeAllStrategies();
 }
 
@@ -907,6 +968,9 @@ void PlayerbotAI::DoNextAction(bool min)
         }
     }
 
+    // BG raids bypass AcceptInvitationAction and its strategy reset. Refresh
+    // the default healer role before objective logic can consume this AI tick.
+    UpdateDefaultDruidGroupRole();
     if (ArathiBasinPlayerbot::DoNextAction(this))
         return;
 
@@ -1626,6 +1690,8 @@ bool IsRealAura(Player* bot, AuraEffect const* aurEff, Unit const* unit)
 
 bool PlayerbotAI::canDispel(SpellInfo const* spellInfo, uint32 dispelType)
 {
+    // These are historical exclusions. caseInsensitiveEqual returns bool,
+    // unlike the strcmpi calls used by the original import.
     static std::vector<std::string> dispel_whitelist =
     {
         "mutating injection",
@@ -1642,19 +1708,19 @@ bool PlayerbotAI::canDispel(SpellInfo const* spellInfo, uint32 dispelType)
 
     for (std::string& wl : dispel_whitelist)
     {
-        if (caseInsensitiveEqual(spellInfo->SpellName, wl) == 0)
+        if (caseInsensitiveEqual(spellInfo->SpellName, wl))
         {
             return false;
         }
     }
 
-    return !spellInfo->SpellName || (caseInsensitiveEqual(spellInfo->SpellName, "demon skin") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "mage armor") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "frost armor") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "wavering will") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "chilled") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "mana tap") &&
-        caseInsensitiveEqual(spellInfo->SpellName, "ice armor"));
+    return !spellInfo->SpellName || (!caseInsensitiveEqual(spellInfo->SpellName, "demon skin") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "mage armor") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "frost armor") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "wavering will") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "chilled") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "mana tap") &&
+        !caseInsensitiveEqual(spellInfo->SpellName, "ice armor"));
 }
 
 bool PlayerbotAI::HasAuraToDispel(Unit* target, uint32 dispelType)
@@ -1944,6 +2010,40 @@ bool PlayerbotAI::CanCastSpell(std::string const name, Unit* target, Item* itemT
     return CanCastSpell(_aiObjectContext->GetValue<uint32>("spell id", name)->Get(), target, true, itemTarget);
 }
 
+// The client resolves action-bar spell overrides before casting. Playerbots cast
+// directly, so mirror that resolution for forms and override auras (for example
+// Mangle -> Mangle (Bear)) instead of executing the base spell's dummy effect.
+uint32 PlayerbotAI::GetActionbarOverride(uint32 spellId) const
+{
+    SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
+    if (!spellInfo)
+        return spellId;
+
+    for (uint32 overrideId : spellInfo->OverrideSpellList)
+    {
+        if (!bot->HasSpell(overrideId))
+            continue;
+
+        if (SpellInfo const* overrideInfo = sSpellMgr->GetSpellInfo(overrideId))
+        {
+            spellInfo = overrideInfo;
+            spellId = overrideId;
+        }
+        break;
+    }
+
+    Unit::AuraEffectList swaps = bot->GetAuraEffectsByType(SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS);
+    Unit::AuraEffectList const& secondarySwaps = bot->GetAuraEffectsByType(SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS_2);
+    swaps.insert(swaps.end(), secondarySwaps.begin(), secondarySwaps.end());
+
+    for (AuraEffect const* effect : swaps)
+        if (effect->IsAffectingSpell(spellInfo))
+            if (SpellInfo const* overrideInfo = sSpellMgr->GetSpellInfo(effect->GetAmount()))
+                return overrideInfo->Id;
+
+    return spellId;
+}
+
 bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, bool checkHasSpell, Item* itemTarget, Item* castItem)
 {
     if (!spellid)
@@ -1982,6 +2082,8 @@ bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, bool checkHasSpell,
         }
         return false;
     }
+
+    spellid = GetActionbarOverride(spellid);
 
     if (bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL) != nullptr)
     {
@@ -2248,18 +2350,24 @@ bool PlayerbotAI::CastSpell(std::string const name, Unit* target, Item* itemTarg
 
 bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 {
+    ActionExecutionTrace::Spell(spellId);
     if (!spellId)
     {
-        return false;
+        return ActionExecutionTrace::Fail("cast/no-spell-id");
     }
+
+    Pet* pet = bot->GetPet();
+    if (!pet || !pet->HasSpell(spellId))
+        spellId = GetActionbarOverride(spellId);
 
     if (!target)
         target = bot;
 
-    Pet* pet = bot->GetPet();
+    ActionExecutionTrace::Spell(spellId);
+    ActionExecutionTrace::Target(target);
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
     if (!spellInfo)
-        return false;
+        return ActionExecutionTrace::Fail("cast/no-spell-info");
     if (pet && pet->HasSpell(spellId))
     {
         bool autocast = false;
@@ -2282,7 +2390,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
 
     if (bot->IsFlying() || bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
     {
-        return false;
+        return ActionExecutionTrace::Fail("cast/in-flight");
     }
 
     bool failWithDelay = false;
@@ -2304,7 +2412,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
     if (failWithDelay)
     {
         SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
-        return false;
+        return ActionExecutionTrace::Fail("cast/stand-up-delay");
     }
 
     Spell* spell = new Spell(bot, spellInfo, TRIGGERED_NONE);
@@ -2365,19 +2473,20 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget)
         SetNextCheckDelay(sPlayerbotAIConfig->reactDelay);
         spell->cancel();
         delete spell;
-        return false;
+        return ActionExecutionTrace::Fail("cast/moving-before-prepare");
     }
 
     spell->prepare(&targets);
     // A second, non-strict check skips instant-spell range and can report OK
     // after prepare already rejected the cast. That starves movement actions.
     SpellCastResult result = spell->GetCastResult();
+    ActionExecutionTrace::Spell(spellId, static_cast<std::int32_t>(result));
     if (result != SPELL_CAST_OK)
     {
         // if (!sPlayerbotAIConfig->logInGroupOnly || (bot->GetGroup() && HasRealPlayerMaster())) {
         TC_LOG_DEBUG("playerbots", "Spell cast failed. - target name: {}, spellid: {}, bot name: {}, result: {}", target->GetName().c_str(), spellId, bot->GetName().c_str(), result);
         // }
-        return false;
+        return ActionExecutionTrace::Fail("cast/prepare-rejected");
     }
     
     _aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetGUID(), time(nullptr));

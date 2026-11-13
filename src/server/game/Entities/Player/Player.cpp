@@ -2988,6 +2988,7 @@ void Player::GiveXP(uint32 xp, Unit* victim, float group_rate)
 // Current player experience not update (must be update by caller)
 void Player::GiveLevel(uint8 level)
 {
+    level = std::clamp<uint8>(level, 1, DEFAULT_MAX_LEVEL);
     uint8 oldLevel = GetLevel();
     if (level == oldLevel)
         return;
@@ -5166,7 +5167,10 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 
     setDeathState(ALIVE);
 
-    SetWaterWalking(false, true);
+    // Ghost movement is server state too. packetOnly leaves the ghost flag
+    // behind for players without a client movement acknowledgement (bots).
+    // A surviving water-walk aura still grants its normal movement permission.
+    SetWaterWalking(HasAuraType(SPELL_AURA_WATER_WALK));
     if (!HasUnitState(UNIT_STATE_STUNNED))
         SetRooted(false);
 
@@ -18653,7 +18657,12 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     SetClass(fields[4].GetUInt8());
     SetGender(gender);
 
-    SetUInt32Value(UNIT_FIELD_LEVEL, fields[6].GetUInt8());
+    uint8 const storedLevel = fields[6].GetUInt8();
+    uint8 const playerLevel = std::clamp<uint8>(storedLevel, 1, DEFAULT_MAX_LEVEL);
+    if (playerLevel != storedLevel)
+        TC_LOG_ERROR("entities.player", "Player ({}) has invalid level ({}), clamped to {}.",
+            guid.ToString(), storedLevel, playerLevel);
+    SetUInt32Value(UNIT_FIELD_LEVEL, playerLevel);
     SetUInt32Value(PLAYER_FIELD_XP, fields[7].GetUInt32());
 
     _LoadIntoDataField(fields[55].GetCString(), PLAYER_FIELD_EXPLORED_ZONES, PLAYER_EXPLORED_ZONES_SIZE);
@@ -25114,12 +25123,27 @@ Player* Player::GetSelectedPlayer() const
     return nullptr;
 }
 
+// The combo target can leave the map without telling us (despawn, map change); then the pointer dangles
+Unit* Player::GetValidComboTarget()
+{
+    if (!m_comboTarget)
+        return nullptr;
+    if (ObjectAccessor::GetUnit(*this, m_comboTargetGuid) != m_comboTarget)
+    {
+        m_comboTarget = nullptr;
+        m_comboTargetGuid.Clear();
+        m_comboPoints = 0;
+        return nullptr;
+    }
+    return m_comboTarget;
+}
+
 void Player::SendComboPoints()
 {
-    if (m_comboTarget)
+    if (GetValidComboTarget())
     {
         WorldPacket data;
-        ObjectGuid guid = m_comboTarget->GetGUID();
+        ObjectGuid guid = m_comboTargetGuid;
         if (m_mover != this)
         {
             ObjectGuid mover = m_mover->GetGUID();
@@ -25193,12 +25217,13 @@ void Player::AddComboPoints(Unit* target, int8 count, Spell* spell)
 
     if (target && target != m_comboTarget)
     {
-        if (m_comboTarget)
+        if (GetValidComboTarget())
         {
             m_comboTarget->RemoveComboPointHolder(GetGUID());
         }
 
         m_comboTarget = target;
+        m_comboTargetGuid = target->GetGUID();
         m_comboPoints = count;
         target->AddComboPointHolder(GetGUID());
     }
@@ -25212,7 +25237,7 @@ void Player::AddComboPoints(Unit* target, int8 count, Spell* spell)
 
 void Player::ClearComboPoints()
 {
-    if (!m_comboTarget || (m_comboTarget && m_comboTarget->GetGUID().IsEmpty()))
+    if (!GetValidComboTarget() || m_comboTargetGuid.IsEmpty())
         return;
 
     // without combopoints lost (duration checked in aura)
@@ -25222,6 +25247,7 @@ void Player::ClearComboPoints()
     SendComboPoints();
     m_comboTarget->RemoveComboPointHolder(GetGUID());
     m_comboTarget = nullptr;
+    m_comboTargetGuid.Clear();
 }
 
 bool Player::IsInGroup(ObjectGuid groupGuid) const
@@ -26324,7 +26350,9 @@ void Player::UpdateForQuestWorldObjects()
             {
                 if (sConditionMgr->GetConditionsForSpellClickEvent(obj->GetEntry(), _itr->second.spellId))
                 {
-                    obj->BuildValuesUpdateBlockForPlayer(&udata, this);
+                    // (quest-click-refresh) a values update only carries changed fields and the NPC flags did not change:
+                    // mark the field, the next update of the creature works it out again for every player who sees it
+                    obj->ForceValuesUpdateAtIndex(UNIT_FIELD_NPC_FLAGS);
                     break;
                 }
             }

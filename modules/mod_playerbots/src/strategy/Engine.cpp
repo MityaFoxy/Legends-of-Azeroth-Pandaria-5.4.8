@@ -4,6 +4,7 @@
  */
 
 #include "Engine.h"
+#include "ActionExecutionTrace.h"
 
 #include "Config.h"
 #include "Log.h"
@@ -215,7 +216,9 @@ bool Engine::DoNextAction(Unit* unit, uint32 depth, bool minimal)
                 }
 
                 PerformanceMonitorOperation* pmo = sPerformanceMonitor->start(PERF_MON_ACTION, action->getName(), &aiObjectContext->performanceStack);
+                ActionExecutionTrace trace(ActionExecutionTrace::Enabled());
                 actionExecuted = ListenAndExecute(action, event);
+                trace.Finish(botAI->GetBot(), action, trace.GetRawResult(), actionExecuted);
                 if (pmo)
                     pmo->finish();
 
@@ -318,6 +321,9 @@ bool Engine::MultiplyAndPush(NextAction** actions, float forceRelevance, bool sk
 
 ActionResult Engine::ExecuteAction(std::string const name, Event event, std::string const qualifier)
 {
+    // Direct calls are outside queued TRACE A: outcomes. Never attribute their
+    // nested failures to an enclosing queued action.
+    ActionExecutionTrace directExecution(false);
     bool result = false;
 
     ActionNode* actionNode = CreateActionNode(name);
@@ -578,6 +584,8 @@ bool Engine::ListenAndExecute(Action* action, Event event)
     {
         actionExecuted = actionExecutionListeners.AllowExecution(action, event) ? action->Execute(event) : true;
     }
+    else
+        ActionExecutionTrace::Fail("listener-before");
 
     if (botAI->HasStrategy("debug", BOT_STATE_NON_COMBAT))
     {
@@ -598,6 +606,7 @@ bool Engine::ListenAndExecute(Action* action, Event event)
         //botAI->TellMasterNoFacing(out);
     }
 
+    ActionExecutionTrace::RawResult(actionExecuted);
     actionExecuted = actionExecutionListeners.OverrideResult(action, actionExecuted, event);
     actionExecutionListeners.After(action, actionExecuted, event);
     return actionExecuted;
@@ -609,6 +618,23 @@ void Engine::LogAction(char const* format, ...)
     {
         if (!behaviorLogEnabled)
             return;
+
+        // Opt-in live diagnostics: TRACE records every decision, while DEBUG
+        // retains the existing periodic summaries and normal logging cost.
+        if (sLog->ShouldLog("playerbots.behavior", LOG_LEVEL_TRACE))
+        {
+            char message[1024];
+            va_list args;
+            va_start(args, format);
+            vsnprintf(message, sizeof(message), format, args);
+            va_end(args);
+            Player* bot = botAI->GetBot();
+            // Strategy construction also calls this before PlayerbotAI has
+            // selected its current engine/state. Only read the ready Player.
+            TC_LOG_TRACE("playerbots.behavior", "Bot={} GUID={} map={} instance={} decision={}",
+                bot->GetName(), bot->GetGUID().GetCounter(), bot->GetMapId(), bot->GetInstanceId(),
+                message);
+        }
 
         if (strncmp(format, "A:", 2) == 0)
         {
@@ -622,6 +648,8 @@ void Engine::LogAction(char const* format, ...)
                 ++behaviorActionsOk;
             else if (lastBehaviorAction.ends_with(" - FAILED"))
                 ++behaviorActionsFailed;
+            else if (lastBehaviorAction.ends_with(" - UNKNOWN"))
+                ++behaviorActionsUnknown;
             return;
         }
 
@@ -633,15 +661,16 @@ void Engine::LogAction(char const* format, ...)
 
         Player* bot = botAI->GetBot();
         TC_LOG_DEBUG("playerbots.behavior",
-            "Bot={} GUID={} level={} race={} class={} ai_state={} alive={} combat={} moving={} hp_pct={} map={} zone={} x={} y={} z={} last_attempt={} ok={} failed={}",
+            "Bot={} GUID={} level={} race={} class={} ai_state={} alive={} combat={} moving={} hp_pct={} map={} zone={} x={} y={} z={} last_attempt={} ok={} failed={} unknown={}",
             bot->GetName(), bot->GetGUID().GetCounter(), bot->GetLevel(), bot->GetRace(), bot->GetClass(),
             uint32(botAI->GetState()), bot->IsAlive(), bot->IsInCombat(), bot->isMoving(), bot->GetHealthPct(),
             bot->GetMapId(), bot->GetZoneId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-            lastBehaviorAction, behaviorActionsOk, behaviorActionsFailed);
+            lastBehaviorAction, behaviorActionsOk, behaviorActionsFailed, behaviorActionsUnknown);
         lastBehaviorLog = now;
         hasBehaviorLog = true;
         behaviorActionsOk = 0;
         behaviorActionsFailed = 0;
+        behaviorActionsUnknown = 0;
         return;
     }
 

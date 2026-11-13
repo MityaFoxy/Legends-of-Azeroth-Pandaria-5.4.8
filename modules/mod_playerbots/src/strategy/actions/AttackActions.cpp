@@ -3,6 +3,7 @@
  * and/or modify it under version 2 of the License, or (at your option), any later version.
  */
 
+#include "ActionExecutionTrace.h"
 #include "AttackActions.h"
 
 #include "CreatureAI.h"
@@ -19,11 +20,11 @@ bool AttackAction::Execute(Event event)
 {
     Unit* target = GetTarget();
     if (!target)
-        return false;
+        return ActionExecutionTrace::Fail("attack/no-target");
 
     if (!target->IsInWorld())
     {
-        return false;
+        return ActionExecutionTrace::Fail("attack/target-not-in-world");
     }
     return Attack(target);
 }
@@ -53,13 +54,14 @@ bool AttackMyTargetAction::Execute(Event event)
 
 bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
 {
+    ActionExecutionTrace::Target(target);
     if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FLIGHT_MOTION_TYPE ||
         bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
     {
         if (verbose)
             botAI->TellError("I cannot attack in flight");
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/in-flight");
     }
 
     if (!target)
@@ -67,12 +69,12 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError("I have no target");
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/no-target");
     }
 
     if (!target->IsInWorld())
     {
-        return false;
+        return ActionExecutionTrace::Fail("attack/target-not-in-world");
     }
 
     if (!bot->IsValidAttackTarget(target))
@@ -80,7 +82,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError("I cannot attack an invalid target");
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/invalid-target");
     }
 
     std::ostringstream msg;
@@ -92,7 +94,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError(msg.str());
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/friendly-target");
     }
 
     if (!bot->IsWithinLOSInMap(target))
@@ -101,7 +103,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError(msg.str());
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/no-los");
     }
 
     if (target->isDead())
@@ -110,7 +112,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError(msg.str());
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/dead-target");
     }
 
     if (sPlayerbotAIConfig->IsInPvpProhibitedZone(bot->GetZoneId())
@@ -119,7 +121,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
         if (verbose)
             botAI->TellError("I cannot attack others in PvP prohibited zones");
 
-        return false;
+        return ActionExecutionTrace::Fail("attack/pvp-prohibited");
     }
 
     // if (bot->IsMounted() && bot->IsWithinLOSInMap(target))
@@ -135,7 +137,7 @@ bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
     bool melee = bot->IsWithinMeleeRange(target) || PlayerBotSpec::IsMelee(bot);
 
     if (oldTarget == target && botAI->GetState() == BOT_STATE_COMBAT && bot->GetVictim() == target && (bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING) == melee))
-        return false;
+        return ActionExecutionTrace::Fail("attack/already-attacking");
 
     context->GetValue<Unit*>("old target")->Set(oldTarget);
 

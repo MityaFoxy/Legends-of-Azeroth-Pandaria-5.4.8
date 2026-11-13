@@ -11,5 +11,9 @@
 
 bool SealTrigger::IsActive()
 {
-	return !botAI->HasAura("seal of righteousness", bot) || !botAI->HasAura("seal of command", bot) || !botAI->HasAura("seal of insight", bot);
+    return !botAI->HasAura("seal of righteousness", bot) &&
+        !botAI->HasAura("seal of command", bot) &&
+        !botAI->HasAura("seal of truth", bot) &&
+        !botAI->HasAura("seal of justice", bot) &&
+        !botAI->HasAura("seal of insight", bot);
 }

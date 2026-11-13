@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 class MySQLPreparedStatement;
@@ -79,6 +80,7 @@ class TC_DATABASE_API MySQLConnection
         uint32 GetLastError();
 
         void StartWorkerThread(Trinity::Asio::IoContext* context);
+        void StopWorkerThread();
 
         std::thread::id GetWorkerThreadId() const;
 
@@ -106,6 +108,7 @@ class TC_DATABASE_API MySQLConnection
         bool _HandleMySQLErrno(uint32 errNo, uint8 attempts = 5);
 
         std::unique_ptr<std::thread> m_workerThread;        //!< Core worker thread.
+        std::thread::id m_workerThreadId; // Stable while other workers drain and scan the pool.
         MySQLHandle*          m_Mysql;                      //! MySQL Handle.
         MySQLConnectionInfo&  m_connectionInfo;             //! Connection info (used for logging)
         ConnectionFlags       m_connectionFlags;            //! Connection flags (for preparing relevant statements)

@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DRUIDBEARACTIONS_H
 
 #include "GenericSpellActions.h"
+#include "DruidControlActions.h"
 #include "ReachTargetActions.h"
 
 class PlayerbotAI;
@@ -31,10 +32,10 @@ public:
     bool isUseful() override;
 };
 
-class CastBashAction : public CastMeleeSpellAction
+class CastBashAction : public DruidBashAction
 {
 public:
-    CastBashAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "bash") {}
+    CastBashAction(PlayerbotAI* botAI) : DruidBashAction(botAI) {}
 };
 
 class CastSwipeAction : public CastMeleeSpellAction
@@ -52,13 +53,15 @@ public:
 class CastMangleBearAction : public CastMeleeSpellAction
 {
 public:
-    CastMangleBearAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "mangle (bear)") {}
+    CastMangleBearAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "mangle") {}
+    std::string const getName() override { return "mangle (bear)"; }
 };
 
 class CastSwipeBearAction : public CastMeleeSpellAction
 {
 public:
-    CastSwipeBearAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "swipe (bear)") {}
+    CastSwipeBearAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "swipe") {}
+    std::string const getName() override { return "swipe (bear)"; }
 };
 
 class CastLacerateAction : public CastMeleeSpellAction
@@ -67,10 +70,10 @@ public:
     CastLacerateAction(PlayerbotAI* botAI) : CastMeleeSpellAction(botAI, "lacerate") {}
 };
 
-class CastBashOnEnemyHealerAction : public CastSpellOnEnemyHealerAction
+class CastBashOnEnemyHealerAction : public DruidBashAction
 {
 public:
-    CastBashOnEnemyHealerAction(PlayerbotAI* botAI) : CastSpellOnEnemyHealerAction(botAI, "bash") {}
+    CastBashOnEnemyHealerAction(PlayerbotAI* botAI) : DruidBashAction(botAI, true) {}
 };
 
 #endif

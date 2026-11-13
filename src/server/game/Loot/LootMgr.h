@@ -292,7 +292,9 @@ class LootTemplate
         void Verify(LootStore const& store, uint32 Id) const;
         void CheckLootRefs(LootTemplateMap const& store, LootIdSet* ref_set) const;
         bool addConditionItem(Condition* cond);
-        bool isReference(uint32 id);
+        // Positive condition entries address items/references; negative entries
+        // address currencies using the signed *_loot_template convention.
+        bool isReference(int32 id);
 
     private:
         // By "scripted" I mean "hardcoded", yeah

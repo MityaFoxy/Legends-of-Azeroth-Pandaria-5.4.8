@@ -21,11 +21,35 @@
 #include "DBUpdater.h"
 #include "Log.h"
 
+#include <algorithm>
+#include <chrono>
+#include <errmsg.h>
 #include <mysqld_error.h>
+#include <thread>
+
+namespace
+{
+bool IsTransientDatabaseError(uint32 error)
+{
+    switch (error)
+    {
+        case CR_CONNECTION_ERROR:
+        case CR_CONN_HOST_ERROR:
+        case CR_SERVER_GONE_ERROR:
+        case CR_SERVER_LOST:
+        case CR_SERVER_LOST_EXTENDED:
+            return true;
+        default:
+            return false;
+    }
+}
+}
 
 DatabaseLoader::DatabaseLoader(std::string const& logger, uint32 const defaultUpdateMask)
     : _logger(logger), _autoSetup(sConfigMgr->GetBoolDefault("Updates.AutoSetup", true)),
-    _updateFlags(sConfigMgr->GetIntDefault("Updates.EnableDatabases", defaultUpdateMask))
+    _updateFlags(sConfigMgr->GetIntDefault("Updates.EnableDatabases", defaultUpdateMask)),
+    _connectionRetryAttempts(uint32(std::clamp(sConfigMgr->GetIntDefault("Database.ConnectionRetryAttempts", 30), 1, 300))),
+    _connectionRetryInterval(uint32(std::clamp(sConfigMgr->GetIntDefault("Database.ConnectionRetryInterval", 1), 1, 60)))
 {
 }
 
@@ -54,7 +78,22 @@ DatabaseLoader& DatabaseLoader::AddDatabase(DatabaseWorkerPool<T>& pool, std::st
         uint8 const synchThreads = uint8(sConfigMgr->GetIntDefault(name + "Database.SynchThreads", 1));
 
         pool.SetConnectionInfo(dbString, asyncThreads, synchThreads);
-        if (uint32 error = pool.Open())
+        uint32 error = 0;
+        for (uint32 attempt = 1; attempt <= _connectionRetryAttempts; ++attempt)
+        {
+            error = pool.Open();
+            if (!error)
+                break;
+
+            if (!IsTransientDatabaseError(error) || attempt == _connectionRetryAttempts)
+                break;
+
+            TC_LOG_WARN(_logger, "Database {} is not ready (MySQL error {}). Retrying in {} second(s), attempt {}/{}.",
+                name.c_str(), error, _connectionRetryInterval, attempt + 1, _connectionRetryAttempts);
+            std::this_thread::sleep_for(std::chrono::seconds(_connectionRetryInterval));
+        }
+
+        if (error)
         {
             // Database does not exist
             if ((error == ER_BAD_DB_ERROR) && updatesEnabledForThis && _autoSetup)

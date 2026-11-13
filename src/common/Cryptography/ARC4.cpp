@@ -20,8 +20,10 @@
 
 Trinity::Crypto::ARC4::ARC4() : _ctx(EVP_CIPHER_CTX_new())
 {
+    WPFatal(_ctx, "Could not allocate an OpenSSL cipher context for RC4.");
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-    _cipher = EVP_CIPHER_fetch(nullptr, "RC4", nullptr);
+    _cipher = EVP_CIPHER_fetch(nullptr, "RC4", "provider=legacy");
+    WPFatal(_cipher, "OpenSSL legacy provider does not expose RC4, which is required by the MoP 5.4.8 session protocol.");
 #else
     EVP_CIPHER const* _cipher = EVP_rc4();
 #endif

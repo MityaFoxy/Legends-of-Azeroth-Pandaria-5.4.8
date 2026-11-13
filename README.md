@@ -39,11 +39,32 @@ This is a personal, actively maintained server-development branch for the **Mist
 | C++ standard | C++20 |
 | CMake | **3.16+** |
 | Compiler | GCC **13+**, Clang **12+**, or Visual Studio **2019 16.4+** |
-| Database | MySQL **5.7** or **8.0–8.1** |
-| OpenSSL | **1.1.1** or **3.0–3.1.1**; OpenSSL 3.2 is not supported with newer MySQL |
-| Boost | **1.85+** recommended |
+| Database | MySQL **5.7**, **8.0–8.1**, or **8.4 LTS**; MariaDB Server is not supported |
+| OpenSSL | **1.1.1** or **3.0–3.5.x**; **3.5 LTS** is the recommended Linux baseline |
+| Boost | **1.85+** required on Linux; **1.81+** on Windows |
 | Windows SDK | 10.0.22621 or newer recommended |
 | Client data | MoP 5.4.8 build 18414; **enUS DBC** is required for player bots |
+
+### Verified Linux baseline
+
+The current Linux runtime is built and tested with the following reproducible
+stack. These are the verified versions, not additional minimum requirements:
+
+| Component | Verified version / mode |
+| --- | --- |
+| Base image | Ubuntu **26.04** |
+| Compiler / CMake | GCC **15.2** / CMake **4.2.3** |
+| OpenSSL | **3.5.5 LTS**, including the `legacy` provider |
+| Boost | **1.90.0** |
+| MySQL | client **8.4.11**, server **8.4.13** |
+| Allocator | mimalloc **3.6.0** for normal Linux builds; system allocator for Debug and sanitizer builds |
+| Server options | `PLAYERBOTS=1`, `ELUNA=0`, `RelWithDebInfo` |
+
+The container recipe is
+[`contrib/containers/Containerfile.loa-build`](contrib/containers/Containerfile.loa-build).
+The validated build compiles `authserver`, `worldserver`, scripts and
+Playerbots. Crypto, allocator and bounded MySQL startup-retry regressions are
+part of the Linux validation path.
 
 ## Build
 
@@ -76,6 +97,11 @@ cmake --build build-debug --parallel
 | `-DBUILD_DEPLOY=1` | ON on Unix | Produce deployable Unix layout |
 
 > When running player bots, disabling Eluna is strongly recommended: `-DELUNA=0`.
+
+OpenSSL 3.x installations must include the `legacy` provider because the MoP
+5.4.8 session protocol still uses RC4. Startup now fails with an explicit error
+if that provider or cipher is unavailable. OpenSSL 3 builds use `EVP_MAC` for
+HMAC; OpenSSL 3.6.x is intentionally rejected until it is validated.
 
 ## Database and first launch
 

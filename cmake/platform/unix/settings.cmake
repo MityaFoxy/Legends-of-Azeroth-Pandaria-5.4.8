@@ -10,8 +10,11 @@
 # implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 # set default configuration directory
+if( NOT CONF_INSTALL_DIR )
+  set(CONF_INSTALL_DIR etc CACHE STRING "Relative server configuration install directory")
+endif()
 if( NOT CONF_DIR )
-  set(CONF_DIR ${CMAKE_INSTALL_PREFIX}/etc)
+  set(CONF_DIR ${CMAKE_INSTALL_PREFIX}/${CONF_INSTALL_DIR})
   message(STATUS "UNIX: Using default configuration directory")
 endif()
 

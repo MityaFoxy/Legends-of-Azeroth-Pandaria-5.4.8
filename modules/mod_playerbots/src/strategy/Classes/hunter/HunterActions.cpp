@@ -5,9 +5,44 @@
 
 #include "HunterActions.h"
 
+#include "AttackersValue.h"
 #include "Event.h"
 #include "GenericSpellActions.h"
 #include "Playerbots.h"
+
+Unit* SelectSerpentStingAttacker(PlayerbotAI* botAI)
+{
+    Player* bot = botAI->GetBot();
+    Unit* current = botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
+    Unit* result = nullptr;
+    for (ObjectGuid const guid : botAI->GetAiObjectContext()->GetValue<GuidVector>("attackers")->Get())
+    {
+        Unit* unit = botAI->GetUnit(guid);
+        // The attackers value is cached. Recheck eligibility at every use,
+        // including immediately before casting at a secondary target.
+        if (!unit || unit == current || !unit->IsAlive() || !bot->IsInMap(unit) || !bot->InSamePhase(unit) ||
+            !AttackersValue::IsValidTarget(unit, bot) ||
+            unit->HasBreakableByDamageCrowdControlAura() || unit->HasBreakableByDamageAuraType(SPELL_AURA_MOD_ROOT) ||
+            !bot->IsWithinCombatRange(unit, botAI->GetRange("spell")) ||
+            botAI->HasAura("serpent sting", unit, false, true))
+            continue;
+
+        if (!result || unit->GetHealth() >= result->GetHealth())
+            result = unit;
+    }
+    return result;
+}
+
+Unit* CastSerpentStingOnAttackerAction::GetTarget() { return SelectSerpentStingAttacker(botAI); }
+
+bool CastSerpentStingOnAttackerAction::Execute([[maybe_unused]] Event event)
+{
+    if (!CastDebuffSpellOnAttackerAction::isUseful())
+        return false;
+
+    Unit* target = GetTarget();
+    return target && botAI->CastSpell(spell, target);
+}
 
 bool CastHuntersMarkAction::isUseful() { return CastDebuffSpellAction::isUseful(); }
 

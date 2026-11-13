@@ -15,25 +15,36 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    container: ubuntu:26.04
     if: ${{ !github.event.pull_request.draft }}
     steps:
-    - uses: actions/checkout@v4
     - name: Dependencies
       run: |
-        sudo apt-get update && sudo apt-get install -yq libboost-all-dev g++-13 libreadline-dev libbz2-dev
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
+        apt-get update
+        apt-get install -yq --no-install-recommends build-essential ca-certificates cmake git \
+          libboost-dev libboost-filesystem-dev libboost-iostreams-dev libboost-locale-dev \
+          libboost-program-options-dev libboost-regex-dev libbz2-dev libmysqlclient-dev \
+          libreadline-dev libssl-dev pkg-config python3 zlib1g-dev
+    - uses: actions/checkout@v4
     - name: Setup
       run: |
-        mkdir bin
-        cd bin
-        cmake ../ -DTOOLS=1 -DELUNA=0 -DCMAKE_INSTALL_PREFIX=check_install
-        cd ..
+        cmake -S . -B bin -DTOOLS=1 -DELUNA=0 -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/bin/check_install"
     - name: Build
       run: |
-        cd bin
-        make -j 4 -k && make install
+        cmake --build bin --parallel 4
+        cmake --build bin --target openssl_compatibility --parallel 4
+        cmake --install bin
+    - name: Regression tests
+      run: |
+        ./bin/bin/openssl_compatibility
+        python3 contrib/tests/database_startup_retry_regression.py
+        python3 contrib/tests/playerbot_multilevel_soak_regression.py
+    - name: Class AI regression tests (ASan/UBSan)
+      run: |
+        cmake -S contrib/diagnostics/sanitizer_regression -B bin/regression \
+          -DLOA_SOURCE_DIR="$GITHUB_WORKSPACE" -DCMAKE_CXX_COMPILER=/usr/bin/g++
+        ctest --test-dir bin/regression -L class-ai --output-on-failure --parallel 2
     - name: Check executables
       run: |
-        cd bin/check_install/bin
-        ./authserver --version
-        ./worldserver --version
+        ./bin/check_install/bin/authserver --version
+        ./bin/check_install/bin/worldserver --version

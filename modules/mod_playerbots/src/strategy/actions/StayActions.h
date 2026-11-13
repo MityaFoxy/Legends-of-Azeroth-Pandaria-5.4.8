@@ -32,4 +32,17 @@ public:
     bool isUseful() override;
 };
 
+class StayLineAction : public MovementAction
+{
+public:
+    StayLineAction(PlayerbotAI* botAI) : MovementAction(botAI, "stay line") {}
+
+    bool isUseful() override;
+    bool isPossible() override;
+    bool Execute(Event event) override;
+
+private:
+    bool CanFormLine();
+};
+
 #endif

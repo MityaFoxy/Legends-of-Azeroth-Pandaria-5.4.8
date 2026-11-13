@@ -2231,11 +2231,21 @@ bool LootTemplate::addConditionItem(Condition* cond)
         return false;
     }
 
+    auto matches = [cond](LootStoreItem const* item)
+    {
+        if (cond->SourceEntry < 0)
+            return item->type == LOOT_ITEM_TYPE_CURRENCY
+                && item->itemid == uint32(-int64(cond->SourceEntry));
+
+        return item->type == LOOT_ITEM_TYPE_ITEM
+            && item->itemid == uint32(cond->SourceEntry);
+    };
+
     if (!Entries.empty())
     {
         for (LootStoreItemList::iterator i = Entries.begin(); i != Entries.end(); ++i)
         {
-            if ((*i)->itemid == uint32(cond->SourceEntry))
+            if (matches(*i))
             {
                 (*i)->conditions.push_back(cond);
                 return true;
@@ -2256,7 +2266,7 @@ bool LootTemplate::addConditionItem(Condition* cond)
             {
                 for (LootStoreItemList::iterator i = itemList->begin(); i != itemList->end(); ++i)
                 {
-                    if ((*i)->itemid == uint32(cond->SourceEntry))
+                    if (matches(*i))
                     {
                         (*i)->conditions.push_back(cond);
                         return true;
@@ -2269,7 +2279,7 @@ bool LootTemplate::addConditionItem(Condition* cond)
             {
                 for (LootStoreItemList::iterator i = itemList->begin(); i != itemList->end(); ++i)
                 {
-                    if ((*i)->itemid == uint32(cond->SourceEntry))
+                    if (matches(*i))
                     {
                         (*i)->conditions.push_back(cond);
                         return true;
@@ -2281,10 +2291,40 @@ bool LootTemplate::addConditionItem(Condition* cond)
     return false;
 }
 
-bool LootTemplate::isReference(uint32 id)
+bool LootTemplate::isReference(int32 id)
 {
+    if (id < 0)
+    {
+        uint32 currencyId = uint32(-int64(id));
+
+        auto containsCurrency = [currencyId](LootStoreItemList const& items)
+        {
+            for (LootStoreItem const* item : items)
+                if (item->type == LOOT_ITEM_TYPE_CURRENCY && item->itemid == currencyId)
+                    return true;
+
+            return false;
+        };
+
+        if (containsCurrency(Entries))
+            return true;
+
+        for (LootGroup* group : Groups)
+        {
+            if (!group)
+                continue;
+
+            if (containsCurrency(*group->GetExplicitlyChancedItemList())
+                || containsCurrency(*group->GetEqualChancedItemList()))
+                return true;
+        }
+
+        return false;
+    }
+
     for (LootStoreItemList::const_iterator ieItr = Entries.begin(); ieItr != Entries.end(); ++ieItr)
-        if ((*ieItr)->itemid == id && (*ieItr)->mincountOrRef < 0)
+        if ((*ieItr)->type == LOOT_ITEM_TYPE_ITEM && (*ieItr)->itemid == uint32(id)
+            && (*ieItr)->mincountOrRef < 0)
             return true;
 
     return false;//not found or not reference

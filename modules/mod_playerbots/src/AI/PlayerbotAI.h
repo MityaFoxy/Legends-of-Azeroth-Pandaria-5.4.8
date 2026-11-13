@@ -194,6 +194,7 @@ public:
     virtual bool CanCastSpell(std::string const name, Unit* target, Item* itemTarget = nullptr);
     virtual bool CastSpell(std::string const name, Unit* target, Item* itemTarget = nullptr);
     bool CastSpell(uint32 spellId, Unit* target, Item* itemTarget = nullptr);
+    uint32 GetActionbarOverride(uint32 spellId) const;
     bool CastSpell(uint32 spellId, float x, float y, float z, Item* itemTarget = nullptr);
     virtual bool HasAura(std::string const spellName, Unit* player, bool maxStack = false, bool checkIsOwner = false,
         int maxAmount = -1, bool checkDuration = false);
@@ -224,6 +225,11 @@ public:
     bool TellError(std::string const text);
 private:
     bool _isBotInitializing;
+    void RememberDefaultDruidGroupRole();
+    void UpdateDefaultDruidGroupRole();
+    bool _automaticDruidRole = false;
+    bool _druidRoleGrouped = false;
+    std::vector<std::string> _druidRoleStrategies;
 
 protected:
     Player* bot;

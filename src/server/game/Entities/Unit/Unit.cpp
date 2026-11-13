@@ -11901,7 +11901,7 @@ void Unit::SetInCombatState(bool PvP, Unit* enemy)
         {
             if (IsAIEnabled)
             {
-                creature->AI()->JustEngagedWith(enemy);
+                creature->AI()->EngageFromCombatState(enemy);
 
                 if (creature->GetEntry() != 69427 && creature->GetEntry() != 69701 && creature->GetEntry() != 69700 && creature->GetEntry() != 69699 && creature->GetEntry() != 72249 && creature->GetEntry() != 71742 && creature->GetEntry() != 71749 && creature->GetEntry() != 71763)
                     RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PC); // unit has engaged in combat, remove immunity so players can fight back
@@ -13413,6 +13413,8 @@ bool Unit::CanFreeMove() const
 
 void Unit::SetLevel(uint8 lvl, bool sendUpdate)
 {
+    if (GetTypeId() == TYPEID_PLAYER)
+        lvl = std::clamp<uint8>(lvl, 1, DEFAULT_MAX_LEVEL);
     SetUInt32Value(UNIT_FIELD_LEVEL, lvl);
 
     // group update
@@ -15119,7 +15121,7 @@ void Unit::ClearComboPointHolders()
         ObjectGuid guid = *m_comboPointHolders.begin();
 
         Player* player = ObjectAccessor::FindPlayer(guid);
-        if (player && player->GetComboTarget() && player->GetComboTarget()->GetGUID() == GetGUID())     // recheck for safe
+        if (player && player->GetComboTargetGUID() == GetGUID())   // By GUID, the pointer may dangle     // recheck for safe
             player->ClearComboPoints();                                                                 // remove also guid from m_ComboPointHolders;
         else
             m_comboPointHolders.erase(guid);                                                            // or remove manually
@@ -17402,9 +17404,12 @@ void Unit::SetPhaseMask(uint32 newPhaseMask, bool update)
     // Phase pets and summons
     if (IsInWorld())
     {
-         for (ControlList::const_iterator itr = m_Controlled.begin(); itr != m_Controlled.end(); ++itr)
-            if ((*itr)->GetTypeId() == TYPEID_UNIT)
-                (*itr)->SetPhaseMask(newPhaseMask, true);
+        // A controlled unit can remove itself from m_Controlled while its phase changes.
+        // Walk a snapshot and skip entries that are no longer controlled.
+        ControlList const controlled = m_Controlled;
+        for (Unit* unit : controlled)
+            if (m_Controlled.find(unit) != m_Controlled.end() && unit->GetTypeId() == TYPEID_UNIT)
+                unit->SetPhaseMask(newPhaseMask, true);
 
         for (uint8 i = 0; i < SUMMON_SLOT_MAX; ++i)
             if (m_SummonSlot [i])
@@ -17435,9 +17440,12 @@ bool Unit::SetPhased(uint32 id, bool update, bool apply)
         GetThreatManager().EvaluateSuppressed(true);
     }
 
-    for (ControlList::const_iterator itr = m_Controlled.begin(); itr != m_Controlled.end(); ++itr)
-        if ((*itr)->GetTypeId() == TYPEID_UNIT)
-            (*itr)->SetPhased(id, true, apply);
+    // SetPhased can remove a controlled unit from the owner's list via aura cleanup.
+    // Iterate a snapshot and verify membership before using each pointer.
+    ControlList const controlled = m_Controlled;
+    for (Unit* unit : controlled)
+        if (m_Controlled.find(unit) != m_Controlled.end() && unit->GetTypeId() == TYPEID_UNIT)
+            unit->SetPhased(id, true, apply);
 
     for (uint8 i = 0; i < SUMMON_SLOT_MAX; ++i)
         if (m_SummonSlot[i])

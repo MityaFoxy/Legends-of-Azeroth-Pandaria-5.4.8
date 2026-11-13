@@ -299,6 +299,14 @@ bool RandomItemManager::ShouldEquipArmorForSpec(uint32 level, Classes playerclas
 
 bool RandomItemManager::ShouldEquipWeaponForSpec(Classes playerclass, Specializations spec, ItemTemplate const* proto)
 {
+    bool const protectionTank = (playerclass == CLASS_WARRIOR && spec == SPEC_WARRIOR_PROTECTION) ||
+        (playerclass == CLASS_PALADIN && spec == SPEC_PALADIN_PROTECTION);
+    // Shields are selected by CanEquipSubArmor. Their subclass number overlaps
+    // polearms, so never compare an armor subclass with a weapon candidate.
+    if (protectionTank && (proto->Class != ITEM_CLASS_WEAPON ||
+        (proto->InventoryType != INVTYPE_WEAPON && proto->InventoryType != INVTYPE_WEAPONMAINHAND)))
+        return false;
+
     EquipmentSlots slot_mh = EQUIPMENT_SLOT_START;
     EquipmentSlots slot_oh = EQUIPMENT_SLOT_START;
     for (auto i = _viable_slots.begin(); i != _viable_slots.end(); ++i)
@@ -328,7 +336,6 @@ bool RandomItemManager::ShouldEquipWeaponForSpec(Classes playerclass, Specializa
             {
                 mh_weapons = { ITEM_SUBCLASS_WEAPON_SWORD, ITEM_SUBCLASS_WEAPON_AXE, ITEM_SUBCLASS_WEAPON_MACE,
                               ITEM_SUBCLASS_WEAPON_DAGGER, ITEM_SUBCLASS_WEAPON_FIST_WEAPON };
-                oh_weapons = { ITEM_SUBCLASS_ARMOR_SHIELD };
             }
             else
             {
@@ -342,7 +349,6 @@ bool RandomItemManager::ShouldEquipWeaponForSpec(Classes playerclass, Specializa
             if (spec == Specializations::SPEC_PALADIN_PROTECTION)
             {
                 mh_weapons = { ITEM_SUBCLASS_WEAPON_SWORD, ITEM_SUBCLASS_WEAPON_AXE, ITEM_SUBCLASS_WEAPON_MACE };
-                oh_weapons = { ITEM_SUBCLASS_ARMOR_SHIELD };
             }
             else if (spec == Specializations::SPEC_PALADIN_HOLY)
             {

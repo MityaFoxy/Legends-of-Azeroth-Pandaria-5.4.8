@@ -353,12 +353,12 @@ void AuthSession::SetVSFields(const std::string& rI, const std::string& login)
     uint8 mDigest[SHA_DIGEST_LENGTH];
     memset(mDigest, 0, SHA_DIGEST_LENGTH);
     if (I.GetNumBytes() <= SHA_DIGEST_LENGTH)
-        memcpy(mDigest, I.AsByteArray(), I.GetNumBytes());
+        memcpy(mDigest, I.AsByteArray().get(), I.GetNumBytes());
 
     std::reverse(mDigest, mDigest + SHA_DIGEST_LENGTH);
 
     Trinity::Crypto::SHA1 sha;
-    sha.UpdateData(s.AsByteArray(), s.GetNumBytes());
+    sha.UpdateData(s.AsByteArray().get(), s.GetNumBytes());
     sha.UpdateData(mDigest, SHA_DIGEST_LENGTH);
     sha.Finalize();
 
@@ -366,8 +366,8 @@ void AuthSession::SetVSFields(const std::string& rI, const std::string& login)
     x.SetBinary(sha.GetDigest(), SHA_DIGEST_LENGTH);
     v = g.ModExp(x, N);
 
-    _accountInfo.v = std::string(v.AsHexStr());
-    _accountInfo.s = std::string(s.AsHexStr());
+    _accountInfo.v = v.AsHexStr();
+    _accountInfo.s = s.AsHexStr();
 
     LoginDatabasePreparedStatement* stmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_VS);
     stmt->setString(0, _accountInfo.v);

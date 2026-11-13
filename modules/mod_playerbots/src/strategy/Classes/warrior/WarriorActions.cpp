@@ -2,6 +2,42 @@
 #include "Playerbots.h"
 #include "PlayerbotSpec.h"
 #include "ServerFacade.h"
+#include "Map.h"
+#include <cmath>
+
+bool CastHeroicLeapAction::Execute(Event event)
+{
+    Unit* target = GetTarget();
+    if (!target || !target->IsAlive() || !bot->IsInWorld() || !target->IsInWorld()
+        || bot->GetMap() != target->GetMap() || !bot->InSamePhase(target)
+        || bot->GetTransport() || target->GetTransport() || bot->GetVehicle() || target->GetVehicle())
+        return false;
+
+    float const x = target->GetPositionX();
+    float const y = target->GetPositionY();
+    float const targetZ = target->GetPositionZ();
+    if (!Trinity::IsValidMapCoord(x, y, targetZ))
+        return false;
+
+    // A destination spell normally copies the target's current Z, including
+    // its height in a jump. A socketless bot can then finish its own leap in
+    // midair. Select nearby support instead; never search down an entire cliff.
+    // GetMapHeight already adds the height-ray offset internally.
+    float const ground = bot->GetMapHeight(x, y, targetZ, true, 6.0f);
+    if (!std::isfinite(ground) || ground <= INVALID_HEIGHT
+        || targetZ - ground > 4.0f || ground - targetZ > 0.5f)
+        return false;
+
+    LiquidData liquid{};
+    if (bot->GetMap()->GetLiquidStatus(bot->GetPhaseMask(), x, y, ground,
+        MAP_ALL_LIQUIDS, &liquid, bot->GetCollisionHeight()) != LIQUID_MAP_NO_WATER)
+        return false;
+
+    // Keep native spell checks, cooldowns, jump motion and SpellEvent ownership.
+    // Returning false leaves the existing heroic-leap -> reach-melee fallback.
+    uint32 const spellId = AI_VALUE2(uint32, "spell id", spell);
+    return botAI->CastSpell(spellId, x, y, ground);
+}
 
 bool CastSunderArmorAction::isUseful()
 {

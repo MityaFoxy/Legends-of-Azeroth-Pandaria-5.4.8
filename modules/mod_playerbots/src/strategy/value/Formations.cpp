@@ -216,7 +216,8 @@ public:
         float range = 2.0f;
 
         Player* master = GetMaster();
-        if (!master)
+        if (!master || master == bot || master->GetGroup() != group || !master->IsInWorld() ||
+            master->GetMap() != bot->GetMap() || !master->InSamePhase(bot) || !master->IsAlive())
             return Formation::NullLocation;
 
         float x = master->GetPositionX();
@@ -229,17 +230,24 @@ public:
         while (gref)
         {
             Player* member = gref->GetSource();
-            if (member != master)
+            if (member && member != master && member->IsInWorld() && member->IsAlive() &&
+                member->GetMap() == bot->GetMap() && member->InSamePhase(bot))
                 players.push_back(member);
 
             gref = gref->next();
         }
 
-        players.insert(players.begin() + group->GetMembersCount() / 2, master);
+        players.insert(players.begin() + (players.size() + 1) / 2, master);
 
         return MoveLine(players, 0.0f, x, y, z, orientation, range);
     }
 };
+
+WorldLocation GetLineFormationLocation(PlayerbotAI* botAI)
+{
+    LineFormation formation(botAI);
+    return formation.GetLocation();
+}
 
 class ShieldFormation : public MoveFormation
 {
