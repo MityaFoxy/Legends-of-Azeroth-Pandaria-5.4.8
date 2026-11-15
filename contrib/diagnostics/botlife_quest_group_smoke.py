@@ -108,6 +108,10 @@ def stop_server(child, event, grace_seconds=180):
         return True
 
 
+def terminal_observation_finished(now, terminal_at, post_seconds, full_duration):
+    return not full_duration and now >= terminal_at + post_seconds
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
@@ -117,6 +121,8 @@ def main():
     parser.add_argument("--post-terminal-seconds", type=int, default=0,
                         help="Observe native AI after all one-shot quests terminate; never restart them")
     parser.add_argument("--full-logging", action="store_true")
+    parser.add_argument("--full-duration", action="store_true",
+                        help="Keep observing until deadline even when all one-shot quests terminate")
     parser.add_argument("--turn-in-only", action="store_true",
                         help="One-bot return test: require a persisted COMPLETE quest; do not require new kill credit")
     parser.add_argument("--observe-only", action="store_true",
@@ -223,8 +229,9 @@ def main():
                 shutil.copy2(source / name, target)
         write_json(args.run / "manifest.json", dict(time=stamp(), assignments=roster, before=before,
                    binary=str(args.binary), login_interval_seconds=30, deadline_seconds=args.duration_seconds,
-                   deadline_origin="world-ready", startup_timeout_seconds=1200,
+                   deadline_origin="full-roster-online" if args.full_duration else "world-ready", startup_timeout_seconds=1200,
                    post_terminal_seconds=args.post_terminal_seconds, full_logging=args.full_logging,
+                   full_duration=args.full_duration,
                    turn_in_only=args.turn_in_only,
                    binary_sha256=hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
                    observe_only=args.observe_only,
@@ -244,7 +251,8 @@ def main():
                     "Appender.Navigation": "2,1,7,Navigation.log,a,67108864", "Logger.playerbots.navigation": "1,Navigation"}
             for name, category in (("Playerbots", "playerbots"), ("Behavior", "playerbots.behavior"),
                                    ("MeleeMovement", "movement.melee"), ("Combat", "entities.unit"),
-                                   ("Spells", "spells"), ("Quest", "entities.player.quest"), ("Network", "network")):
+                                   ("Spells", "spells"), ("Damage", "damage"),
+                                   ("Quest", "entities.player.quest"), ("Network", "network")):
                 full[f"Appender.{name}"] = f"2,1,7,{name}.log,a,67108864"
                 full[f"Logger.{category}"] = f"1,{name}"
             world = optional_overlay(world, full)
@@ -276,6 +284,7 @@ def main():
         seen_online = set()
         next_login = sample_at = 0
         all_terminal_at = None
+        observation_started = False
         deadline = time.monotonic() + 1200
         while time.monotonic() < deadline:
             if stop:
@@ -292,9 +301,10 @@ def main():
             console_text = reader.read_lines(logs / "console.log")
             if not ready and "World initialized in " in console_text:
                 ready = True
-                deadline = now + args.duration_seconds
-                event("world_ready", observation_seconds=args.duration_seconds,
-                      deadline_epoch=time.time() + args.duration_seconds)
+                deadline = now + (1200 if args.full_duration else args.duration_seconds)
+                event("world_ready", observation_seconds=0 if args.full_duration else args.duration_seconds,
+                      waiting_for_full_roster=args.full_duration,
+                      deadline_epoch=time.time() + (1200 if args.full_duration else args.duration_seconds))
             if ready and len(requested) < len(roster) and now >= next_login:
                 guid = list(roster)[len(requested)]
                 child.stdin.write("botlife-test-login\n")
@@ -311,6 +321,12 @@ def main():
                 if population - set(requested):
                     raise RuntimeError("Unexpected online character")
                 seen_online |= population
+                if args.full_duration and not observation_started and population == set(roster):
+                    observation_started = True
+                    deadline = now + args.duration_seconds
+                    event("observation_window_started", online=sorted(population),
+                          observation_seconds=args.duration_seconds,
+                          deadline_epoch=time.time() + args.duration_seconds)
                 event("sample", online=sorted(population), seen_online=sorted(seen_online),
                       rss_bytes=rss(child.pid), available_bytes=memory()["MemAvailable"],
                       disk_free_bytes=shutil.disk_usage(args.run).free, log_bytes=log_bytes)
@@ -320,7 +336,7 @@ def main():
                     all_terminal_at = now
                     event("all_quests_terminal", post_terminal_seconds=args.post_terminal_seconds,
                           all_quests_completed=all(row["success"] for row in evidence.values()))
-                if now < all_terminal_at + args.post_terminal_seconds:
+                if not terminal_observation_finished(now, all_terminal_at, args.post_terminal_seconds, args.full_duration):
                     time.sleep(1)
                     continue
                 failure = observation_error(roster, evidence, seen_online)
@@ -334,6 +350,8 @@ def main():
         else:
             if not ready:
                 raise RuntimeError("World startup exceeded 1200 seconds")
+            if args.full_duration and not observation_started:
+                raise RuntimeError("Full roster did not come online within 1200 seconds")
             if not args.observe_only:
                 raise RuntimeError("Quest group scenario timeout")
             failure = observation_error(roster, evidence, seen_online)

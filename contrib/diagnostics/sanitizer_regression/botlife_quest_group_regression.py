@@ -12,9 +12,14 @@ from unittest.mock import Mock
 import signal
 import subprocess
 from botlife_quest_group_smoke import new_evidence, observe, observation_error, parse_assignments, preparation_error, quest_preflight_error, stop_server
+from botlife_quest_group_smoke import terminal_observation_finished
 
 
 class GroupObserverTests(unittest.TestCase):
+    def test_full_duration_never_ends_on_terminal_quests(self):
+        self.assertFalse(terminal_observation_finished(10000, 100, 0, True))
+        self.assertFalse(terminal_observation_finished(109, 100, 10, False))
+        self.assertTrue(terminal_observation_finished(110, 100, 10, False))
     def test_turn_in_only_is_explicit_and_requires_persisted_complete(self):
         row = dict(character="1071", rewarded="0", active="1")
         self.assertIsNone(quest_preflight_error(row, True))
