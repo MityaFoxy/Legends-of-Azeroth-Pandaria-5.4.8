@@ -202,13 +202,13 @@ class NativeTravelMovement final : public TravelMovement {
 public:
     static inline uint32 moves=0;
     static inline TravelTarget lastTarget{};
-    static inline bool route=true,valid=true,lost=false,unsafe=false;
+    static inline bool route=true,valid=true,lost=false,unsafe=false,blocked=false;
     explicit NativeTravelMovement(PlayerbotAI& ai, std::function<bool()> = {}) : bot(*ai.GetBot()) { }
     bool IsValid(TravelTarget const& t) const override { return valid && bot.snapshot.validContext && t.mapId==bot.GetMapId() && t.phaseMask==bot.GetPhaseMask(); }
     bool IsBlocked() override { return bot.combat; }
     bool HasArrived(TravelTarget const& t) const override { return std::abs(t.x-bot.snapshot.x)<1 && std::abs(t.y-bot.snapshot.y)<1; }
-    TravelMoveResult Move(TravelTarget const& t) override { ++moves; lastTarget=target=t; owned=route && !unsafe;
-        return unsafe?TravelMoveResult::UnsafeRoute:route?TravelMoveResult::Started:TravelMoveResult::NoRoute; }
+    TravelMoveResult Move(TravelTarget const& t) override { ++moves; lastTarget=target=t; owned=route && !unsafe && !blocked;
+        return blocked?TravelMoveResult::Blocked:unsafe?TravelMoveResult::UnsafeRoute:route?TravelMoveResult::Started:TravelMoveResult::NoRoute; }
     TravelMotion Poll() const override { return lost?TravelMotion::Lost:TravelMotion::Moving; }
     bool HasProgressed() const override { return true; }
     bool OwnsMovement() const override { return owned; }
@@ -265,7 +265,8 @@ struct Scene {
       QuestSafety::safe=QuestSafety::stagingSafe=true; QuestSafety::offerDetour=QuestSafety::pendingDetour=false;
       QuestSafety::blockedTarget=QuestSafety::blocker=0;
       manager={}; allowed=true; eligible={6}; clockMs=1;
-      NativeTravelMovement::moves=0; NativeTravelMovement::route=NativeTravelMovement::valid=true; NativeTravelMovement::lost=NativeTravelMovement::unsafe=false;
+      NativeTravelMovement::moves=0; NativeTravelMovement::route=NativeTravelMovement::valid=true;
+      NativeTravelMovement::lost=NativeTravelMovement::unsafe=NativeTravelMovement::blocked=false;
       giver.map=enemy.map=&bot.map; giver.x=100; enemy.x=10; enemy.entry=30;
       bot.map.creatures={{10,&giver},{11,&enemy}};
       data.questId=42; data.error=QuestPlanReason::None; data.starters={ender}; data.enders={ender};
@@ -297,6 +298,14 @@ int main() {
     { Scene s; s.start(); s.tick(); assert(s.ai.attacks==1);
       s.tick(29999); assert(s.bot.victim);
       s.tick(); assert(!s.bot.victim && s.ai.state==BOT_STATE_NON_COMBAT); }
+    // A foreign native non-combat spline may temporarily deny the movement
+    // slot. Retain BotLife's intent so base AI cannot replace that spline
+    // forever; acquire the slot after the normal retry without stealing it.
+    { Scene s; s.enemy.x=100; NativeTravelMovement::blocked=true; s.start();
+      assert(s.tick()==ActivityResult::Running && !s.run->ControlsMovement() && s.run->HoldsNonCombat());
+      NativeTravelMovement::blocked=false;
+      assert(s.tick(999)==ActivityResult::Running && !s.run->ControlsMovement() && s.run->HoldsNonCombat());
+      assert(s.tick(1)==ActivityResult::Running && s.run->ControlsMovement() && s.run->HoldsNonCombat()); }
     { Scene s; Creature obstacle=s.enemy; s.bot.map.creatures[12]=&obstacle;
       QuestSafety::blockedTarget=11; QuestSafety::blocker=12; QuestSafety::pendingDetour=true;
       s.start(); s.tick(); s.tick(5000);

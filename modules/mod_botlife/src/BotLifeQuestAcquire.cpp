@@ -102,6 +102,12 @@ public:
         _travel.Cancel();
     }
     bool ControlsMovement() const override { return _travel.ControlsMovement(); }
+    bool HoldsNonCombat() const override
+    {
+        // The one-shot acquisition owns the non-combat intent even before its
+        // movement adapter obtains an idle MotionMaster slot.
+        return _result == ActivityResult::Running;
+    }
 
 private:
     ActivityResult Fail(char const* reason)

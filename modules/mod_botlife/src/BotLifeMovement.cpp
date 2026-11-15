@@ -27,8 +27,11 @@ bool NativeTravelMovement::IsValid(TravelTarget const& target) const
 
 bool NativeTravelMovement::IsBlocked()
 {
+    // Auto-repeat is not a movement-blocking cast. The core explicitly keeps
+    // Hunter Auto Shot while moving and cancels other auto-repeat spells when
+    // movement begins. Real generic/channel casts must still finish first.
     return bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL) ||
-        bot->IsNonMeleeSpellCasted(false) || !IsMovingAllowed();
+        bot->IsNonMeleeSpellCasted(false, false, true) || !IsMovingAllowed();
 }
 
 bool NativeTravelMovement::HasArrived(TravelTarget const& target) const

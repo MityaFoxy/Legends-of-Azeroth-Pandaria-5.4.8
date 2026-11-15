@@ -390,7 +390,14 @@ public:
         _preparation.Pause();
     }
     bool ControlsMovement() const override { return (_travelling && _travel.ControlsMovement()) || _preparation.ControlsMovement() || _clearance.ControlsMovement(); }
-    bool HoldsNonCombat() const override { return _waitingSafety || _preparation.HoldsNonCombat() || _clearance.HoldsNonCombat(); }
+    bool HoldsNonCombat() const override
+    {
+        // A pending route may be waiting for an already running native
+        // non-combat spline to finish. Do not cancel that spline, but prevent
+        // base AI from continuously replacing it before BotLife can acquire
+        // the now-idle movement slot.
+        return _travelling || _waitingSafety || _preparation.HoldsNonCombat() || _clearance.HoldsNonCombat();
+    }
 
 private:
     void CountVisit()

@@ -248,7 +248,7 @@ int main()
         reset(); Player bot; PlayerbotAI ai{&bot}; QuestAcquireExecutor run(ai);
         run.Start(ai);
         assert(run.GetType()==ActivityType::Quest);
-        assert(run.Update(ai,0)==ActivityResult::Running && run.ControlsMovement());
+        assert(run.Update(ai,0)==ActivityResult::Running && run.ControlsMovement() && run.HoldsNonCombat());
         assert(bot.accepts==0);
         run.Pause(ai); assert(!run.ControlsMovement());
         assert(run.Resume(ai));
@@ -256,9 +256,17 @@ int main()
         assert(motion.moves==2);
         motion.arrived=true;
         assert(run.Update(ai,10)==ActivityResult::Completed);
-        assert(bot.accepts==1 && !run.ControlsMovement());
+        assert(bot.accepts==1 && !run.ControlsMovement() && !run.HoldsNonCombat());
         assert(run.Update(ai,10)==ActivityResult::Completed && bot.accepts==1);
         run.Finish(ai,ActivityResult::Completed);
+    }
+    {
+        reset(); Player bot; PlayerbotAI ai{&bot}; QuestAcquireExecutor run(ai);
+        motion.move=TravelMoveResult::Blocked; run.Start(ai);
+        assert(run.Update(ai,0)==ActivityResult::Running && !run.ControlsMovement() && run.HoldsNonCombat());
+        motion.move=TravelMoveResult::Started;
+        assert(run.Update(ai,999)==ActivityResult::Running && !run.ControlsMovement() && run.HoldsNonCombat());
+        assert(run.Update(ai,1)==ActivityResult::Running && run.ControlsMovement() && run.HoldsNonCombat());
     }
     // Cancellation, changed eligibility, absent giver, timeout, ownership loss,
     // recovery exhaustion, blocked interaction and native rejection are terminal.

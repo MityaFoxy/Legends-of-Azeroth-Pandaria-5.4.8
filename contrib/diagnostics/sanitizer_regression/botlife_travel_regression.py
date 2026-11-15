@@ -64,7 +64,7 @@ struct Guid { uint32 GetCounter() const { return 14; } };
 struct Player {
     bool inWorld=true,removing=false,alive=true,teleport=false,sessionPresent=true;
     bool bg=false,arena=false,taxi=false,transport=false,vehicle=false,flying=false,flightAura=false;
-    bool combat=false,casting=false,allowed=true,los=true;
+    bool combat=false,casting=false,autorepeat=false,allowed=true,los=true;
     uint32 map=0,instance=0,phase=1,state=0;
     float x=0,y=0,z=0;
     int stopped=0;
@@ -80,7 +80,9 @@ struct Player {
     uint32 GetInstanceId() const { assert(inWorld && !removing); return instance; }
     uint32 GetPhaseMask() const { assert(inWorld && !removing); return phase; }
     bool IsInCombat() const { return combat; } bool HasUnitState(uint32 mask) const { return state&mask; }
-    bool IsNonMeleeSpellCasted(bool) const { return casting; }
+    bool IsNonMeleeSpellCasted(bool, bool=false, bool skipAutorepeat=false) const {
+        return casting || (!skipAutorepeat && autorepeat);
+    }
     float GetExactDist(float a,float b,float c) const { return G3D::Vector3{x-a,y-b,z-c}.length(); }
     float GetPositionX() const { return x; }
     float GetPositionY() const { return y; }
@@ -258,6 +260,10 @@ int main() {
     { Scene s; s.bot.casting=true; s.travel.Start(target,{1000,1000,8});
       s.travel.Update(0); assert(s.travel.GetAttempts()==0 && !s.travel.ControlsMovement());
       assert(s.travel.Update(1000)==TravelStatus::Failed); }
+    // Auto-repeat is not a movement-blocking cast. Hunter Auto Shot may move;
+    // the core cancels other auto-repeat spells when movement begins.
+    { Scene s; s.bot.autorepeat=true; s.start();
+      assert(s.travel.ControlsMovement() && s.ai.moveCalls==1); s.travel.Cancel(); }
     // Never replace pre-existing native motion, including an untracked spline.
     { Scene s; s.foreign(); s.travel.Start(target); s.travel.Update(0);
       assert(!s.ai.moveCalls && !s.bot.stopped && !s.travel.ControlsMovement()); }
