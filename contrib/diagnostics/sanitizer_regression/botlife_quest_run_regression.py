@@ -114,7 +114,7 @@ struct Player : DamageStats {
     Map map;
     Motion motion; Spline spline; Spline* movespline=&spline;
     Motion* GetMotionMaster() { return &motion; }
-    bool world=true,removing=false,group=false,combat=false,casting=false,mounted=false;
+    bool world=true,removing=false,group=false,combat=false,casting=false,autorepeat=false,mounted=false;
     bool visible=true,los=true,validAttack=true,interact=true,eligibleReward=true,inventory=true,rewardEffect=true;
     uint32 state=0,rewards=0,accepts=0,checks=0,inventoryChecks=0;
     float health=100,mana=100;
@@ -131,7 +131,9 @@ struct Player : DamageStats {
     bool IsInWorld() const { return world; } bool IsDuringRemoveFromWorld() const { return removing; }
     bool GetGroup() const { return group; } bool IsInCombat() const { return combat; }
     bool HasUnitState(uint32 flags) const { return state&flags; }
-    bool IsNonMeleeSpellCasted(bool) const { return casting; }
+    bool IsNonMeleeSpellCasted(bool, bool=false, bool skipAutorepeat=false) const {
+      return casting || (!skipAutorepeat && autorepeat);
+    }
     bool IsMounted() const { return mounted; } float GetHealthPct() const { return health; }
     Creature* GetVictim() const { return victim; }
     void AttackStop() { victim=nullptr; }
@@ -500,6 +502,16 @@ int main() {
       NativeTravelMovement::unsafe=false; s.tick(5000);
       assert(s.run->ControlsMovement() && NativeTravelMovement::moves==2);
       s.bot.snapshot.x=100; assert(s.tick()==ActivityResult::Completed && s.bot.rewards==1); }
+    // A second unsafe return route is still throttled. The only ender must not
+    // be retired and reselected in a hot loop while the route remains unsafe.
+    { Scene s; s.bot.snapshot.progress=QuestProgress::Complete; NativeTravelMovement::unsafe=true; s.start();
+      assert(s.tick()==ActivityResult::Running && NativeTravelMovement::moves==1);
+      assert(s.tick(5000)==ActivityResult::Running && NativeTravelMovement::moves==2);
+      for(int i=0;i<100;++i) assert(s.tick()==ActivityResult::Running);
+      assert(NativeTravelMovement::moves==2 && s.bot.snapshot.progress==QuestProgress::Complete);
+      NativeTravelMovement::unsafe=false; s.tick(5000);
+      assert(s.run->ControlsMovement() && NativeTravelMovement::moves==3);
+      s.bot.snapshot.x=100; assert(s.tick()==ActivityResult::Completed && s.bot.rewards==1); }
     // Rejected splines do not consume visits, but repeated unsafe choices
     // without displacement are now bounded by the route watchdog.
     { Scene s; s.enemy.x=100; s.data.objectives[0].amount=1000;
@@ -557,7 +569,7 @@ int main() {
     { Scene s; s.start(); s.run->Interrupt(s.ai,InterruptReason::Death);
       assert(s.tick()==ActivityResult::Failed && s.ai.attacks==0 && !s.bot.rewards); }
     // Both native reward checks and every live interaction gate are necessary.
-    for(int mode=0;mode<22;++mode) {
+    for(int mode=0;mode<23;++mode) {
       Scene s; s.bot.snapshot.progress=QuestProgress::Complete; s.bot.snapshot.x=100;
       switch(mode) {
         case 0:s.bot.snapshot.progress=QuestProgress::Active;break;
@@ -572,8 +584,13 @@ int main() {
         case 16:manager.broken=true;break; case 17:manager.quest.choices=1;break;
         case 18:manager.quest.package=1;break; case 19:s.bot.group=true;break;
         case 20:s.bot.map.creatures.erase(10);break; case 21:manager.missing=true;break;
+        case 22:s.bot.autorepeat=true;break;
       }
       char const* reason=nullptr; assert(!TryTurnInQuest(s.bot,s.data,s.ender,reason)); assert(!s.bot.rewards);
+      if(mode==2) assert(std::string(reason)=="interaction-in-combat");
+      if(mode==3) assert(std::string(reason)=="interaction-control-blocked");
+      if(mode==4) assert(std::string(reason)=="interaction-cast-active");
+      if(mode==22) assert(std::string(reason)=="interaction-autorepeat-active");
     }
     { Scene s; s.bot.snapshot.progress=QuestProgress::Complete; s.bot.snapshot.x=100; s.bot.rewardEffect=false;
       s.start(); assert(s.tick()==ActivityResult::Failed && s.bot.rewards==1);

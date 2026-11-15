@@ -39,9 +39,17 @@ bool TryTurnInQuest(Player& bot, QuestPlanData const& data, QuestSpawn const& en
     reason = "quest-not-complete-or-already-rewarded";
     if (bot.GetQuestStatus(data.questId) != QUEST_STATUS_COMPLETE || bot.GetQuestRewardStatus(data.questId))
         return false;
-    reason = "interaction-blocked";
-    if (bot.IsInCombat() || bot.HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL) ||
-        bot.IsNonMeleeSpellCasted(false))
+    reason = "interaction-in-combat";
+    if (bot.IsInCombat())
+        return false;
+    reason = "interaction-control-blocked";
+    if (bot.HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL))
+        return false;
+    reason = "interaction-cast-active";
+    if (bot.IsNonMeleeSpellCasted(false, false, true))
+        return false;
+    reason = "interaction-autorepeat-active";
+    if (bot.IsNonMeleeSpellCasted(false))
         return false;
     reason = "ender-context-changed";
     if (ender.mapId != bot.GetMapId() || !(ender.phaseMask & bot.GetPhaseMask()))

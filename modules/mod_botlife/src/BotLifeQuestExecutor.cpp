@@ -284,7 +284,15 @@ public:
             {
                 TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=skip spawn={} reason={}",
                     _guid, _data.questId, _target->guid, ToString(_travel.GetFailure()));
-                DeferTarget(); // Also wait/reassess on return, without losing the completed quest.
+                if (_stage == QuestPlanStage::Hunt)
+                    DeferTarget();
+                else
+                {
+                    // Acquire/TurnIn have one authoritative interaction target. Hunt-style
+                    // retirement cannot select an alternative and otherwise hot-loops on it.
+                    ClearTarget();
+                    WaitForSafety();
+                }
                 return ActivityResult::Running;
             }
             if (_stage != QuestPlanStage::Hunt || _travel.GetFailure() == TravelFailure::MovementLost ||

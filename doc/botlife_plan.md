@@ -2156,6 +2156,49 @@ Production travel regression отдельно проверяет обе гран
 включая все BotLife, class-AI mutation, movement и battleground-регрессии;
 `worldserver -j4` собран успешно, `git diff --check` чистый.
 
+### Полный цикл Orest и возврат Mantrea (2026-11-15)
+
+Полный прогон `botlife-orest-13945-full-20261115-r2` продолжил сохранённый
+quest 13945 без сброса персонажа. Orest536 нативно поднял objective 252951 с
+0/20 до 20/20, перешёл из `Hunt` в `TurnIn` и без смертей дошёл до ender
+spawn 276659. Первая попытка завершилась старой агрегированной причиной
+`interaction-blocked`: квест остался COMPLETE и не был награждён. Точный
+подфлаг этого первого отказа в старом логе отсутствует, поэтому он не
+приписывается auto-repeat без доказательства.
+
+Turn-in gates теперь диагностируют отдельно combat, root/stun/lost-control,
+реальный cast/channel и auto-repeat. Изолированный повтор
+`botlife-orest-13945-turnin-diagnostic-20261115-r1` на сохранённом COMPLETE
+состоянии нативно выдал награду с первой попытки: active status/objectives
+удалены, rewarded=1, Orest поднялся до level 13. Это подтвердило корректность
+маршрута, ender и native reward path, но после перезапуска временный блокирующий
+флаг уже отсутствовал.
+
+Следующий `turn-in-only` повтор Mantrea190 / quest14307 воспроизвёл отдельный
+state-machine дефект. После второго `UnsafeRoute` Hunt-механика помечала
+единственного ender как retired, но `TurnIn` не использует список `_visited` и
+немедленно выбирал того же NPC. Выход из retirement-ветки происходил до
+`WaitForSafety()`: в `botlife-mantrea-14307-turnin-20261115-r1` зафиксировано
+154 повторных `retire` одного spawn 248221. Квест и 5/5 objective были
+сохранены, прогон остановлен до награды.
+
+`Acquire` и `TurnIn` теперь не применяют Hunt retirement к своему
+авторитетному interaction target. После unsafe spline они освобождают движение,
+сохраняют нативный COMPLETE/NotTaken state и повторно оценивают тот же NPC через
+обычный пятисекундный safety cooldown; общий watchdog по-прежнему ограничивает
+реально застрявший маршрут. Regression отдельно воспроизводит второй подряд
+unsafe return и доказывает отсутствие горячего цикла.
+
+Исправленный `botlife-mantrea-14307-turnin-20261115-r2` прошёл оставшийся путь,
+нативно расчистил два подтверждённых препятствия level 32 (spawn 250110 и
+249656), после каждого боя возобновил тот же TurnIn и сдал quest14307.
+Итог: `rewarded=true`, `deaths=0`, active status/objectives удалены, Mantrea
+поднялась до level 33. После исправления не было ни одного `retire` ender;
+Playerbots combat pause/resume не потерял принадлежавший BotLife маршрут.
+После живых проверок `worldserver -j4` собран успешно, а отдельный полный
+sanitizer-regression CTest завершился **83/83 PASS** за 595,89 с; в него входит
+новая проверка второго подряд unsafe return и разделённых interaction-причин.
+
 ### Этап 6. Планировщик жизни
 
 - отделить выбор занятия от исполнения;
