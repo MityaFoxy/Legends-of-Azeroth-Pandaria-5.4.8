@@ -1,6 +1,5 @@
 #include "BotLifeQuestHunt.h"
 #include "BotLifeReadiness.h"
-#include "BotLifeCombatAssessment.h"
 
 #include "Creature.h"
 #include "Log.h"
@@ -9,6 +8,7 @@
 #include "MoveSpline.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "AiObjectContext.h"
 #include <cmath>
 #include <limits>
 #include <cstring>
@@ -56,7 +56,8 @@ std::optional<QuestSpawn> QuestHunt::Choose(QuestPlanData const& data, QuestPlay
             Creature* npc = bot->GetMap()->GetCreatureBySpawnId(candidate.guid);
             if (npc)
             {
-                if (Resolve(*bot, candidate) != npc || !Available(*bot, *npc))
+                if (Resolve(*bot, candidate) != npc || !Available(*bot, *npc) ||
+                    !CanAttempt(*npc).allowed)
                     continue;
                 candidate.x = npc->GetPositionX();
                 candidate.y = npc->GetPositionY();
@@ -105,14 +106,27 @@ std::optional<QuestSpawn> QuestHunt::RouteObstacle(uint32_t spawn, bool allowDis
     return target;
 }
 
+CombatAdmission QuestHunt::CanAttempt(Creature& enemy, bool recovering) const
+{
+    if (EvaluateReadiness(ReadCombatReadiness(*bot), recovering).state != Preparation::Ready)
+        return {false, "not-ready"};
+    if (int(enemy.GetLevel()) - int(bot->GetLevel()) > 4)
+        return {false, "target-too-high-level"};
+    // Delegate elite capability to the same native Playerbots value used by
+    // GrindTargetValue. It is false today; future group support belongs there,
+    // not in a speculative BotLife damage model.
+    if (enemy.isElite() && !context->GetValue<bool>("can fight elite")->Get())
+        return {false, "elite-target"};
+    return {true, "native-combat"};
+}
+
 bool QuestHunt::CanEngage(QuestSpawn const& target) const
 {
     Creature* npc = Resolve(*bot, target);
     _safety.SetTarget(target.guid);
     return npc && Available(*bot, *npc) && !bot->IsInCombat() && !bot->IsMounted() &&
         !bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL) &&
-        !bot->IsNonMeleeSpellCasted(false) && EvaluateReadiness(ReadCombatReadiness(*bot), false).state == Preparation::Ready &&
-        AssessRouteOpponent(*bot, *npc, false).allowed &&
+        !bot->IsNonMeleeSpellCasted(false) && CanAttempt(*npc).allowed &&
         _safety.CanApproach(target) &&
         bot->IsWithinDistInMap(npc, 20.0f) && bot->IsWithinLOSInMap(npc);
 }
@@ -127,13 +141,11 @@ bool QuestHunt::Engage(QuestSpawn const& target)
     Creature* enemy = Resolve(*bot, target);
     if (!enemy)
         return false;
-    CombatAssessment const assessment = AssessRouteOpponent(*bot, *enemy, false);
-    if (!assessment.allowed || !Attack(enemy))
+    CombatAdmission const admission = CanAttempt(*enemy);
+    if (!admission.allowed || !Attack(enemy))
         return false; // Existing Playerbots engine owns spells, chase and melee.
-    TC_LOG_INFO("playerbots.botlife", "BotLife assessment guid={} spawn={} allowed=true reason={} model={} mainhand={} offhand={} outgoingDps={} incomingDps={} seconds={} incoming={}",
-        bot->GetGUID().GetCounter(), target.guid, assessment.reason, assessment.model,
-        assessment.mainhandDps, assessment.offhandDps, assessment.outgoingDps, assessment.incomingDps,
-        assessment.seconds, assessment.incomingDamage);
+    TC_LOG_INFO("playerbots.botlife", "BotLife combat-admission guid={} spawn={} allowed=true reason={} level={} elite={}",
+        bot->GetGUID().GetCounter(), target.guid, admission.reason, enemy->GetLevel(), enemy->isElite());
     return true;
 }
 
@@ -146,5 +158,24 @@ bool QuestHunt::IsAlive(QuestSpawn const& target) const
 bool QuestHunt::IsFighting() const
 {
     return bot->IsInCombat() || bot->GetVictim() || botAI->GetState() == BOT_STATE_COMBAT;
+}
+
+bool QuestHunt::CancelUnstartedAttack(QuestSpawn const& target)
+{
+    Creature* enemy = Resolve(*bot, target);
+    // Only unwind the exact attack handed off by this executor. Never stop a
+    // real fight, a cast, movement, or a target subsequently selected by base AI.
+    if (!enemy || !enemy->IsAlive() || bot->IsInCombat() || enemy->IsInCombat() ||
+        bot->IsNonMeleeSpellCasted(false) || !bot->movespline->Finalized() ||
+        bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE ||
+        (bot->GetVictim() && bot->GetVictim() != enemy) || context->GetValue<Unit*>("current target")->Get() != enemy)
+        return false;
+    bot->AttackStop();
+    context->GetValue<Unit*>("current target")->Set(nullptr);
+    if (botAI->GetState() == BOT_STATE_COMBAT)
+        botAI->ChangeEngine(BOT_STATE_NON_COMBAT);
+    TC_LOG_INFO("playerbots.botlife", "BotLife attack guid={} spawn={} event=cancel reason=attack-not-started",
+        bot->GetGUID().GetCounter(), target.guid);
+    return true;
 }
 }

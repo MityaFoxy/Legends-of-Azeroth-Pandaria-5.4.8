@@ -8,6 +8,12 @@
 
 namespace BotLife
 {
+struct CombatAdmission
+{
+    bool allowed = false;
+    char const* reason = "unknown";
+};
+
 // Native combat adapter. Retains no target pointers and never grants quest credit.
 class QuestHunt final : private AttackAction
 {
@@ -18,10 +24,12 @@ public:
         std::unordered_set<uint32_t> const& visited, std::optional<QuestSpawn>* obstructed = nullptr,
         uint32_t* blocker = nullptr) const;
     std::optional<QuestSpawn> RouteObstacle(uint32_t spawn, bool allowDistant = false) const;
+    CombatAdmission CanAttempt(Creature& enemy, bool recovering = false) const;
     bool CanEngage(QuestSpawn const& target) const;
     bool Engage(QuestSpawn const& target);
     bool IsAlive(QuestSpawn const& target) const;
     bool IsFighting() const;
+    bool CancelUnstartedAttack(QuestSpawn const& target);
 private:
     mutable QuestSafety _safety;
 };

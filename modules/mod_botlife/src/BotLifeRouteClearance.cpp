@@ -1,5 +1,4 @@
 #include "BotLifeRouteClearance.h"
-#include "BotLifeCombatAssessment.h"
 #include "BotLifeQuestHunt.h"
 #include "Creature.h"
 #include "Log.h"
@@ -7,7 +6,6 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Timer.h"
-#include <algorithm>
 #include <cmath>
 
 namespace BotLife
@@ -17,12 +15,18 @@ RouteClearance::RouteClearance(PlayerbotAI& ai, QuestHunt& hunt)
 
 bool RouteClearance::Start(uint32_t blocker)
 {
-    if (Active() || !blocker || _attempted.size() >= 4 || _attempted.count(blocker) || _spentMs >= 180000 || _hunt.IsFighting())
+    if (Active() || !blocker || _hunt.IsFighting())
         return false;
     if (_checked && GetMSTimeDiffToNow(_checkedAt) < 5000)
         return false; // Bound repeated rejected assessments, including different blockers.
     _checked = true;
     _checkedAt = getMSTime();
+    if (_attempted.count(blocker))
+    {
+        TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=reject spawn={} reason=already-attempted attempts={}",
+            _bot.GetGUID().GetCounter(), blocker, _attempted.size());
+        return false;
+    }
     auto target = _hunt.RouteObstacle(blocker, true);
     if (!target)
     {
@@ -33,12 +37,10 @@ bool RouteClearance::Start(uint32_t blocker)
     Creature* enemy = _bot.GetMap()->GetCreatureBySpawnId(blocker);
     if (!enemy)
         return false;
-    CombatAssessment const assessment = AssessRouteOpponent(_bot, *enemy);
-    TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=assess spawn={} level={} elite={} hp={} allowed={} reason={} seconds={} incoming={} model={} mainhand={} offhand={} outgoingDps={} incomingDps={}",
-        _bot.GetGUID().GetCounter(), blocker, enemy->GetLevel(), enemy->isElite(), enemy->GetHealth(),
-        assessment.allowed, assessment.reason, assessment.seconds, assessment.incomingDamage,
-        assessment.model, assessment.mainhandDps, assessment.offhandDps, assessment.outgoingDps, assessment.incomingDps);
-    if (!assessment.allowed)
+    CombatAdmission const admission = _hunt.CanAttempt(*enemy, true);
+    TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=assess spawn={} level={} elite={} allowed={} reason={}",
+        _bot.GetGUID().GetCounter(), blocker, enemy->GetLevel(), enemy->isElite(), admission.allowed, admission.reason);
+    if (!admission.allowed)
         return false;
     _staging = !_bot.IsWithinDistInMap(enemy, 60);
     QuestSpawn approach = *target;
@@ -62,8 +64,6 @@ bool RouteClearance::Start(uint32_t blocker)
             _bot.GetGUID().GetCounter(), blocker, distance, approach.x, approach.y, approach.z);
     }
     _target = target;
-    _attempted.insert(blocker);
-    _startedAt = getMSTime();
     _engaged = false;
     _travel.Start({_bot.GetMapId(), _bot.GetInstanceId(), _bot.GetPhaseMask(), approach.x, approach.y, approach.z, 1.0f});
     return true;
@@ -73,6 +73,8 @@ ClearanceResult RouteClearance::Update(uint32_t elapsed)
 {
     if (!Active())
         return ClearanceResult::Failed;
+    if (_engaged && GetMSTimeDiffToNow(_engagedAt) >= 30000 && _hunt.CancelUnstartedAttack(*_target))
+        return Finish(false, "attack-not-started");
     if (_hunt.IsFighting())
         return ClearanceResult::Running; // Never retarget or move through another pack during combat.
     Creature* enemy = _bot.GetMap()->GetCreatureBySpawnId(_target->guid);
@@ -80,13 +82,11 @@ ClearanceResult RouteClearance::Update(uint32_t elapsed)
         return Finish(false, "target-unavailable");
     if (!enemy->IsAlive())
         return Finish(_engaged, _engaged ? "cleared" : "target-gone");
-    if (GetMSTimeDiffToNow(_startedAt) >= 60000 || _spentMs + GetMSTimeDiffToNow(_startedAt) >= 180000)
-        return Finish(false, "clearance-timeout");
     if (_engaged)
         return GetMSTimeDiffToNow(_engagedAt) < 5000 ? ClearanceResult::Running
             : Finish(false, "combat-ended-target-alive"); // Allow native attack acquisition; never repull a survivor.
     auto current = _hunt.RouteObstacle(_target->guid, _staging);
-    if (!current || !AssessRouteOpponent(_bot, *enemy).allowed)
+    if (!current || !_hunt.CanAttempt(*enemy, true).allowed)
         return Finish(false, "risk-changed");
     if (_staging)
     {
@@ -114,6 +114,7 @@ ClearanceResult RouteClearance::Update(uint32_t elapsed)
         if (!_hunt.Engage(*current))
             return Finish(false, "attack-refused");
         _engaged = true;
+        _attempted.insert(current->guid); // Only a real native combat handoff consumes this spawn.
         _engagedAt = getMSTime();
         TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=engage spawn={} entry={}",
             _bot.GetGUID().GetCounter(), current->guid, current->entry);
@@ -132,8 +133,6 @@ ClearanceResult RouteClearance::Update(uint32_t elapsed)
 void RouteClearance::Pause() { _travel.Pause(); }
 void RouteClearance::Cancel()
 {
-    if (Active())
-        _spentMs += std::min(GetMSTimeDiffToNow(_startedAt), 180000u - _spentMs);
     _travel.Cancel();
     _target.reset();
     _engaged = _staging = false;

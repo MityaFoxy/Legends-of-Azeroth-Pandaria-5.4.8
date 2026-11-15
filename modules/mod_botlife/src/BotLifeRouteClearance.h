@@ -21,6 +21,7 @@ public:
     void Pause();
     void Cancel();
     bool Active() const { return _target.has_value(); }
+    bool Attempted(uint32_t blocker) const { return _attempted.count(blocker); }
     bool HoldsNonCombat() const { return Active() && !_engaged; }
     bool ControlsMovement() const { return _travel.ControlsMovement(); }
 private:
@@ -32,7 +33,7 @@ private:
     std::optional<QuestSpawn> _target;
     QuestSpawn _stagingPoint{};
     std::unordered_set<uint32_t> _attempted;
-    uint32_t _startedAt = 0, _engagedAt = 0, _spentMs = 0, _checkedAt = 0;
+    uint32_t _engagedAt = 0, _checkedAt = 0;
     bool _engaged = false, _checked = false, _staging = false;
 };
 }
