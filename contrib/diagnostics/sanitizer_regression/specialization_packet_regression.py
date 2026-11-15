@@ -29,10 +29,9 @@ namespace dbc {
 std::array<uint32, 4> specs{102, 103, 104, 105};
 auto GetClassSpecializations(uint32) { return specs; }
 }
-struct WorldPacket {
-    uint32 tab;
-    void operator>>(uint32& value) { value = tab; }
-};
+namespace WorldPackets::Talent {
+struct SetPrimaryTalentTree { uint32 TabIndex; };
+}
 struct Session { bool bot = true; bool IsBot() { return bot; } } session;
 struct Player {
     uint32 spec = 0, field = 0, updates = 0, learns = 0, pvp = 0, saves = 0;
@@ -47,7 +46,7 @@ struct Player {
     void UpdatePvpPower() { ++pvp; }
     void SaveToDB() { ++saves; }
 };
-struct WorldSession { Player* _player; void HandeSetTalentSpecialization(WorldPacket&); };
+struct WorldSession { Player* _player; void HandeSetTalentSpecialization(WorldPackets::Talent::SetPrimaryTalentTree&); };
 '''
 source += handler + r'''
 int main()
@@ -55,11 +54,11 @@ int main()
     Player player;
     WorldSession server{&player};
     for (uint32 tab : {4u, 5u, std::numeric_limits<uint32>::max()}) {
-        WorldPacket packet{tab};
+        WorldPackets::Talent::SetPrimaryTalentTree packet{tab};
         server.HandeSetTalentSpecialization(packet);
         assert(!player.spec && !player.field && !player.updates && !player.learns && !player.pvp && !player.saves);
     }
-    WorldPacket fourth{3};
+    WorldPackets::Talent::SetPrimaryTalentTree fourth{3};
     server.HandeSetTalentSpecialization(fourth);
     assert(player.spec == 105 && player.field == 105 && player.updates == 1 &&
            player.learns == 1 && player.pvp == 1 && player.saves == 1);
@@ -67,14 +66,14 @@ int main()
     server.HandeSetTalentSpecialization(fourth);
     assert(player.spec == 105 && player.saves == 1); // empty class slot changes nothing
     session.bot = false;
-    WorldPacket first{0};
+    WorldPackets::Talent::SetPrimaryTalentTree first{0};
     server.HandeSetTalentSpecialization(first);
     assert(player.spec == 105 && player.saves == 1); // preserve real-player respec guard
     player.spec = 0;
     server.HandeSetTalentSpecialization(first);
     assert(player.spec == 71 && player.saves == 2);
     session.bot = true;
-    WorldPacket second{1};
+    WorldPackets::Talent::SetPrimaryTalentTree second{1};
     server.HandeSetTalentSpecialization(second);
     assert(player.spec == 72 && player.saves == 3);
 }

@@ -108,7 +108,9 @@ namespace
         // Same world-thread request as a player's "Return to Graveyard" button.
         // Do not force resurrection, remove auras, or manually insert queue entries.
         WorldPacket packet(CMSG_RETURN_TO_GRAVEYARD);
-        bot->GetSession()->HandleReturnToGraveyard(packet);
+        WorldPackets::Combat::PortGraveyard graveyardPkt(std::move(packet));
+        graveyardPkt.Read();
+        bot->GetSession()->HandleReturnToGraveyard(graveyardPkt);
         TC_LOG_INFO("bg.resurrection", "BG graveyard-return GUID={} map={} instance={} graveyard={} attempt={}",
             bot->GetGUID().GetCounter(), state.map, state.instance, state.graveyard, state.attempts);
         return true;

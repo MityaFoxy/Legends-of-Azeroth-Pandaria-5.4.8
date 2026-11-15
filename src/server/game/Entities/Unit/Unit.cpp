@@ -8923,6 +8923,10 @@ bool Unit::Attack(Unit* victim, bool meleeAttack)
 
         ToCreature()->SendAIReaction(AI_REACTION_HOSTILE);
         ToCreature()->CallAssistance();
+
+        // Remove emote state - will be restored on creature reset (LoadCreaturesAddon on evade and respawn), as TrinityCore
+        if (!IsControlledByPlayer())
+            SetEmoteState(EMOTE_ONESHOT_NONE);
     }
 
     // delay offhand weapon attack to next attack time
@@ -12573,15 +12577,15 @@ void Unit::SetSpeed(UnitMoveType mtype, float rate, bool forced)
 
     static OpcodeServer const moveTypeToOpcode [MAX_MOVE_TYPE] [3] =
     {
-        { SMSG_SPLINE_MOVE_SET_WALK_SPEED, SMSG_MOVE_SET_WALK_SPEED, SMSG_MOVE_UPDATE_WALK_SPEED },
-        { SMSG_SPLINE_MOVE_SET_RUN_SPEED, SMSG_MOVE_SET_RUN_SPEED, SMSG_MOVE_UPDATE_RUN_SPEED },
-        { SMSG_SPLINE_MOVE_SET_RUN_BACK_SPEED, SMSG_MOVE_SET_RUN_BACK_SPEED, SMSG_MOVE_UPDATE_RUN_BACK_SPEED },
-        { SMSG_SPLINE_MOVE_SET_SWIM_SPEED, SMSG_MOVE_SET_SWIM_SPEED, SMSG_MOVE_UPDATE_SWIM_SPEED },
-        { SMSG_SPLINE_MOVE_SET_SWIM_BACK_SPEED, SMSG_MOVE_SET_SWIM_BACK_SPEED, SMSG_MOVE_UPDATE_SWIM_BACK_SPEED },
-        { SMSG_SPLINE_MOVE_SET_TURN_RATE, SMSG_MOVE_SET_TURN_RATE, SMSG_MOVE_UPDATE_TURN_RATE },
-        { SMSG_SPLINE_MOVE_SET_FLIGHT_SPEED, SMSG_MOVE_SET_FLIGHT_SPEED, SMSG_MOVE_UPDATE_FLIGHT_SPEED },
-        { SMSG_SPLINE_MOVE_SET_FLIGHT_BACK_SPEED, SMSG_MOVE_SET_FLIGHT_BACK_SPEED, SMSG_MOVE_UPDATE_FLIGHT_BACK_SPEED },
-        { SMSG_SPLINE_MOVE_SET_PITCH_RATE, SMSG_MOVE_SET_PITCH_RATE, SMSG_MOVE_UPDATE_PITCH_RATE },
+        { SMSG_MOVE_SPLINE_SET_WALK_SPEED, SMSG_MOVE_SET_WALK_SPEED, SMSG_MOVE_UPDATE_WALK_SPEED },
+        { SMSG_MOVE_SPLINE_SET_RUN_SPEED, SMSG_MOVE_SET_RUN_SPEED, SMSG_MOVE_UPDATE_RUN_SPEED },
+        { SMSG_MOVE_SPLINE_SET_RUN_BACK_SPEED, SMSG_MOVE_SET_RUN_BACK_SPEED, SMSG_MOVE_UPDATE_RUN_BACK_SPEED },
+        { SMSG_MOVE_SPLINE_SET_SWIM_SPEED, SMSG_MOVE_SET_SWIM_SPEED, SMSG_MOVE_UPDATE_SWIM_SPEED },
+        { SMSG_MOVE_SPLINE_SET_SWIM_BACK_SPEED, SMSG_MOVE_SET_SWIM_BACK_SPEED, SMSG_MOVE_UPDATE_SWIM_BACK_SPEED },
+        { SMSG_MOVE_SPLINE_SET_TURN_RATE, SMSG_MOVE_SET_TURN_RATE, SMSG_MOVE_UPDATE_TURN_RATE },
+        { SMSG_MOVE_SPLINE_SET_FLIGHT_SPEED, SMSG_MOVE_SET_FLIGHT_SPEED, SMSG_MOVE_UPDATE_FLIGHT_SPEED },
+        { SMSG_MOVE_SPLINE_SET_FLIGHT_BACK_SPEED, SMSG_MOVE_SET_FLIGHT_BACK_SPEED, SMSG_MOVE_UPDATE_FLIGHT_BACK_SPEED },
+        { SMSG_MOVE_SPLINE_SET_PITCH_RATE, SMSG_MOVE_SET_PITCH_RATE, SMSG_MOVE_UPDATE_PITCH_RATE },
     };
 
     if (GetTypeId() == TYPEID_PLAYER)
@@ -12646,6 +12650,9 @@ void Unit::setDeathState(DeathState s)
         SetHealth(0);
         if (GetPowerType() != POWER_MANA)
             SetPower(GetPowerType(), 0);
+        // a corpse doesn't keep working or sitting (TrinityCore, TCPP and AzerothCore clear it on death too); not for players
+        if (GetTypeId() == TYPEID_UNIT)
+            SetEmoteState(EMOTE_ONESHOT_NONE);
 
         // players in instance don't have ZoneScript, but they have InstanceScript
         if (ZoneScript* zoneScript = GetZoneScript() ? GetZoneScript() : GetInstanceScript())
@@ -16486,9 +16493,9 @@ void Unit::SetRooted(bool apply, bool packetOnly /*= false*/)
     }
 
     if (apply)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_ROOT, SMSG_MOVE_ROOT, SMSG_MOVE_ROOT).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_ROOT, SMSG_MOVE_ROOT, SMSG_MOVE_ROOT).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_UNROOT, SMSG_MOVE_UNROOT, SMSG_MOVE_UNROOT).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_UNROOT, SMSG_MOVE_UNROOT, SMSG_MOVE_UNROOT).Send();
 }
 
 void Unit::SetFeared(bool apply)
@@ -17567,7 +17574,7 @@ void Unit::SendMoveKnockBack(Player* player, float speedXY, float speedZ, float 
     player->GetSession()->SendPacket(&data);
 
     if (player->HasAuraType(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED) || player->HasAuraType(SPELL_AURA_FLY))
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_FLYING, SMSG_MOVE_SET_CAN_FLY).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_FLYING, SMSG_MOVE_SET_CAN_FLY).Send();
 }
 
 void Unit::KnockbackFrom(float x, float y, float speedXY, float speedZ)
@@ -19409,9 +19416,9 @@ bool Unit::SetWalk(bool enable)
 
     ///@ TODO: Find proper opcode for walk mode setting in player mind controlling a player case
     if (enable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_WALK_MODE, SMSG_SPLINE_MOVE_SET_WALK_MODE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_WALK_MODE, SMSG_MOVE_SPLINE_SET_WALK_MODE).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_RUN_MODE, SMSG_SPLINE_MOVE_SET_RUN_MODE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_RUN_MODE, SMSG_MOVE_SPLINE_SET_RUN_MODE).Send();
 
     return true;
 }
@@ -19438,9 +19445,9 @@ bool Unit::SetDisableGravity(bool disable, bool packetOnly /*= false*/)
     }
 
     if (disable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_GRAVITY_DISABLE, SMSG_MOVE_GRAVITY_DISABLE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_DISABLE_GRAVITY, SMSG_MOVE_DISABLE_GRAVITY).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_GRAVITY_ENABLE, SMSG_MOVE_GRAVITY_ENABLE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_ENABLE_GRAVITY, SMSG_MOVE_ENABLE_GRAVITY).Send();
 
     return true;
 }
@@ -19470,13 +19477,13 @@ bool Unit::SetSwim(bool enable)
     {
         AddUnitMovementFlag(MOVEMENTFLAG_SWIMMING);
         SetUnitFlag(UNIT_FLAG_CAN_SWIM);
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_START_SWIM, NULL_OPCODE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_START_SWIM, NULL_OPCODE).Send();
     }
     else
     {
         RemoveUnitMovementFlag(MOVEMENTFLAG_SWIMMING);
         RemoveUnitFlag(UNIT_FLAG_CAN_SWIM);
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_STOP_SWIM, NULL_OPCODE).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_STOP_SWIM, NULL_OPCODE).Send();
     }
 
     return true;
@@ -19508,9 +19515,9 @@ bool Unit::SetCanFly(bool enable)
     }
 
     if (enable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_FLYING, SMSG_MOVE_SET_CAN_FLY).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_FLYING, SMSG_MOVE_SET_CAN_FLY).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_UNSET_FLYING, SMSG_MOVE_UNSET_CAN_FLY).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_UNSET_FLYING, SMSG_MOVE_UNSET_CAN_FLY).Send();
 
     return true;
 }
@@ -19554,9 +19561,9 @@ bool Unit::SetWaterWalking(bool enable, bool packetOnly /*= false */)
     }
 
     if (enable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_WATER_WALK, SMSG_MOVE_WATER_WALK).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_WATER_WALK, SMSG_MOVE_WATER_WALK).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_LAND_WALK, SMSG_MOVE_LAND_WALK).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_LAND_WALK, SMSG_MOVE_LAND_WALK).Send();
 
     return true;
 }
@@ -19575,9 +19582,9 @@ bool Unit::SetFeatherFall(bool enable, bool packetOnly /*= false */)
     }
 
     if (enable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_FEATHER_FALL, SMSG_MOVE_FEATHER_FALL).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_FEATHER_FALL, SMSG_MOVE_FEATHER_FALL).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_NORMAL_FALL, SMSG_MOVE_NORMAL_FALL).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_NORMAL_FALL, SMSG_MOVE_NORMAL_FALL).Send();
 
     return true;
 }
@@ -19617,9 +19624,9 @@ bool Unit::SetHover(bool enable, bool packetOnly /*= false*/)
     }
 
     if (enable)
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_SET_HOVER, SMSG_MOVE_SET_HOVER).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_SET_HOVER, SMSG_MOVE_SET_HOVER).Send();
     else
-        Movement::PacketSender(this, SMSG_SPLINE_MOVE_UNSET_HOVER, SMSG_MOVE_UNSET_HOVER).Send();
+        Movement::PacketSender(this, SMSG_MOVE_SPLINE_UNSET_HOVER, SMSG_MOVE_UNSET_HOVER).Send();
 
     return true;
 }

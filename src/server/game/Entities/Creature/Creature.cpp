@@ -1189,7 +1189,7 @@ void Creature::SaveToDB(uint32 mapid, uint16 spawnMask, uint32 phaseMask)
     WorldDatabase.CommitTransaction(trans);
 }
 
-void Creature::SelectLevel(const CreatureTemplate* cinfo)
+void Creature::SelectLevel(const CreatureTemplate* cinfo, bool keepLevel)
 {
     uint8 dbminlevel = cinfo->minlevel;
     uint8 dbmaxlevel = cinfo->maxlevel;
@@ -1210,7 +1210,11 @@ void Creature::SelectLevel(const CreatureTemplate* cinfo)
     // level
     uint8 minlevel = std::min(dbmaxlevel, dbminlevel);
     uint8 maxlevel = std::max(dbmaxlevel, dbminlevel);
-    uint8 level = minlevel == maxlevel ? minlevel : urand(minlevel, maxlevel);
+    uint8 level;
+    if (keepLevel && GetLevel() >= minlevel && GetLevel() <= maxlevel)
+        level = GetLevel();
+    else
+        level = minlevel == maxlevel ? minlevel : urand(minlevel, maxlevel);
     SetLevel(level);
 
     CreatureBaseStats const* stats = sObjectMgr->GetCreatureBaseStats(level, cinfo->unit_class);
@@ -1748,7 +1752,8 @@ void Creature::Respawn(bool force)
             UpdateEntry(m_originalEntry);
 
         CreatureTemplate const* cinfo = GetCreatureTemplate();
-        SelectLevel(cinfo);
+        // Same GUID as before: a new level within ~30 s of the corpse vanishing plays the client's level-up effect
+        SelectLevel(cinfo, true);
 
         setDeathState(JUST_RESPAWNED);
 

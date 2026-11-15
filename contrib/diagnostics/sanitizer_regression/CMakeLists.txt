@@ -57,6 +57,9 @@ add_test(NAME resurrection_waterwalk_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/resurrection_waterwalk_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 add_test(NAME specialization_packet_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/specialization_packet_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME upstream_stabilization_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/upstream_stabilization_regression.py ${LOA_SOURCE_DIR})
+set_tests_properties(upstream_stabilization_regression PROPERTIES LABELS "upstream;smartai;playerbots" TIMEOUT 120)
 add_test(NAME playerbot_party_backport_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/playerbot_party_backport_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 add_test(NAME playerbot_factory_cache_regression COMMAND ${Python3_EXECUTABLE}
