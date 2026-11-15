@@ -11,7 +11,9 @@ sys.path.insert(0, str(root / "contrib/diagnostics"))
 from unittest.mock import Mock
 import signal
 import subprocess
-from botlife_quest_group_smoke import new_evidence, observe, observation_error, parse_assignments, preparation_error, quest_preflight_error, stop_server
+from botlife_quest_group_smoke import (behavior_observation_error, new_evidence, observe, observe_behavior,
+                                       observation_error, parse_assignments, preparation_error,
+                                       quest_preflight_error, stop_server)
 from botlife_quest_group_smoke import terminal_observation_finished
 
 
@@ -159,6 +161,23 @@ class GroupObserverTests(unittest.TestCase):
         self.rows[22]["started"] = True
         self.emit(22, "event=finish result=failed reason=quest-no-progress")
         self.assertIsNotNone(observation_error(self.roster, self.rows, set(self.roster)))
+
+    def test_behavior_observation_requires_each_bot_and_rejects_unknown(self):
+        for guid in self.roster:
+            observe_behavior(f"TRACE Bot=Test GUID={guid} map=1 instance=0 decision=A:melee - OK\n",
+                             self.roster, self.rows)
+        self.assertIsNone(behavior_observation_error(self.roster, self.rows, set(self.roster)))
+        self.assertEqual(self.rows[11]["behavior_outcomes"], {"OK": 1})
+        observe_behavior("TRACE Bot=Test GUID=11 map=1 instance=0 decision=A:missing action - UNKNOWN\n",
+                         self.roster, self.rows)
+        self.assertIsNotNone(behavior_observation_error(self.roster, self.rows, set(self.roster)))
+        self.assertEqual(self.rows[11]["unknown_actions"], {"missing action": 1})
+
+    def test_behavior_observation_rejects_missing_bot_decisions(self):
+        for guid in list(self.roster)[:-1]:
+            observe_behavior(f"TRACE Bot=Test GUID={guid} map=1 instance=0 decision=No actions executed\n",
+                             self.roster, self.rows)
+        self.assertIsNotNone(behavior_observation_error(self.roster, self.rows, set(self.roster)))
 
 
 if __name__ == "__main__":

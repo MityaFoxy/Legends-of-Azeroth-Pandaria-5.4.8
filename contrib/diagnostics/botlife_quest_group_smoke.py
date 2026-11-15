@@ -61,7 +61,8 @@ def observe(line, roster, evidence):
 def new_evidence(roster, turn_in_only=False):
     return {guid: dict(quest=quest, started=False, progress=[], turn_in=False, terminal=None, success=False,
                        turn_in_only=turn_in_only,
-                       recovering=False, deaths=0, resurrections=0, progress_after_resurrection=[])
+                       recovering=False, deaths=0, resurrections=0, progress_after_resurrection=[],
+                       behavior_decisions=0, behavior_outcomes={}, unknown_actions={})
             for guid, quest in roster.items()}
 
 
@@ -79,6 +80,33 @@ def observation_error(roster, evidence, seen_online):
         return "One or more configured bots did not start QuestRun"
     if any(row["terminal"] and not row["success"] for row in evidence.values()):
         return "One or more quest runs failed; see bots.json"
+    return None
+
+
+def observe_behavior(text, roster, evidence):
+    """Count native AI decisions per configured bot without changing outcomes."""
+    for match in re.finditer(r"Bot=.*? GUID=(\d+) .*? decision=(.*)$", text, re.MULTILINE):
+        guid = int(match.group(1))
+        if guid not in roster:
+            continue
+        row = evidence[guid]
+        row["behavior_decisions"] += 1
+        outcome = re.search(r"^A:(.*?) - (OK|FAILED|USELESS|IMPOSSIBLE|PREREQ|UNKNOWN)$", match.group(2))
+        if outcome:
+            kind = outcome.group(2)
+            row["behavior_outcomes"][kind] = row["behavior_outcomes"].get(kind, 0) + 1
+            if kind == "UNKNOWN":
+                action = outcome.group(1)
+                row["unknown_actions"][action] = row["unknown_actions"].get(action, 0) + 1
+
+
+def behavior_observation_error(roster, evidence, seen_online):
+    if seen_online != set(roster):
+        return "Not all configured bots observed online"
+    if any(not row["behavior_decisions"] for row in evidence.values()):
+        return "One or more configured bots emitted no native AI decisions"
+    if any(row["unknown_actions"] for row in evidence.values()):
+        return "One or more configured bots emitted UNKNOWN actions"
     return None
 
 
@@ -127,6 +155,8 @@ def main():
                         help="One-bot return test: require a persisted COMPLETE quest; do not require new kill credit")
     parser.add_argument("--observe-only", action="store_true",
                         help="A clean bounded observation may end with unfinished quests")
+    parser.add_argument("--behavior-observation", action="store_true",
+                        help="Require per-bot native AI decisions and zero UNKNOWN actions; report quest outcomes separately")
     parser.add_argument("--prepare-character", action="store_true",
                         help="Explicit one-bot bootstrap: grant missing equipment, preserve existing items and quest")
     parser.add_argument("--expected-character-db", help="Required database-name assertion for explicit preparation")
@@ -142,6 +172,8 @@ def main():
         parser.error("Preparation requires exactly one bot and --expected-character-db")
     if args.turn_in_only and (len(roster) != 1 or args.prepare_character or args.observe_only):
         parser.error("Turn-in-only requires exactly one bot, no preparation and strict reward verification")
+    if args.behavior_observation and not (args.observe_only and args.full_duration and args.full_logging):
+        parser.error("Behavior observation requires --observe-only --full-duration --full-logging")
     if not 180 <= args.duration_seconds <= 7200 or not 0 <= args.post_terminal_seconds <= 600:
         parser.error("Duration must be 180..7200 seconds, post-terminal observation 0..600 seconds")
     if not args.expected_character_db:
@@ -214,7 +246,7 @@ def main():
         before = {guid: snapshot(guid, quest) for guid, quest in roster.items()}
         write_json(args.run / "preflight.json", before)
         for guid, row in before.items():
-            if reason := quest_preflight_error(row, args.turn_in_only):
+            if not args.behavior_observation and (reason := quest_preflight_error(row, args.turn_in_only)):
                 raise RuntimeError(f"Bot {guid}: {reason}")
             if not args.prepare_character and (reason := preparation_error(row)):
                 raise RuntimeError(f"Bot {guid}: {reason}")
@@ -235,6 +267,7 @@ def main():
                    turn_in_only=args.turn_in_only,
                    binary_sha256=hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
                    observe_only=args.observe_only,
+                   behavior_observation=args.behavior_observation,
                    prepare_character=args.prepare_character, character_database=db,
                    backup="No database dump requested; native character saves persist"))
         world = optional_overlay(base, {
@@ -316,6 +349,8 @@ def main():
                 observed = observe(line, roster, evidence)
                 if observed:
                     event("quest_event", guid=observed[0], kind=observed[1], detail=line)
+            if args.behavior_observation:
+                observe_behavior(reader.read_lines(logs / "Behavior.log"), roster, evidence)
             if now >= sample_at:
                 population = online()
                 if population - set(requested):
@@ -329,7 +364,8 @@ def main():
                           deadline_epoch=time.time() + args.duration_seconds)
                 event("sample", online=sorted(population), seen_online=sorted(seen_online),
                       rss_bytes=rss(child.pid), available_bytes=memory()["MemAvailable"],
-                      disk_free_bytes=shutil.disk_usage(args.run).free, log_bytes=log_bytes)
+                      disk_free_bytes=shutil.disk_usage(args.run).free, log_bytes=log_bytes,
+                      behavior_decisions={guid: row["behavior_decisions"] for guid, row in evidence.items()})
                 sample_at = now + 15
             if len(requested) == len(roster) and all(row["terminal"] for row in evidence.values()):
                 if all_terminal_at is None:
@@ -354,7 +390,8 @@ def main():
                 raise RuntimeError("Full roster did not come online within 1200 seconds")
             if not args.observe_only:
                 raise RuntimeError("Quest group scenario timeout")
-            failure = observation_error(roster, evidence, seen_online)
+            failure = (behavior_observation_error(roster, evidence, seen_online) if args.behavior_observation
+                       else observation_error(roster, evidence, seen_online))
             if failure:
                 raise RuntimeError(failure)
             event("observation_deadline", all_quests_completed=all(row["success"] for row in evidence.values()))
