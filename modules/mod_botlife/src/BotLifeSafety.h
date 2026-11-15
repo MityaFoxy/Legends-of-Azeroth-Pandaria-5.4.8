@@ -2,8 +2,10 @@
 #define _BOTLIFE_SAFETY_H
 
 #include "BotLifeQuestPlan.h"
+#include "BotLifeDefeats.h"
 #include <deque>
 #include <vector>
+#include <optional>
 
 class Player;
 
@@ -27,6 +29,8 @@ class QuestSafety
 public:
     explicit QuestSafety(Player& bot) : _bot(bot) { }
     bool CanApproach(QuestSpawn const& target);
+    std::optional<QuestSpawn> FindDetour(QuestSpawn const& target);
+    bool DetourPending() const { return _detourPending; }
     bool RouteSafe();
     bool CanRest();
     void RememberDeath();
@@ -36,13 +40,32 @@ public:
 private:
     void Refresh();
     bool SafeSegment(SafetyPoint from, SafetyPoint to);
+    bool SafeNavigationPath(SafetyPoint goal);
+    bool SafeNavigationLeg(SafetyPoint from, SafetyPoint goal);
     bool Reject(char const* reason, uint32_t spawn, SafetyPoint hazard, float radius, SafetyPoint from, SafetyPoint to);
     Player& _bot;
     std::vector<LocalThreat> _threats;
+    std::vector<DefeatArea> _defeatAreas;
+    SafetyPoint _hazard{};
+    float _hazardRadius = 0;
+    struct FailedSpline
+    {
+        SafetyPoint origin, goal, hazard;
+        float radius;
+        uint32_t target, blocker, at;
+    };
+    std::optional<FailedSpline> _failedSpline;
     struct DeathArea { SafetyPoint position; uint32_t at; };
     std::deque<DeathArea> _deaths;
     uint32_t _observedAt = 0, _target = 0;
     bool _observed = false;
+    uint32_t _pathQueries = 0;
+    uint32_t _detourAt = 0;
+    bool _detourChecked = false;
+    bool _detourPending = false, _detourSearch = false;
+    uint32_t _detourStage = 0, _detourTarget = 0;
+    SafetyPoint _detourGoal{}, _detourOrigin{};
+    SafetyPoint _approachGoal{};
     char const* _reason = "none";
     char const* _check = "none";
     uint32_t _blocker = 0, _reportedAt = 0;

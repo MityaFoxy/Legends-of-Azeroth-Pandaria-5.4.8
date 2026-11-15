@@ -4,6 +4,7 @@
 #include "BotLifeQuestAcquire.h"
 #include "BotLifeQuestRun.h"
 #include "BotLifeProvisioning.h"
+#include "BotLifeDefeats.h"
 
 #include <boost/filesystem.hpp>
 #include <memory>
@@ -71,5 +72,6 @@ void AddSC_mod_botlife()
 {
     sPlayerbotAIExtensionRegistry->Register(&CreateBotLifeExtension);
     new BotLifeWorldScript();
+    BotLife::RegisterDefeatMemoryScript();
     BotLife::RegisterTravelTestCommand();
 }

@@ -121,6 +121,18 @@ add_test(NAME tank_equipment_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/tank_equipment_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER} --verify-mutations)
 set_tests_properties(tank_equipment_regression PROPERTIES LABELS "class-ai" TIMEOUT 600
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_executable(botlife_defeat_regression botlife_defeat_regression.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeDefeatPolicy.cpp)
+target_include_directories(botlife_defeat_regression PRIVATE ${LOA_SOURCE_DIR}/modules/mod_botlife/src)
+target_compile_options(botlife_defeat_regression PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -UNDEBUG)
+target_link_options(botlife_defeat_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME botlife_defeat_regression COMMAND botlife_defeat_regression)
+set_tests_properties(botlife_defeat_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+add_test(NAME botlife_defeat_adapter_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_defeat_adapter_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_defeat_adapter_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME lifecycle_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/lifecycle_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
 set_tests_properties(lifecycle_regression PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1")

@@ -16,7 +16,6 @@ def body(name):
 mocks = r'''
 #include "BotLifeReadiness.h"
 #include "BotLifeSafety.h"
-#include "BotLifeCombatAssessment.h"
 #include "BotLifeTravel.h"
 #include <cassert>
 #include <algorithm>
@@ -28,6 +27,7 @@ mocks = r'''
 #include <memory>
 #include <optional>
 #include <limits>
+#include <string_view>
 using uint8=uint8_t; using uint32=uint32_t; using uint64=uint64_t;
 enum { EQUIPMENT_SLOT_START=0, EQUIPMENT_SLOT_HEAD=0, EQUIPMENT_SLOT_NECK=1,
        EQUIPMENT_SLOT_BODY=3, EQUIPMENT_SLOT_CHEST=4, EQUIPMENT_SLOT_LEGS=6,
@@ -44,7 +44,8 @@ enum { EQUIP_ERR_OK, PLAYERSPELL_REMOVED, SPELL_EFFECT_SCHOOL_DAMAGE,
        SPELL_EFFECT_WEAPON_DAMAGE, SPELL_EFFECT_NORMALIZED_WEAPON_DMG,
        SPELL_EFFECT_WEAPON_PERCENT_DAMAGE, SPELL_AURA_PERIODIC_DAMAGE };
 enum { IDLE_MOTION_TYPE, UNIT_NPC_FLAG_REPAIR=1, UNIT_FIELD_NPC_FLAGS=2,
-       UNIT_STAND_STATE_STAND=0, UNIT_STAND_STATE_SIT=1 };
+       UNIT_STAND_STATE_STAND=0, UNIT_STAND_STATE_SIT=1, REACT_PASSIVE=0 };
+enum { CONFIG_CREATURE_FAMILY_ASSISTANCE_RADIUS };
 uint32 clockMs=1;
 uint32 getMSTime() { return clockMs; }
 uint32 GetMSTimeDiffToNow(uint32 start) { return clockMs-start; }
@@ -79,24 +80,37 @@ struct Spline {
 };
 struct Motion { uint32 type=0; uint32 GetCurrentMovementGeneratorType() const { return type; } };
 struct Creature {
-    uint32 guid=1,entry=10,phase=1,level=56,type=1; float x=0,y=0,z=0;
-    bool alive=true,combat=false,evade=false,elite=false,hostile=false,attackable=false,repair=true;
+    uint32 guid=1,entry=10,phase=1,level=56,type=1,faction=1; float x=0,y=0,z=0;
+    bool alive=true,combat=false,evade=false,elite=false,hostile=false,attackable=false,repair=true,aggressive=false,los=true,civilian=false,passive=false;
     bool IsAlive() const { return alive; } bool IsInCombat() const { return combat; }
     bool IsInEvadeMode() const { return evade; } bool isElite() const { return elite; }
+    bool IsCivilian() const { return civilian; }
+    bool HasReactState(uint32) const { return passive; }
     bool HasFlag(uint32,uint32) const { return repair; }
     template<class T> bool IsHostileTo(T*) const { return hostile; }
     float attackDistance=15,m_CombatDistance=0,size=0;
     template<class T> float GetAggroRange(T*) const { return 0; } // Native non-pet behaviour.
     template<class T> float GetAttackDistance(T*) const { return attackDistance; }
     float GetObjectSize() const { return size; }
+    template<class Friendly, class Enemy> bool CanAssistTo(Friendly const* friendly, Enemy const*) const {
+        return aggressive && hostile && faction==friendly->faction;
+    }
+    bool IsWithinDistInMap(Creature const* other,float radius) const {
+        float dx=x-other->x,dy=y-other->y,dz=z-other->z;
+        return dx*dx+dy*dy+dz*dz < radius*radius;
+    }
+    bool IsWithinLOSInMap(Creature const*) const { return los; }
     uint32 GetSpawnId() const { return guid; } uint32 GetEntry() const { return entry; }
     uint32 GetCreatureType() const { return type; }
     uint32 GetPhaseMask() const { return phase; } uint32 GetLevel() const { return level; }
     Guid GetGUID() const { return {guid}; }
     float GetPositionX() const { return x; } float GetPositionY() const { return y; } float GetPositionZ() const { return z; }
 };
+struct World { float assistanceRadius=10; float getFloatConfig(uint32) const { return assistanceRadius; } } world;
+auto* sWorld=&world;
 class Player {
 public:
+    void UpdateAllowedPositionZ(float,float,float&) const {}
     uint32 level=56,cls=7,spec=263,power=POWER_MANA,phase=1;
     float health=100,mana=100,x=0,y=0,z=0;
     bool sickness=false,sitting=false,combat=false,casting=false,mounted=false,interact=true;
@@ -152,11 +166,29 @@ template<class Search> void VisitAllObjects(Player* bot,Search& search,float) {
     for(auto const& [id,npc]:bot->map.creatures) if(search.check(npc)) search.output.push_back(npc);
 }
 }
+enum { PATHFIND_NORMAL=1, PATHFIND_INCOMPLETE=4 };
+namespace G3D { struct Vector3 { float x,y,z; Vector3(float a,float b,float c):x(a),y(b),z(c){} }; }
+struct PathGenerator {
+    static inline bool available=false;
+    static inline int type=PATHFIND_NORMAL,calls=0;
+    static inline std::vector<BotLife::SafetyPoint> points;
+    static inline bool straight=false;
+    static inline bool rejectContinuation=false;
+    PathGenerator(Player*,uint32 nodes) { assert(nodes==4096); }
+    void SetUseWaterShortcut(bool enabled) { assert(!enabled); }
+    bool CalculatePath(float x,float y,float z,bool a,bool b,bool c,G3D::Vector3 const* origin) {
+      assert(!a && !b && !c && origin); ++calls;
+      if(straight) points={{origin->x,origin->y,origin->z},{x,y,z}};
+      return available && !(rejectContinuation && x==100 && (origin->x!=0 || origin->y!=0)); }
+    bool HasNavigationData() const { return available; }
+    int GetPathType() const { return type; }
+    auto const& GetPath() const { return points; }
+};
 namespace BotLife {
-bool opponentAllowed=true;
-CombatAssessment AssessRouteOpponent(Player&, Creature&, bool) {
-    return {opponentAllowed, opponentAllowed?"manageable":"insufficient-health-reserve"};
-}
+bool avoidDefeated=false;
+std::vector<DefeatArea> defeatAreas;
+std::vector<DefeatArea> GetDefeatAreas(Player const&) { return defeatAreas; }
+bool AvoidDefeatedOpponent(Player const&,Creature const&) { return avoidDefeated; }
 class NativeTravelMovement final : public TravelMovement {
     Player& bot;
 public:
@@ -178,9 +210,106 @@ tests = r'''
 using namespace BotLife;
 struct Scene {
     Player bot; PlayerbotAI ai{&bot}; QuestSafety safety{bot}; QuestPreparation prep{ai,safety}; Creature vendor;
-    Scene() { opponentAllowed=true; clockMs=1; NativeTravelMovement::owns=false; NativeTravelMovement::valid=true; bot.map.creatures[1]=&vendor; }
+    Scene() { clockMs=1; NativeTravelMovement::owns=false; NativeTravelMovement::valid=true; bot.map.creatures[1]=&vendor;
+      defeatAreas.clear(); avoidDefeated=false; PathGenerator::rejectContinuation=false; PathGenerator::straight=false; PathGenerator::available=false; PathGenerator::type=PATHFIND_NORMAL; PathGenerator::calls=0; PathGenerator::points.clear(); }
 };
 int main() {
+    for(int mode=0;mode<4;++mode) {
+      Scene s; Creature mob; mob.guid=2; mob.x=50; mob.y=50; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; QuestSpawn goal{3,10,1,1,100,0,0};
+      PathGenerator::available=PathGenerator::straight=true;
+      assert(s.safety.CanApproach(goal)); // Safe preflight chord.
+      s.bot.spline.finalized=false; s.bot.spline.path={{0,0,0},{0,50,0},{100,50,0},{100,0,0}};
+      assert(!s.safety.RouteSafe()); // Native route took a different, unsafe corridor.
+      s.bot.spline.finalized=true;
+      assert(s.safety.CanApproach(goal)); // Must not erase the actual failure.
+      if(mode==1) clockMs+=30000; // Snapshot expires.
+      if(mode==2) goal.x=150; // Different destination must not inherit it.
+      if(mode==3) { mob.x=90; mob.y=0; clockMs+=500; } // Goal danger still takes priority.
+      assert(bool(s.safety.FindDetour(goal))==(mode==0));
+    }
+    { Scene s; defeatAreas.push_back({1,2,1,{50,0,0}});
+      assert(!s.safety.CanApproach({3,10,1,1,100,0,0}));
+      assert(!strcmp(s.safety.Reason(),"repeated-defeat-area-route"));
+      PathGenerator::available=PathGenerator::straight=true;
+      assert(s.safety.FindDetour({3,10,1,1,100,0,0})); }
+    { Scene s; defeatAreas.push_back({1,2,1,{0,0,0}});
+      s.bot.x=2; assert(s.safety.CanApproach({0,0,1,1,8,0,0})); // Escape inside the region.
+      s.safety.SetTarget(3);
+      assert(!s.safety.CanApproach({3,10,1,1,8,0,0})); // Not permission to attack there.
+      assert(s.safety.CanApproach({3,10,1,1,11,0,0})); }
+    { Scene s; defeatAreas.push_back({1,2,1,{50,0,0}}); s.bot.z=5;
+      assert(s.safety.CanApproach({3,10,1,1,100,0,5})); } // Separate floor.
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; PathGenerator::available=PathGenerator::straight=true;
+      PathGenerator::rejectContinuation=true; QuestSpawn goal{3,10,1,1,100,0,0};
+      for(int stage=0;stage<4;++stage) { assert(!s.safety.FindDetour(goal)); clockMs+=5000; }
+      auto retreat=s.safety.FindDetour(goal);
+      assert(retreat && retreat->x<0 && !s.safety.DetourPending()); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; QuestSpawn goal{3,10,1,1,100,0,0};
+      PathGenerator::available=PathGenerator::straight=true;
+      auto point=s.safety.FindDetour(goal);
+      assert(point && point->guid==0 && std::abs(point->y)>20);
+      assert(!s.safety.FindDetour(goal)); // Five-second planning throttle.
+      clockMs+=5000; PathGenerator::type=PATHFIND_INCOMPLETE;
+      assert(!s.safety.FindDetour(goal)); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=40; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; s.safety.SetTarget(2); avoidDefeated=true;
+      assert(!s.safety.CanApproach({2,10,1,1,40,0,0}));
+      assert(!strcmp(s.safety.Reason(),"repeated-defeat"));
+      assert(!s.safety.FindDetour({2,10,1,1,40,0,0})); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      Creature left=mob; left.guid=4; left.y=-44;
+      s.bot.map.creatures[2]=&mob; s.bot.map.creatures[4]=&left;
+      PathGenerator::available=PathGenerator::straight=true;
+      auto point=s.safety.FindDetour({3,10,1,1,100,0,0});
+      assert(point && point->y>0); // Unsafe left leg, safe right alternative.
+      Creature right=left; right.guid=5; right.y=44; s.bot.map.creatures[5]=&right;
+      clockMs+=5000;
+      assert(!s.safety.FindDetour({3,10,1,1,100,0,0})); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      Creature left=mob; left.guid=4; left.y=-44;
+      Creature right=mob; right.guid=5; right.y=44;
+      s.bot.map.creatures[2]=&mob; s.bot.map.creatures[4]=&left; s.bot.map.creatures[5]=&right;
+      PathGenerator::available=PathGenerator::straight=true;
+      QuestSpawn goal{3,10,1,1,100,0,0};
+      assert(!s.safety.FindDetour(goal) && s.safety.DetourPending());
+      int calls=PathGenerator::calls;
+      assert(!s.safety.FindDetour(goal) && PathGenerator::calls==calls);
+      clockMs+=5000;
+      assert(!s.safety.FindDetour(goal) && s.safety.DetourPending());
+      clockMs+=5000;
+      auto wide=s.safety.FindDetour(goal);
+      assert(wide && std::abs(wide->y)>=80 && !s.safety.DetourPending()); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; PathGenerator::available=PathGenerator::straight=true;
+      PathGenerator::type=PATHFIND_INCOMPLETE;
+      QuestSpawn goal{3,10,1,1,100,0,0};
+      for(int stage=0;stage<5;++stage) {
+        assert(!s.safety.FindDetour(goal)); assert(s.safety.DetourPending()==(stage<4)); clockMs+=5000; }
+      int calls=PathGenerator::calls;
+      assert(!s.safety.FindDetour(goal) && PathGenerator::calls==calls); }
+    { Scene s; Creature mob; mob.guid=2; mob.x=50; mob.hostile=mob.attackable=true;
+      s.bot.map.creatures[2]=&mob; QuestSpawn goal{3,10,1,1,100,0,0};
+      PathGenerator::available=true;
+      PathGenerator::points={{0,0,0},{0,50,0},{100,50,0},{100,0,0}};
+      assert(s.safety.CanApproach(goal)); // Blocked chord, safe complete corridor.
+      assert(!s.safety.Blocker() && !strcmp(s.safety.Reason(),"none"));
+      PathGenerator::points={{0,0,0},{100,0,0}};
+      assert(!s.safety.CanApproach(goal)); // A valid navmesh route may still cross aggro.
+      assert(!s.safety.CanApproach(goal) && PathGenerator::calls==2); // Query budget.
+      clockMs+=500; PathGenerator::points={{0,0,0},{0,50,0},{100,50,0},{100,0,0}};
+      PathGenerator::type=PATHFIND_INCOMPLETE;
+      assert(!s.safety.CanApproach(goal));
+      PathGenerator::type=PATHFIND_NORMAL; PathGenerator::points.back()={90,0,0};
+      assert(!s.safety.CanApproach(goal)); // No unverified endpoint bridge.
+      clockMs+=500; PathGenerator::points.back()={100,0,0};
+      mob.y=50; clockMs+=500;
+      // Safe chord is allowed; actual spline through this patrol is still rejected.
+      assert(s.safety.CanApproach(goal));
+      s.bot.spline.finalized=false; s.bot.spline.path={{0,0,0},{0,50,0},{100,50,0},{100,0,0}};
+      assert(!s.safety.RouteSafe()); }
     { Scene s; s.bot.health=80; assert(s.prep.Update(1)==PreparationResult::Ready);
       s.prep.RequireRecovery(); assert(s.prep.Update(1)==PreparationResult::Waiting);
       s.bot.health=90; assert(s.prep.Update(1)==PreparationResult::Ready); }
@@ -260,19 +389,24 @@ int main() {
       Creature add=mob; add.guid=3; add.y=10; s.bot.map.creatures[3]=&add; clockMs+=500;
       assert(!s.safety.CanApproach(target)); add.y=100; clockMs+=500;
       assert(s.safety.CanApproach(target) && !s.safety.Blocker()); mob.elite=true; mob.level=60; clockMs+=500;
-      assert(s.safety.CanApproach(target)); // Rank/level alone never veto an assessed target.
-      opponentAllowed=false; assert(!s.safety.CanApproach(target));
-      assert(!strcmp(s.safety.Reason(),"insufficient-health-reserve"));
-      assert(s.safety.Blocker()==2); }
+      assert(s.safety.CanApproach(target)); } // Combat admission is owned by QuestHunt, not route geometry.
     { Scene s; Creature add; add.guid=2; add.x=30; add.y=40; add.hostile=add.attackable=true;
       s.bot.map.creatures[2]=&add; s.bot.spline.finalized=false;
       s.bot.spline.path={{0,0,0},{30,40,0},{60,0,0}};
       assert(!s.safety.RouteSafe());
       assert(!strcmp(s.safety.Reason(),"hostile-on-route") && s.safety.Blocker()==2); }
+    { Scene s; Creature civilian; civilian.guid=2; civilian.x=30; civilian.y=5;
+      civilian.hostile=civilian.attackable=civilian.civilian=true;
+      s.bot.map.creatures[2]=&civilian;
+      assert(s.safety.CanApproach({3,10,1,1,60,0,0}));
+      civilian.civilian=false; civilian.passive=true; clockMs+=500;
+      assert(s.safety.CanApproach({3,10,1,1,60,0,0}));
+      civilian.passive=false; clockMs+=500;
+      assert(!s.safety.CanApproach({3,10,1,1,60,0,0})); }
     { Scene s; s.safety.RememberDeath(); s.bot.spline.finalized=false;
       s.bot.spline.path={{0,0,0},{0,0,0},{60,0,0}};
       assert(s.safety.RouteSafe()); } // Duplicate start points don't prevent escaping death area.
-    { Scene s; s.safety.RememberDeath(); QuestSpawn near{2,10,1,1,10,0,0},far{3,10,1,1,60,0,0};
+    { Scene s; s.safety.RememberDeath(); s.safety.SetTarget(2); QuestSpawn near{2,10,1,1,5,0,0},far{3,10,1,1,60,0,0};
       assert(!s.safety.CanApproach(near) && s.safety.CanApproach(far)); clockMs+=300000;
       assert(s.safety.CanApproach(near)); }
     { Scene s; s.safety.RememberDeath(); s.bot.x=10;
@@ -280,10 +414,13 @@ int main() {
     { Scene s; Creature mob; mob.guid=2; mob.x=5; mob.hostile=mob.attackable=true;
       s.bot.map.creatures[2]=&mob; s.bot.health=20;
       assert(s.prep.Update(1)==PreparationResult::Waiting && !s.bot.sitting); }
-    { Scene s; Creature neutral; neutral.guid=2; neutral.x=40; neutral.y=20; neutral.attackable=true;
-      s.bot.map.creatures[2]=&neutral; s.safety.SetTarget(3);
+    { Scene s; Creature target; target.guid=3; target.x=40; target.attackable=target.hostile=true;
+      Creature neutral=target; neutral.guid=2; neutral.y=20; neutral.hostile=neutral.aggressive=false;
+      s.bot.map.creatures[2]=&neutral; s.bot.map.creatures[3]=&target; s.safety.SetTarget(3);
+      assert(s.safety.CanApproach({3,10,1,1,40,0,0})); // Attackable neutral does not answer assistance.
+      neutral.y=9; neutral.hostile=neutral.aggressive=true; clockMs+=500;
       assert(!s.safety.CanApproach({3,10,1,1,40,0,0}));
-      assert(!strcmp(s.safety.Reason(),"target-neighbour") && s.safety.Blocker()==2); }
+      assert(!strcmp(s.safety.Reason(),"target-assistance") && s.safety.Blocker()==2); }
     { Scene s; s.bot.health=20; assert(s.prep.Update(1)==PreparationResult::Waiting && s.bot.sitting);
       Creature patrol; patrol.guid=2; patrol.x=5; patrol.hostile=patrol.attackable=true;
       s.bot.map.creatures[2]=&patrol; clockMs+=500;
@@ -297,7 +434,7 @@ int main() {
 '''
 
 production = "\n".join(body(name) for name in (
-    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp"))
+    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifeDetour.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp"))
 for forbidden in ("TeleportTo(", "SetHealth(", "SetPower(", "Randomize(", "RewardQuest(", "CharacterDatabase"):
     assert forbidden not in production, forbidden
 
