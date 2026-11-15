@@ -387,7 +387,9 @@ namespace
         packet.FlushBits();
         for (uint8 index : {7, 2, 4, 5, 0, 6, 3, 1})
             packet.WriteByteSeq(guid[index]);
-        bot->GetSession()->HandleBattlemasterJoinOpcode(packet);
+        WorldPackets::Battleground::BattlemasterJoin joinPkt(std::move(packet));
+        joinPkt.Read();
+        bot->GetSession()->HandleBattlemasterJoinOpcode(joinPkt);
     }
 
     void Accept(Player* bot, uint32 slot)
@@ -395,7 +397,9 @@ namespace
         WorldPacket packet(CMSG_BATTLEFIELD_PORT);
         packet << uint8(1) << slot << uint32(0) << uint32(0);
         packet << uint8(0);
-        bot->GetSession()->HandleBattleFieldPortOpcode(packet);
+        WorldPackets::Battleground::BattlefieldPort portPkt(std::move(packet));
+        portPkt.Read();
+        bot->GetSession()->HandleBattleFieldPortOpcode(portPkt);
     }
 
     Creature* FindSpiritGuide(Player* bot, float range)
@@ -414,7 +418,9 @@ namespace
         {
             WorldPacket packet(CMSG_REPOP_REQUEST);
             packet << uint8(0);
-            bot->GetSession()->HandleRepopRequestOpcode(packet);
+            WorldPackets::Combat::RepopRequest repopPkt(std::move(packet));
+            repopPkt.Read();
+            bot->GetSession()->HandleRepopRequestOpcode(repopPkt);
             return;
         }
         if (bot->HasAura(SPELL_WAITING_FOR_RESURRECT))
@@ -430,7 +436,9 @@ namespace
             packet.FlushBits();
             for (uint8 index : {1, 7, 6, 2, 4, 3, 0, 5})
                 packet.WriteByteSeq(guid[index]);
-            bot->GetSession()->HandleAreaSpiritHealerQueueOpcode(packet);
+            WorldPackets::Battleground::AreaSpiritHealerQueue queuePkt(std::move(packet));
+            queuePkt.Read();
+            bot->GetSession()->HandleAreaSpiritHealerQueueOpcode(queuePkt);
         }
     }
 }
@@ -504,7 +512,9 @@ void BattlegroundTest::Update(uint32 diff)
                 if (RequestReady(state, now, 5000))
                 {
                     WorldPacket packet(CMSG_BATTLEFIELD_LEAVE);
-                    bot->GetSession()->HandleBattlefieldLeaveOpcode(packet);
+                    WorldPackets::Battleground::BattlefieldLeave leavePkt(std::move(packet));
+                    leavePkt.Read();
+                    bot->GetSession()->HandleBattlefieldLeaveOpcode(leavePkt);
                     MarkRequest(state, now);
                 }
                 continue;

@@ -549,7 +549,9 @@ namespace
         packet.FlushBits();
         for (uint8 index : {7, 2, 4, 5, 0, 6, 3, 1})
             packet.WriteByteSeq(guid[index]);
-        bot->GetSession()->HandleBattlemasterJoinOpcode(packet);
+        WorldPackets::Battleground::BattlemasterJoin joinPkt(std::move(packet));
+        joinPkt.Read();
+        bot->GetSession()->HandleBattlemasterJoinOpcode(joinPkt);
     }
 
     void Accept(Player* bot, uint32 slot)
@@ -557,7 +559,9 @@ namespace
         WorldPacket packet(CMSG_BATTLEFIELD_PORT);
         packet << uint8(1) << slot << uint32(0) << uint32(0);
         packet << uint8(0);
-        bot->GetSession()->HandleBattleFieldPortOpcode(packet);
+        WorldPackets::Battleground::BattlefieldPort portPkt(std::move(packet));
+        portPkt.Read();
+        bot->GetSession()->HandleBattleFieldPortOpcode(portPkt);
     }
 }
 
@@ -612,7 +616,9 @@ void ArathiBasinPlayerbot::Update(uint32 diff)
                 && bg->GetStatus() == STATUS_WAIT_LEAVE && RequestReady(state, now, 5000))
             {
                 WorldPacket packet(CMSG_BATTLEFIELD_LEAVE);
-                bot->GetSession()->HandleBattlefieldLeaveOpcode(packet);
+                WorldPackets::Battleground::BattlefieldLeave leavePkt(std::move(packet));
+                leavePkt.Read();
+                bot->GetSession()->HandleBattlefieldLeaveOpcode(leavePkt);
                 MarkRequest(state, now);
             }
             continue;
@@ -714,7 +720,9 @@ bool ArathiBasinPlayerbot::DoNextAction(PlayerbotAI* ai)
         && bot->GetDistance2d(banner.object) <= 12.0f)
     {
         WorldPacket packet(CMSG_CANCEL_MOUNT_AURA);
-        bot->GetSession()->HandleCancelMountAuraOpcode(packet);
+        WorldPackets::Combat::CancelMountAura cancelMountPkt(std::move(packet));
+        cancelMountPkt.Read();
+        bot->GetSession()->HandleCancelMountAuraOpcode(cancelMountPkt);
     }
 
     UseBanner(bot, bg, state, now);
