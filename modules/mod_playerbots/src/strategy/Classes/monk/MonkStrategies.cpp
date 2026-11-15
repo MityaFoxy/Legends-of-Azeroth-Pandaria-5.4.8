@@ -86,14 +86,17 @@ void BrewmasterMonkAoeStrategy::InitTriggers(std::vector<TriggerNode*>& triggers
 
 NextAction** MistweaverMonkStrategy::getDefaultActions()
 {
-    return NextAction::array(0, new NextAction("soothing mist on party", ACTION_DEFAULT), nullptr);
+    return NextAction::array(0,
+        new NextAction("tiger palm", ACTION_DEFAULT + 0.2f),
+        new NextAction("jab", ACTION_DEFAULT + 0.1f),
+        new NextAction("melee", ACTION_DEFAULT), nullptr);
 }
 
 void MistweaverMonkStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
     // Healers still need target cleanup, range, mount and combat recovery.
     // Without these a lost enemy leaves the AI in combat with no active task.
-    CombatStrategy::InitTriggers(triggers);
+    MeleeCombatStrategy::InitTriggers(triggers);
     triggers.push_back(new TriggerNode(
         "medium group heal setting",
         NextAction::array(0, new NextAction("uplift", ACTION_CRITICAL_HEAL + 3),

@@ -34,7 +34,7 @@ private:
     QuestSpawn _stagingPoint{};
     std::unordered_set<uint32_t> _attempted;
     uint32_t _engagedAt = 0, _checkedAt = 0;
-    bool _engaged = false, _checked = false, _staging = false;
+    bool _engaged = false, _combatStarted = false, _checked = false, _staging = false;
 };
 }
 #endif

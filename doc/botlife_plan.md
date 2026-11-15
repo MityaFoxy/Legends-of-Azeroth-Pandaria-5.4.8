@@ -831,13 +831,23 @@ native counters уже заполнены, но ядро не перевело �
 Каждый переход использует прежние бюджеты TravelExecutor. Native
 RecoveryExhausted/MovementLost не обходятся сменой цели. Бой — Pause/Resume;
 teleport/control/map/phase/logout — отмена без удаления квеста (узкое исключение:
-штатный near-перенос мёртвого духа с corpse на той же карте при восстановлении).
+штатный near-перенос мёртвого духа с corpse на той же карте при восстановлении,
+а также self-cast spell movement живого бота в бою, например Blink). Для
+последнего случая ядро сохраняет `TELE_TO_SPELL` до near-teleport ACK; обычный
+living teleport, far transfer и смена карты/фазы по-прежнему отменяют QuestRun.
 Смерть в QuestRun — пауза с сохранением исполнителя, см. уточнение ниже.
 Внутренние wall-time пределы проверяются при выполнении Update после
 возобновления: BotLife не вмешивается в продолжающийся native бой. Внешний
 smoke watchdog ограничивает весь прогон 25 минутами, включая непрерывный бой.
 Окончание принятия квеста больше не означает окончания всего сценария.
 Уже сданный, проваленный или удалённый квест не берётся повторно.
+
+Живой A/B-прогон 2026-11-15 подтвердил различие на Olymanu (GUID 1168,
+quest 26932). До сохранения options нативный Blink и
+`CMSG_MOVE_TELEPORT_ACK` немедленно давали `cancel reason=teleport`. После
+исправления тот же нативный эпизод сохранил QuestRun: `pause reason=combat`,
+Blink/ACK, Frost Nova, затем `resume reason=combat-ended` и очищенный blocker.
+Принудительного каста, переноса персонажа или прямого изменения квеста не было.
 
 Сверка с закреплённым оригиналом: из `DO_QUEST` использованы наблюдение за
 реальными counters и ограниченная смена целей, из `TurnIn` — native reward.
@@ -2198,6 +2208,72 @@ Playerbots combat pause/resume не потерял принадлежавший 
 После живых проверок `worldserver -j4` собран успешно, а отдельный полный
 sanitizer-regression CTest завершился **83/83 PASS** за 595,89 с; в него входит
 новая проверка второго подряд unsafe return и разделённых interaction-причин.
+
+### Assist-группы RouteClearance и Mistweaver fallback (2026-11-15)
+
+Многоуровневый прогон выявил два разных отказа, которые ранее выглядели как
+общая проблема маршрута. Felice1138 / quest216 завершила objective 15/15, но
+дорогу к ender перекрывали взаимопомогающие NPC. Cordia532 / quest14262 дошла
+до цели, однако Mistweaver не имел атакующего default fallback: реализованные
+и зарегистрированные monk actions не становились достижимыми после передачи
+атаки.
+
+`RouteClearance` теперь может передать native Playerbots всю подтверждённую
+assist-группу без искусственного ограничения по числу NPC. Состав группы
+определяется теми же core-условиями `CallAssistance`: радиус 10 м,
+`CanAssistTo`, одна фракция и LOS. Каждый участник отдельно проходит прежние
+проверки готовности, разницы уровней, elite и доступности; посторонние угрозы
+по-прежнему запрещают подход. Обычная квестовая цель остаётся консервативной:
+групповой допуск включён только для RouteClearance после неудачи обхода.
+
+Живой `botlife-cordia-14262-monk-20261115-r1` подтвердил обе границы. Cordia
+нативно убила две quest target и подняла objective 267408 до 6/6, затем
+RouteClearance оценил spawn243989 вместе с одним помощником как
+`native-assisted-combat assistants=1`. Бой длился 36 секунд и завершился
+`reason=cleared`; прямого урона, kill-credit или spell cast со стороны BotLife
+не было.
+
+Для Cordia использован не полный перенос 607 строк Monk AI из NotCronky
+`aace1b02`, а только подтверждённый отсутствующий контракт Mistweaver:
+`MeleeCombatStrategy` и default fallback `Tiger Palm -> Jab -> melee`.
+Существующие локальные healing triggers сохранены. В живом прогоне Cordia
+вступила в бой, наносила автоатаки и spell damage, получила оба первых
+kill-credit; прежний `attack-not-started` не повторился. Отдельная regression
+проверяет наследование, порядок fallback, melee triggers и регистрацию всех
+трёх actions.
+
+Тот же прогон Felice выявил отдельный навигационный долг до исходной пары NPC:
+spawn240982 был реально атакован (`mangle`, melee и damage), после чего core
+зафиксировал `Return home requested`. Старый RouteClearance считал живой spawn
+окончательно attempted и больше не оценивал его. Cordia независимо показала
+вторую границу: `Attack()` временно включил combat engine, но за прежнее
+пятисекундное окно не возникли реальные combat flags или damage, после чего
+spawn также ошибочно стал permanent attempted.
+
+Теперь начало боя подтверждается только `Player::IsInCombat()` или
+`Creature::IsInCombat()`, а не промежуточным состоянием combat engine. До
+подтверждения работает отдельный 30-секундный watchdog захвата цели; его отказ
+не помечает spawn обработанным. После реального боя только подтверждённый
+`IsInEvadeMode()` снимает отметку; новая попытка невозможна, пока NPC не
+завершит возврат и снова не пройдёт `Available()`. Обычный живой survivor без
+evade остаётся attempted и повторно не атакуется. Все три границы покрыты
+ASan/UBSan quest lifecycle regression.
+
+Живые A/B-повторы на пересобранном `worldserver` подтвердили state machine.
+В `botlife-cordia-14262-state-r2` тот же spawn243973, который в r1 дал
+`combat-ended-target-alive` и затем заблокировал пять quest target, был
+повторно оценён, реально вступил в бой, завершился `cleared` и поднял objective
+267409 с 2/6 до 3/6. Каскада `blocker-already-attempted` не было.
+
+В `botlife-felice-216-assisted-state-r2` Felice сначала нативно очистила
+одиночный blocker240883. Затем blocker240882 был оценён вместе с одним прямым
+помощником как `native-assisted-combat assistants=1`; оба NPC вступили в бой,
+а RouteClearance завершился `reason=cleared`. Это живое подтверждение снятия
+жёсткого запрета на два взаимопомогающих NPC. После ещё двух подтверждённых
+расчисток Felice дошла до ender и штатно завершила quest216:
+`result=completed rewarded=true reason=rewarded`, без смертей. Тем самым живой
+прогон проверил не только допуск assist-группы, но и полное возобновление
+TurnIn-маршрута после последовательных боёв.
 
 ### Этап 6. Планировщик жизни
 

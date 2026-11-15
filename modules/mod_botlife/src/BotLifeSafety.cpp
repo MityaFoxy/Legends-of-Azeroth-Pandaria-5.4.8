@@ -76,7 +76,8 @@ bool QuestSafety::SafeSegment(SafetyPoint from, SafetyPoint to)
             return Reject("recent-death-route", 0, area.position, 10, from, to);
     }
     LocalThreat const* blocker = nullptr;
-    if (!SafeThreatSegment(_threats, from, to, _target, &blocker))
+    if (!SafeThreatSegment(_threats, from, to, _target, &blocker,
+        _allowAssistance ? &_assistants : nullptr))
         return blocker ? Reject("hostile-on-route", blocker->spawn, blocker->position, blocker->radius, from, to)
             : Reject("invalid-segment", 0, from, 0, from, to);
     return true;
@@ -143,10 +144,12 @@ bool QuestSafety::SafeNavigationLeg(SafetyPoint from, SafetyPoint goal)
     return true;
 }
 
-bool QuestSafety::CanApproach(QuestSpawn const& target)
+bool QuestSafety::CanApproach(QuestSpawn const& target, bool allowAssistance)
 {
     _check = "approach";
     _reason = "none"; _blocker = 0;
+    _allowAssistance = allowAssistance;
+    _assistants.clear();
     Refresh();
     SafetyPoint goal{target.x, target.y, target.z};
     Creature* intended = nullptr;
@@ -185,7 +188,11 @@ bool QuestSafety::CanApproach(QuestSpawn const& target)
             Creature* assistant = _bot.GetMap()->GetCreatureBySpawnId(threat.spawn);
             if (assistant && assistant->CanAssistTo(intended, &_bot) &&
                 intended->IsWithinDistInMap(assistant, assistanceRadius) && intended->IsWithinLOSInMap(assistant))
-                return Reject("target-assistance", threat.spawn, threat.position, assistanceRadius, Position(_bot), goal);
+            {
+                if (!allowAssistance)
+                    return Reject("target-assistance", threat.spawn, threat.position, assistanceRadius, Position(_bot), goal);
+                _assistants.push_back(threat.spawn);
+            }
         }
     // A dangerous chord does not prove a dangerous navigable corridor. Keep
     // target checks above independent and recheck the actual dispatched spline.

@@ -46,6 +46,11 @@ bool ActivityContext::CheckDeathRecovery(PlayerbotAI& ai)
     }
     if (bot.IsBeingTeleported())
     {
+        // Self-cast combat movement such as Blink uses the core's near-
+        // teleport acknowledgement path. It is native combat movement, not
+        // external control or a world transfer, so preserve the paused run.
+        if (bot.IsAlive() && bot.IsInCombat() && bot.IsBeingTeleportedBySpell())
+            return false;
         // Observe (never issue) the core's same-map graveyard transfer of a ghost.
         // Far transfers, living teleports and transfers without a corpse still cancel.
         if (!(_recoveringFromDeath && !bot.IsAlive() && bot.IsBeingTeleportedNear() &&

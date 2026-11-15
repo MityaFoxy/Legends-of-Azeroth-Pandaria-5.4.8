@@ -101,8 +101,8 @@ std::optional<QuestSpawn> QuestHunt::RouteObstacle(uint32_t spawn, bool allowDis
     if (Resolve(*bot, target) != npc)
         return std::nullopt;
     _safety.SetTarget(spawn);
-    if (!_safety.CanApproach(target))
-        return std::nullopt; // Includes neighbours/patrols; never exempt the original quest target too.
+    if (!_safety.CanApproach(target, true))
+        return std::nullopt; // Unrelated neighbours and patrols remain unsafe.
     return target;
 }
 
@@ -120,32 +120,49 @@ CombatAdmission QuestHunt::CanAttempt(Creature& enemy, bool recovering) const
     return {true, "native-combat"};
 }
 
-bool QuestHunt::CanEngage(QuestSpawn const& target) const
+CombatAdmission QuestHunt::CanAttemptGroup(Creature& enemy, bool recovering) const
+{
+    CombatAdmission admission = CanAttempt(enemy, recovering);
+    if (!admission.allowed)
+        return admission;
+    for (uint32_t spawn : _safety.Assistants())
+    {
+        Creature* assistant = bot->GetMap()->GetCreatureBySpawnId(spawn);
+        if (!assistant || !Available(*bot, *assistant))
+            return {false, "assistant-unavailable"};
+        admission = CanAttempt(*assistant, recovering);
+        if (!admission.allowed)
+            return admission;
+    }
+    return {true, _safety.Assistants().empty() ? "native-combat" : "native-assisted-combat"};
+}
+
+bool QuestHunt::CanEngage(QuestSpawn const& target, bool allowAssistance) const
 {
     Creature* npc = Resolve(*bot, target);
     _safety.SetTarget(target.guid);
     return npc && Available(*bot, *npc) && !bot->IsInCombat() && !bot->IsMounted() &&
         !bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL) &&
-        !bot->IsNonMeleeSpellCasted(false) && CanAttempt(*npc).allowed &&
-        _safety.CanApproach(target) &&
+        !bot->IsNonMeleeSpellCasted(false) && _safety.CanApproach(target, allowAssistance) &&
+        CanAttemptGroup(*npc).allowed &&
         bot->IsWithinDistInMap(npc, 20.0f) && bot->IsWithinLOSInMap(npc);
 }
 
-bool QuestHunt::Engage(QuestSpawn const& target)
+bool QuestHunt::Engage(QuestSpawn const& target, bool allowAssistance)
 {
     // Caller releases its travel first. Do not let AttackAction clear a foreign
     // point/follow/scripted route while switching to the native combat engine.
-    if (!CanEngage(target) || bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE ||
+    if (!CanEngage(target, allowAssistance) || bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE ||
         !bot->movespline->Finalized())
         return false;
     Creature* enemy = Resolve(*bot, target);
     if (!enemy)
         return false;
-    CombatAdmission const admission = CanAttempt(*enemy);
+    CombatAdmission const admission = CanAttemptGroup(*enemy);
     if (!admission.allowed || !Attack(enemy))
         return false; // Existing Playerbots engine owns spells, chase and melee.
-    TC_LOG_INFO("playerbots.botlife", "BotLife combat-admission guid={} spawn={} allowed=true reason={} level={} elite={}",
-        bot->GetGUID().GetCounter(), target.guid, admission.reason, enemy->GetLevel(), enemy->isElite());
+    TC_LOG_INFO("playerbots.botlife", "BotLife combat-admission guid={} spawn={} allowed=true reason={} level={} elite={} assistants={}",
+        bot->GetGUID().GetCounter(), target.guid, admission.reason, enemy->GetLevel(), enemy->isElite(), AssistanceCount());
     return true;
 }
 

@@ -25,11 +25,13 @@ public:
         uint32_t* blocker = nullptr) const;
     std::optional<QuestSpawn> RouteObstacle(uint32_t spawn, bool allowDistant = false) const;
     CombatAdmission CanAttempt(Creature& enemy, bool recovering = false) const;
-    bool CanEngage(QuestSpawn const& target) const;
-    bool Engage(QuestSpawn const& target);
+    CombatAdmission CanAttemptGroup(Creature& enemy, bool recovering = false) const;
+    bool CanEngage(QuestSpawn const& target, bool allowAssistance = false) const;
+    bool Engage(QuestSpawn const& target, bool allowAssistance = false);
     bool IsAlive(QuestSpawn const& target) const;
     bool IsFighting() const;
     bool CancelUnstartedAttack(QuestSpawn const& target);
+    std::size_t AssistanceCount() const { return _safety.Assistants().size(); }
 private:
     mutable QuestSafety _safety;
 };

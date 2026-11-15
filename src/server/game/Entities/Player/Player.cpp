@@ -1975,6 +1975,10 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
 
         // this will be used instead of the current location in SaveToDB
         m_teleport_dest = WorldLocation(mapid, x, y, z, orientation);
+        // Keep the options for the active near teleport as well as for the
+        // delayed path above. Consumers must be able to distinguish a
+        // self-cast spell movement (for example Blink) until its ACK arrives.
+        m_teleport_options = options;
         SetFallInformation(0, z);
         m_lastTeleportOrChargeTime = getMSTime();
 

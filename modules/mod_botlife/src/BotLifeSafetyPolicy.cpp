@@ -15,7 +15,7 @@ float SegmentDistanceSquared(SafetyPoint p, SafetyPoint a, SafetyPoint b)
 }
 
 bool SafeThreatSegment(std::vector<LocalThreat> const& threats, SafetyPoint from, SafetyPoint to, uint32_t target,
-    LocalThreat const** blocker)
+    LocalThreat const** blocker, std::vector<uint32_t> const* assistants)
 {
     if (blocker)
         *blocker = nullptr;
@@ -29,7 +29,8 @@ bool SafeThreatSegment(std::vector<LocalThreat> const& threats, SafetyPoint from
     {
         // Combat assessment admits the selected opponent separately. Geometry
         // must still reject every unrelated hostile, regardless of its rank.
-        if (target && threat.spawn == target)
+        if ((target && threat.spawn == target) || (assistants &&
+            std::find(assistants->begin(), assistants->end(), threat.spawn) != assistants->end()))
             continue;
         if (threat.aggressive && SegmentDistanceSquared(threat.position, from, to) <= threat.radius*threat.radius)
         {

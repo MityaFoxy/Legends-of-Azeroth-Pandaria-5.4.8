@@ -2489,6 +2489,10 @@ public:
     {
         return mSemaphoreTeleport_Near;
     }
+    bool IsBeingTeleportedBySpell() const
+    {
+        return mSemaphoreTeleport_Near && (m_teleport_options & TELE_TO_SPELL);
+    }
     bool IsBeingTeleportedFar() const
     {
         return mSemaphoreTeleport_Far;
