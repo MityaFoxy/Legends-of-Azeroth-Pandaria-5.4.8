@@ -259,7 +259,7 @@ enum HallowendFire
 
 struct npc_hallowend : public ScriptedAI
 {
-    npc_hallowend(Creature* creature) : ScriptedAI(creature), Fires(creature)
+    npc_hallowend(Creature* creature) : ScriptedAI(creature), Fires(creature), FiresInitialized(false)
     {
         Area = me->GetAreaId();
         AreaFire = 0;
@@ -268,12 +268,25 @@ struct npc_hallowend : public ScriptedAI
         me->SetVisible(false);
         me->SetReactState(REACT_PASSIVE);
         me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE);
+    }
+
+    void JustAppeared() override
+    {
+        ScriptedAI::JustAppeared();
+
+        // Creature construction can happen while a grid is still loading. Defer summons until the owner is in world,
+        // while preserving the old one-time initialization semantics across ordinary respawns.
+        if (FiresInitialized)
+            return;
+
+        FiresInitialized = true;
         for (uint8 j = 0; j < PostionEventoHallowends[AreaFire].Area_Count; j++)
         {
-            if (Creature* summon = me->SummonCreature(NPC_HEADLESS_HORSEMAN_FIRE_DND, PostionEventoHallowends[AreaFire + j].SpawnPosition)->ToCreature())
+            if (Creature* summon = me->SummonCreature(NPC_HEADLESS_HORSEMAN_FIRE_DND, PostionEventoHallowends[AreaFire + j].SpawnPosition))
             {
                 Fires.Summon(summon);
-                summon->AI()->SetData(0, AreaFire + j);
+                if (summon->AI())
+                    summon->AI()->SetData(0, AreaFire + j);
             }
         }
     }
@@ -284,6 +297,7 @@ struct npc_hallowend : public ScriptedAI
     uint32 CountPlayersEvent;
     uint8 AreaFire;
     SummonList Fires;
+    bool FiresInitialized;
     bool EventProgress;
     bool SaidPhrase[2];
 
