@@ -92,7 +92,10 @@ constexpr uint32 TARGET_FLAG_ITEM=1, TARGET_FLAG_DEST_LOCATION=2,
     TARGET_FLAG_SOURCE_LOCATION=4, SPELL_FACING_FLAG_INFRONT=1;
 constexpr float CAST_ANGLE_IN_FRONT=1;
 enum { SPELL_STATE_PREPARING, SPELL_STATE_FINISHED, SPELL_STATE_DELAYED };
-struct Item {};
+struct Item {
+    ObjectGuid owner=7;
+    ObjectGuid GetOwnerGUID() const { return owner; }
+};
 struct Effect { int Effect=0; };
 struct SpellInfo {
     uint32 Id=42, Targets=0, FacingCasterFlags=0;
@@ -365,10 +368,34 @@ int main()
             manager.info.Targets=TARGET_FLAG_ITEM; bot.trade=true;
             result=ai.CastSpell(42,&target);
         }
-        assert(result == (scenario == 3)); // Preserve existing trade special case.
+        assert(!result); // Missing item target and unsupported trade enchants are rejected.
         assert(Spell::prepared == 0 && Spell::created == 1 && Spell::destroyed == 1);
         bot.m_Events.Update(1);
         assert(Spell::destroyed == 1);
+    }
+    // Item spells accept only an explicitly supplied item owned by the bot.
+    reset();
+    {
+        Unit bot, target;
+        PlayerbotAI ai{&bot};
+        manager.info.Targets=TARGET_FLAG_ITEM;
+        Item item;
+        assert(ai.CastSpell(42,&target,&item));
+        assert(Spell::prepared == 1);
+        bot.m_Events.Update(1);
+        assert(Spell::destroyed == 1);
+    }
+    reset();
+    {
+        Unit bot, target;
+        PlayerbotAI ai{&bot};
+        manager.info.Targets=TARGET_FLAG_ITEM;
+        Item foreign; foreign.owner=8;
+        assert(!ai.CastSpell(42,&target,&foreign));
+        assert(Spell::prepared == 0 && Spell::destroyed == 1);
+        Item owned; bot.trade=true;
+        assert(!ai.CastSpell(42,&target,&owned));
+        assert(Spell::prepared == 0 && Spell::destroyed == 2);
     }
     // Execute the production action-bar resolution used by unit casts.
     reset();
