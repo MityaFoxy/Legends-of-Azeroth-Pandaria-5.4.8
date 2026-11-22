@@ -51,6 +51,9 @@ uint32 clockTime=1000;
 uint32 getMSTime() { return clockTime; }
 uint32 getMSTimeDiff(uint32 before, uint32 now);
 struct WorldPacket { explicit WorldPacket(int op) { assert(op==CMSG_RETURN_TO_GRAVEYARD); } };
+namespace WorldPackets { namespace Combat {
+struct PortGraveyard { explicit PortGraveyard(WorldPacket&&) {} void Read() {} };
+} }
 struct Player;
 struct WorldSession {
     Player* player=nullptr;
@@ -58,7 +61,7 @@ struct WorldSession {
     bool isLogingOut() { return logout; }
     int GetAccountId() { return 1; }
     Player* GetPlayer() { return player; }
-    void HandleReturnToGraveyard(WorldPacket&);
+    void HandleReturnToGraveyard(WorldPackets::Combat::PortGraveyard&);
 };
 struct PlayerbotAI {
     bool real=false, master=false;
@@ -235,10 +238,12 @@ int main() {
     assert(Recover(&p,s,32000));
     // Native handler independently rejects living and unreleased players.
     WorldPacket packet(CMSG_RETURN_TO_GRAVEYARD);
+    WorldPackets::Combat::PortGraveyard graveyardPkt(std::move(packet));
+    graveyardPkt.Read();
     int before=p.requests; p.alive=true;
-    p.session.HandleReturnToGraveyard(packet); assert(p.requests==before);
+    p.session.HandleReturnToGraveyard(graveyardPkt); assert(p.requests==before);
     p.alive=false; p.ghost=false;
-    p.session.HandleReturnToGraveyard(packet); assert(p.requests==before);
+    p.session.HandleReturnToGraveyard(graveyardPkt); assert(p.requests==before);
     std::puts("BG native graveyard return: double loss, guards, retry budget and lifecycle OK");
 }
 '''
@@ -259,7 +264,7 @@ with tempfile.TemporaryDirectory(prefix='loa-bg-graveyard-') as directory:
     print(result.stdout.strip())
     if '--verify-mutations' in sys.argv:
         for name, old, new in (
-            ('missing-return', 'bot->GetSession()->HandleReturnToGraveyard(packet);', ''),
+            ('missing-return', 'bot->GetSession()->HandleReturnToGraveyard(graveyardPkt);', ''),
             ('waiting-queue-moved', 'if (bot->HasAura(SPELL_WAITING_FOR_RESURRECT))', 'if (false)'),
             ('teleport-in-place', 'distance <= GRAVEYARD_ARRIVAL_DISTANCE', 'false'),
             ('unbounded-retries', 'if (state.attempts >= MAX_RETURN_ATTEMPTS)', 'if (false)'),

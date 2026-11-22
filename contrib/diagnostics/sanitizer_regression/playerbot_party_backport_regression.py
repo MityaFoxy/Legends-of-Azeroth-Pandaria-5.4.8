@@ -89,11 +89,19 @@ struct WorldPacket {
     void FlushBits() {}
     void WriteByteSeq(uint8) {}
 };
+namespace WorldPackets {
+namespace Combat {
+struct RepopRequest { explicit RepopRequest(WorldPacket&&) {} void Read() {} };
+}
+namespace Battleground {
+struct AreaSpiritHealerQueue { explicit AreaSpiritHealerQueue(WorldPacket&&) {} void Read() {} };
+}
+}
 struct Session {
     Player* player = nullptr;
     int releases = 0, queues = 0;
-    void HandleRepopRequestOpcode(WorldPacket&);
-    void HandleAreaSpiritHealerQueueOpcode(WorldPacket&) { ++queues; }
+    void HandleRepopRequestOpcode(WorldPackets::Combat::RepopRequest&);
+    void HandleAreaSpiritHealerQueueOpcode(WorldPackets::Battleground::AreaSpiritHealerQueue&) { ++queues; }
 };
 struct WorldLocation {
     uint32 map = uint32(-1);
@@ -178,7 +186,7 @@ struct Player : Unit {
     void StopMoving() { moving = false; }
     MotionMaster* GetMotionMaster() { return &motion; }
 };
-void Session::HandleRepopRequestOpcode(WorldPacket&) { ++releases; player->ghost = true; }
+void Session::HandleRepopRequestOpcode(WorldPackets::Combat::RepopRequest&) { ++releases; player->ghost = true; }
 struct Creature : Unit { bool IsSpiritService() { return true; } } guide;
 struct GroupReference {
     Player* player;

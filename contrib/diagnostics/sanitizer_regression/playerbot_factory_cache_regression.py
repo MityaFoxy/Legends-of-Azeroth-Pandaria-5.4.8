@@ -88,9 +88,16 @@ struct WorldPacket {
     explicit WorldPacket(int) {}
     void operator<<(uint32 value) { tab = value; }
 };
+namespace WorldPackets { namespace Talent {
+struct SetPrimaryTalentTree {
+    uint32 tab;
+    explicit SetPrimaryTalentTree(WorldPacket&& packet) : tab(packet.tab) {}
+    void Read() {}
+};
+} }
 struct Session {
     std::vector<uint32> tabs;
-    void HandeSetTalentSpecialization(WorldPacket& packet) { tabs.push_back(packet.tab); }
+    void HandeSetTalentSpecialization(WorldPackets::Talent::SetPrimaryTalentTree& packet) { tabs.push_back(packet.tab); }
 };
 struct Player {
     uint32 level = 20, spec = 0, cls = 11, zone = 42, team = ALLIANCE;

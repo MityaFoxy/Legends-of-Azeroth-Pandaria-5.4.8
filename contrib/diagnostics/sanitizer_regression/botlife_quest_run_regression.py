@@ -227,12 +227,14 @@ public:
     static inline bool offerDetour=false;
     static inline bool pendingDetour=false;
     static inline uint32 blockedTarget=0,blocker=0;
+    static inline std::vector<uint32> assistants{};
     uint32 target=0;
     explicit QuestSafety(Player&) { }
-    bool CanApproach(QuestSpawn const& spawn) { return safe && (!blockedTarget || spawn.guid!=blockedTarget) && (spawn.guid || stagingSafe); }
+    bool CanApproach(QuestSpawn const& spawn, bool = false) { return safe && (!blockedTarget || spawn.guid!=blockedTarget) && (spawn.guid || stagingSafe); }
     bool RouteSafe() { return safe; }
     void SetTarget(uint32 id) { target=id; }
     uint32 Blocker() const { return blocker; }
+    std::vector<uint32> const& Assistants() const { return assistants; }
     char const* Reason() const { return blocker?"hostile-on-route":"none"; }
     void RememberDeath() { }
     bool DetourPending() const { return pendingDetour; }
@@ -374,7 +376,7 @@ int main() {
       assert(clear.Update(1)==ClearanceResult::Running && clear.Active() && s.ai.attacks==1); }
     { Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
       assert(clear.Start(11)); clear.Update(1); s.bot.victim=nullptr; s.ai.state=0;
-      clockMs+=5000; assert(clear.Update(1)==ClearanceResult::Failed && s.ai.attacks==1); }
+      clockMs+=30000; assert(clear.Update(1)==ClearanceResult::Failed && s.ai.attacks==1); }
     { Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
       assert(clear.Start(11)); s.bot.map.creatures.erase(11);
       assert(clear.Update(1)==ClearanceResult::Failed); }

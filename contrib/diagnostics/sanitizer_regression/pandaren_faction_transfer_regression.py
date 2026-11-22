@@ -32,7 +32,7 @@ handler = method(handler_source, "void WorldSession::HandleSelectFactionOpcode("
 # CanPlayerLeaveStartingArea before it sends the faction-selection opcode.
 neutral = on_login.index("if (bot->GetRace() == RACE_PANDAREN_NEUTRAL)")
 complete = on_login.index("CompletePandarenFactionQuest(bot);", neutral)
-select = on_login.index("session->HandleSelectFactionOpcode(packet);", neutral)
+select = on_login.index("session->HandleSelectFactionOpcode(factionPkt);", neutral)
 assert complete < select
 assert on_login.index("if (!HasCompletedPandarenFactionQuest(bot))", complete) < select
 

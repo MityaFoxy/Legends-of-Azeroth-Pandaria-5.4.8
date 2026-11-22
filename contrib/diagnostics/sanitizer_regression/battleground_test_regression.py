@@ -35,9 +35,9 @@ assert "ArathiBasinPlayerbot::DoNextAction(this)" in ai
 assert "BattlegroundTest::DoNextAction" not in ai
 
 for native_contract in (
-    "HandleBattlemasterJoinOpcode(packet)",
-    "HandleBattleFieldPortOpcode(packet)",
-    "HandleBattlefieldLeaveOpcode(packet)",
+    "HandleBattlemasterJoinOpcode(joinPkt)",
+    "HandleBattleFieldPortOpcode(portPkt)",
+    "HandleBattlefieldLeaveOpcode(leavePkt)",
     "bot->CastSpell(banner, OPENING_SPELL_ID, false)",
     "spell->m_targets.GetGOTargetGUID() == banner->GetGUID()",
     "FindFriendlyBannerCapturer(bot, banner, false)",
@@ -51,10 +51,10 @@ assert "TeleportTo(" not in production
 assert "sPlayerbotAIConfig->battlegroundTest" in production
 
 for lifecycle_contract in (
-    "HandleBattlemasterJoinOpcode(packet)",
-    "HandleBattleFieldPortOpcode(packet)",
-    "HandleAreaSpiritHealerQueueOpcode(packet)",
-    "HandleBattlefieldLeaveOpcode(packet)",
+    "HandleBattlemasterJoinOpcode(joinPkt)",
+    "HandleBattleFieldPortOpcode(portPkt)",
+    "HandleAreaSpiritHealerQueueOpcode(queuePkt)",
+    "HandleBattlefieldLeaveOpcode(leavePkt)",
     "LogState(bot, state",
 ):
     assert lifecycle_contract in test_controller, lifecycle_contract
@@ -70,6 +70,6 @@ for objective_symbol in (
 
 assert 'AI_VALUE(GuidVector, "nearest npcs")' not in auto_release
 assert "FindNearestCreature(entry" in auto_release
-assert "HandleAreaSpiritHealerQueueOpcode(packet)" in auto_release
+assert "HandleAreaSpiritHealerQueueOpcode(queuePkt)" in auto_release
 
 print("Arathi Basin production/test split regression passed")

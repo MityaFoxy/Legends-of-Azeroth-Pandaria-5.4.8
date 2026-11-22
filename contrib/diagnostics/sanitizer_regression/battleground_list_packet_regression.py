@@ -64,6 +64,9 @@ struct WorldPacket {
     void FlushBits() { ++flushes; }
     void WriteByteSeq(unsigned) { ++bytes; }
 };
+namespace WorldPackets { namespace Battleground {
+struct BattlefieldListRequest { uint32 BgTypeId = 3; };
+} }
 struct Player {
     unsigned level = 25;
     bool winner = false;
@@ -110,7 +113,7 @@ struct WorldSession {
         ++sent; last = *packet;
     }
     void SendBattleGroundList(Guid, BattlegroundTypeId);
-    void HandleBattlefieldListOpcode(WorldPacket&);
+    void HandleBattlefieldListOpcode(WorldPackets::Battleground::BattlefieldListRequest&);
 };
 '''
 # The actual ObjectGuid implementation is unrelated to the failure paths.
@@ -119,7 +122,7 @@ main = r'''
 int main() {
     Player player;
     WorldSession session{&player};
-    WorldPacket request;
+    WorldPackets::Battleground::BattlefieldListRequest request;
     WorldPacket untouched;
     assert(!manager.BuildBattlegroundListPacket(&untouched, {}, nullptr, 3));
     assert(!untouched.opcode && untouched.fields.empty());
@@ -156,7 +159,7 @@ int main() {
     assert(session.sent == 5 && session.last.count == 2);
     assert(session.last.fields.size() == 11);
     assert(session.last.fields[9] == 11 && session.last.fields[10] == 22);
-    request.request = 999;
+    request.BgTypeId = 999;
     session.HandleBattlefieldListOpcode(request);
     assert(session.sent == 5);
 }
