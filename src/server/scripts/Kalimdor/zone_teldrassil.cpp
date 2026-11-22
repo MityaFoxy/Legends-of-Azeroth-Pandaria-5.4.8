@@ -55,13 +55,13 @@ class npc_tarindrella : public CreatureScript
 {
 public:
     npc_tarindrella() : CreatureScript("npc_tarindrella") { }
-    bool OnQuestComplete(Player* player, Creature* creature, Quest const* quest) OVERRIDE
+    bool OnQuestComplete(Player* player, Creature* creature, Quest const* quest) override
     {
         if (player->GetQuestStatus(QUEST_VILE_TOUCH) == QUEST_STATUS_COMPLETE)
-            creature->MonsterSay(TARINDRELLA_TEXT_ON_COMPLETE, Language::LANG_UNIVERSAL, player);
+            creature->Say(TARINDRELLA_TEXT_ON_COMPLETE, Language::LANG_UNIVERSAL, player);
         return true;
     }
-    bool OnQuestReward(Player * player, Creature * creature, Quest const* quest, uint32 /*opt*/) OVERRIDE
+    bool OnQuestReward(Player * player, Creature * creature, Quest const* quest, uint32 /*opt*/) override
     {
         if (player->GetQuestStatus(QUEST_VILE_TOUCH) == QUEST_STATUS_REWARDED)
             creature->DespawnOrUnsummon();
@@ -71,29 +71,29 @@ public:
     {
         npc_tarindrellaAI(Creature* creature) : FollowerAI(creature) { }
 
-        void MoveInLineOfSight(Unit* who) OVERRIDE
+        void MoveInLineOfSight(Unit* who) override
         {
             FollowerAI::MoveInLineOfSight(who);
         }
 
-        void IsSummonedBy(Unit* unit) OVERRIDE
+        void IsSummonedBy(Unit* unit) override
         {
-            me->MonsterSay(TARINDRELLA_TEXT_SPAWN, Language::LANG_UNIVERSAL, unit);
+            me->Say(TARINDRELLA_TEXT_SPAWN, Language::LANG_UNIVERSAL, unit);
         }
 
-        void KilledUnit(Unit* /*victim*/) OVERRIDE
+        void KilledUnit(Unit* /*victim*/) override
         {
-            me->MonsterSay(TARINDRELLA_TEXT_ON_KILL, Language::LANG_UNIVERSAL, me->GetOwner());
+            me->Say(TARINDRELLA_TEXT_ON_KILL, Language::LANG_UNIVERSAL, me->GetOwner());
         }
 
-        void Reset() OVERRIDE
+        void Reset() override
         {
             events.ScheduleEvent(EVENT_ENTANGLING_ROOTS, 2000);
             events.ScheduleEvent(EVENT_SUMMON_NATURES_BITE, 6000);
             events.ScheduleEvent(EVENT_CLEANSE_SPIRIT, 10000);
         }
 
-        void UpdateFollowerAI(const uint32 diff) OVERRIDE
+        void UpdateFollowerAI(const uint32 diff) override
         {
             if (!UpdateVictim())
                 return;
@@ -143,7 +143,7 @@ public:
         EventMap events;
     };
 
-    CreatureAI* GetAI(Creature* creature) const OVERRIDE
+    CreatureAI* GetAI(Creature* creature) const override
     {
         return new npc_tarindrellaAI(creature);
     }
