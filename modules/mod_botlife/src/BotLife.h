@@ -4,27 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include "BotLifeTypes.h"
 #include "PlayerbotAIExtension.h"
 
 class PlayerbotAI;
 
 namespace BotLife
 {
-enum class ActivityType : uint8_t
-{
-    Free,
-    Quest,
-    Town,
-    Rest
-};
-
-enum class ActivityResult : uint8_t
-{
-    Running,
-    Completed,
-    TemporarilyBlocked,
-    Failed
-};
+class LifeSchedule;
 
 enum class InterruptReason : uint8_t
 {
@@ -92,10 +79,12 @@ private:
     bool CheckLifecycle(PlayerbotAI& botAI);
     bool CheckDeathRecovery(PlayerbotAI& botAI);
     void Stop(PlayerbotAI& botAI, InterruptReason reason);
-    void Start(PlayerbotAI& botAI, ActivityType activity, char const* reason);
-    void Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason);
+    void Start(PlayerbotAI& botAI, ActivityType activity, char const* reason, uint32_t duration = 0);
+    void Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason,
+        uint32_t duration = 0);
 
     std::unique_ptr<ActivityExecutor> _executor;
+    std::unique_ptr<LifeSchedule> _schedule;
     ExecutorFactory _factory;
     SingleRunFactory _singleRun;
     bool _singleRunConsumed = false;

@@ -15,9 +15,12 @@ ai_header = (root / "modules/mod_playerbots/src/AI/PlayerbotAI.h").read_text()
 extension = (root / "modules/mod_playerbots/src/AI/PlayerbotAIExtension.h").read_text()
 module = (root / "modules/mod_botlife/src/mod_botlife.cpp").read_text()
 header = (root / "modules/mod_botlife/src/BotLife.h").read_text()
+types = (root / "modules/mod_botlife/src/BotLifeTypes.h").read_text()
 implementation = (root / "modules/mod_botlife/src/BotLife.cpp").read_text()
+config_implementation = (root / "modules/mod_botlife/src/BotLifeConfig.cpp").read_text()
 death_recovery = (root / "modules/mod_botlife/src/BotLifeDeathRecovery.cpp").read_text()
 activity = (root / "modules/mod_botlife/src/BotLifeActivity.cpp").read_text()
+schedule = (root / "modules/mod_botlife/src/BotLifeSchedule.cpp").read_text()
 travel_test = (root / "modules/mod_botlife/src/BotLifeTravelTest.cpp").read_text()
 
 assert 'option(BOTLIFE          "Build optional BotLife layer for playerbots"                 0)' in options
@@ -28,6 +31,8 @@ assert "execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different" not in mo
 assert "[botlife]" in config
 assert "AiPlayerbot.BotLife.Enabled = 0" in config
 assert "AiPlayerbot.BotLife.BotGuids =" in config
+assert "AiPlayerbot.BotLife.Scheduler.Enabled = 0" in config
+assert "AiPlayerbot.BotLife.Scheduler.QuestLimit = 1" in config
 assert "AiPlayerbot.BotLife.TravelTest.Enabled = 0" in config
 assert "IsOnlyEligibleBot(botGuid)" in travel_test
 assert "handler->GetSession()" in travel_test
@@ -37,8 +42,10 @@ assert "_singleRunConsumed" in implementation
 for forbidden in ("TeleportTo(", "SetInCombatWith(", "CombatStart(", "Attack(",
                   "AttackStart(", "KilledMonsterCredit(", "SummonCreature(", "CompleteQuest("):
     assert forbidden not in travel_test, f"Travel test bypasses native mechanics: {forbidden}"
-assert 'GetBoolDefault("AiPlayerbot.BotLife.Enabled", false)' in implementation
-assert 'GetStringDefault("AiPlayerbot.BotLife.BotGuids", "")' in implementation
+assert 'GetBoolDefault("AiPlayerbot.BotLife.Enabled", false)' in config_implementation
+assert 'GetStringDefault("AiPlayerbot.BotLife.BotGuids", "")' in config_implementation
+assert 'GetBoolDefault("AiPlayerbot.BotLife.Scheduler.Enabled", false)' in config_implementation
+assert "LifeSchedule" in implementation
 assert "BotLife" not in config_cpp
 
 assert "BotLife" not in ai
@@ -48,9 +55,9 @@ assert "SuppressBaseNonCombatAction" in extension
 assert "sPlayerbotAIExtensionRegistry->Register(&CreateBotLifeExtension)" in module
 
 for activity in ("Free", "Quest", "Town", "Rest"):
-    assert activity in header, activity
+    assert activity in types, activity
 for result in ("Running", "Completed", "TemporarilyBlocked", "Failed"):
-    assert result in header, result
+    assert result in types, result
 for operation in ("Start", "Update", "Pause", "Resume", "Interrupt", "Finish", "Observe"):
     assert f" {operation}(" in header, operation
 
@@ -93,6 +100,12 @@ for forbidden in (
     "BuildPlayerRepop(",
 ):
     assert forbidden not in implementation + activity + death_recovery, f"BotLife lifecycle scaffold became invasive: {forbidden}"
+
+for forbidden in ("Player", "PlayerbotAI", "TeleportTo(", "MovePoint(", "CompleteQuest(", "RewardQuest("):
+    assert forbidden not in schedule, f"BotLife scheduler policy gained world access: {forbidden}"
+assert "durationJitterMs" in schedule
+assert "questLimit" in schedule
+assert "outingLimitMs" in schedule
 
 assert len(implementation.splitlines()) < 300, "BotLife.cpp is becoming a monolith; split the next executor"
 

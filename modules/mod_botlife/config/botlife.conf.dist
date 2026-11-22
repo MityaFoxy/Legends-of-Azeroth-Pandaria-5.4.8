@@ -16,6 +16,22 @@ AiPlayerbot.BotLife.Enabled = 0
 AiPlayerbot.BotLife.BotGuids =
 AiPlayerbot.BotLife.StubActivityDuration = 10000
 
+# Experimental stage-6 scheduler for normal mode. Off by default and ignored by
+# every one-shot TravelTest/QuestPlan/QuestAcquire/QuestRun mode.
+# It replaces the fixed FREE/QUEST/TOWN/REST loop with per-bot bounded plans:
+# an individual initial delay, quest-count/time outing limits, a TOWN service
+# window that yields to native Playerbots, and REST that waits for native regen.
+# This slice does not select autonomous quests or invent town destinations;
+# scheduled QUEST remains non-invasive until a supported selector is added.
+AiPlayerbot.BotLife.Scheduler.Enabled = 0
+AiPlayerbot.BotLife.Scheduler.InitialSpread = 30000
+AiPlayerbot.BotLife.Scheduler.QuestLimit = 1
+AiPlayerbot.BotLife.Scheduler.OutingDuration = 1800000
+AiPlayerbot.BotLife.Scheduler.QuestDuration = 600000
+AiPlayerbot.BotLife.Scheduler.TownDuration = 120000
+AiPlayerbot.BotLife.Scheduler.RestDuration = 60000
+AiPlayerbot.BotLife.Scheduler.DurationJitter = 15000
+
 # Travel uses the native Playerbots stuck watchdog, not a second movement controller.
 # Configure AiPlayerbot.StuckTimeout (4000 ms) and StuckMaxAttempts (3) in playerbots.conf.
 # Native bounded path recovery is reported as Recovering / RecoveryExhausted.

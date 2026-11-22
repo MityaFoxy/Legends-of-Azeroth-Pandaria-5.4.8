@@ -195,6 +195,29 @@ int main()
     assert(timer.IsActive() && timer.GetActivity() == ActivityType::Free);
     timer.Reset(ai);
 
+    // REST holds only non-combat work and waits for native regeneration. It
+    // never writes health or mana, and it always stands the bot on completion.
+    bot = {};
+    bot.health = 20;
+    bot.mana = 10;
+    ai.bot = &bot;
+    std::unique_ptr<ActivityExecutor> rest = CreateExecutor(ActivityType::Rest, 5000);
+    rest->Start(ai);
+    assert(rest->HoldsNonCombat() && bot.sitting);
+    assert(rest->Update(ai, 1000) == ActivityResult::Running);
+    assert(bot.health == 20 && bot.mana == 10);
+    bot.health = 96;
+    bot.mana = 91;
+    assert(rest->Update(ai, 1000) == ActivityResult::Completed);
+    assert(!rest->HoldsNonCombat() && !bot.sitting);
+    bot = {};
+    bot.sitting = true;
+    ai.bot = &bot;
+    rest = CreateExecutor(ActivityType::Rest, 5000);
+    rest->Start(ai);
+    assert(rest->Update(ai, 1) == ActivityResult::Completed);
+    assert(bot.sitting); // REST does not undo a foreign sit state.
+
     bot.guid.value = 99;
     Tick(timer, ai);
     assert(!timer.IsActive());

@@ -1,32 +1,19 @@
 #include "BotLife.h"
+#include "BotLifeConfig.h"
+#include "BotLifeSchedule.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <limits>
-#include <set>
-#include <string>
-#include <string_view>
 
-#include "Config.h"
 #include "Log.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
-#include "Util.h"
 #include "WorldSession.h"
 
 namespace BotLife
 {
 namespace
 {
-struct BotLifeConfig
-{
-    bool enabled = false;
-    std::set<uint32> botGuids;
-    uint32 stubActivityDuration = 10000;
-};
-
-BotLifeConfig config;
-
 ActivityType NextActivity(ActivityType activity)
 {
     switch (activity)
@@ -43,47 +30,6 @@ ActivityType NextActivity(ActivityType activity)
 
     return ActivityType::Free;
 }
-
-bool IsEligible(Player* bot)
-{
-    return config.enabled && bot && config.botGuids.find(bot->GetGUID().GetCounter()) != config.botGuids.end();
-}
-}
-
-void LoadConfig()
-{
-    config.enabled = sConfigMgr->GetBoolDefault("AiPlayerbot.BotLife.Enabled", false);
-    config.botGuids.clear();
-
-    std::string const guidList = sConfigMgr->GetStringDefault("AiPlayerbot.BotLife.BotGuids", "");
-    for (std::string_view value : Trinity::Tokenize(guidList, ',', false))
-    {
-        std::string const token(value);
-        uint32 const guid = uint32(std::strtoul(token.c_str(), nullptr, 10));
-        if (guid)
-            config.botGuids.insert(guid);
-    }
-
-    config.stubActivityDuration = std::clamp(
-        sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.StubActivityDuration", 10000), 1000, 3600000);
-
-    if (config.enabled && config.botGuids.empty())
-        TC_LOG_WARN("server.loading", "BotLife is enabled but AiPlayerbot.BotLife.BotGuids is empty; no bots are eligible");
-}
-
-bool IsOnlyEligibleBot(uint32_t guid)
-{
-    return config.enabled && config.botGuids.size() == 1 && config.botGuids.count(guid);
-}
-
-bool IsEligibleBot(uint32_t guid)
-{
-    return config.enabled && config.botGuids.count(guid);
-}
-
-uint32_t EligibleBotCount()
-{
-    return config.enabled ? uint32_t(config.botGuids.size()) : 0;
 }
 
 ActivityContext::ActivityContext(ExecutorFactory factory, SingleRunFactory singleRun)
@@ -99,7 +45,7 @@ void ActivityContext::Observe(PlayerbotAI& botAI)
 bool ActivityContext::CheckLifecycle(PlayerbotAI& botAI)
 {
     Player* bot = botAI.GetBot();
-    if (!config.enabled)
+    if (!IsEnabled())
     {
         Stop(botAI, InterruptReason::Disabled);
         return false;
@@ -178,7 +124,15 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
     {
         if (_singleRun && _singleRunConsumed)
             return PlayerbotAIExtensionResult::ContinueBaseAI;
-        Start(botAI, _activity, "enabled");
+        if (!_singleRun && IsSchedulerEnabled() && !_schedule)
+        {
+            Player* bot = botAI.GetBot();
+            _schedule = std::make_unique<LifeSchedule>(bot->GetGUID().GetCounter(), GetScheduleSettings());
+            ActivityPlan const plan = _schedule->InitialPlan();
+            Start(botAI, plan.activity, plan.reason, plan.durationMs);
+        }
+        else
+            Start(botAI, _activity, "enabled");
         if (!_active)
             return PlayerbotAIExtensionResult::ContinueBaseAI;
     }
@@ -200,10 +154,22 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
         case ActivityResult::TemporarilyBlocked:
             break;
         case ActivityResult::Completed:
-            Transition(botAI, NextActivity(_activity), result, "stub-completed");
+            if (_schedule)
+            {
+                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed);
+                Transition(botAI, plan.activity, result, plan.reason, plan.durationMs);
+            }
+            else
+                Transition(botAI, NextActivity(_activity), result, "stub-completed");
             break;
         case ActivityResult::Failed:
-            Transition(botAI, ActivityType::Free, result, "executor-failed");
+            if (_schedule)
+            {
+                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed);
+                Transition(botAI, plan.activity, result, plan.reason, plan.durationMs);
+            }
+            else
+                Transition(botAI, ActivityType::Free, result, "executor-failed");
             break;
     }
 
@@ -220,7 +186,10 @@ void ActivityContext::Reset(PlayerbotAI& botAI)
 void ActivityContext::Stop(PlayerbotAI& botAI, InterruptReason reason)
 {
     if (!_active)
+    {
+        _schedule.reset();
         return;
+    }
 
     Player* bot = botAI.GetBot();
     _executor->Interrupt(botAI, reason);
@@ -231,6 +200,7 @@ void ActivityContext::Stop(PlayerbotAI& botAI, InterruptReason reason)
         ToString(reason), _elapsed);
 
     _executor.reset();
+    _schedule.reset();
     _activity = ActivityType::Free;
     _elapsed = 0;
     _active = false;
@@ -238,11 +208,12 @@ void ActivityContext::Stop(PlayerbotAI& botAI, InterruptReason reason)
     _recoveringFromDeath = false;
 }
 
-void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char const* reason)
+void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char const* reason, uint32_t duration)
 {
     _activity = activity;
     _elapsed = 0;
-    _executor = _singleRun ? _singleRun(botAI) : _factory(activity, config.stubActivityDuration);
+    uint32_t const selectedDuration = _singleRun ? 0 : (duration ? duration : StubActivityDuration());
+    _executor = _singleRun ? _singleRun(botAI) : _factory(activity, selectedDuration);
     _singleRunConsumed = true;
     if (!_executor)
         return;
@@ -256,15 +227,17 @@ void ActivityContext::Start(PlayerbotAI& botAI, ActivityType activity, char cons
     _mapId = bot->GetMapId();
     _instanceId = bot->GetInstanceId();
     _phaseMask = bot->GetPhaseMask();
-    TC_LOG_INFO("playerbots.botlife", "BotLife bot={} guid={} activity={} event=start reason={}",
-        bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(_activity), reason);
+    TC_LOG_INFO("playerbots.botlife", "BotLife bot={} guid={} activity={} event=start reason={} budget_ms={}",
+        bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(_activity), reason,
+        selectedDuration);
 }
 
-void ActivityContext::Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason)
+void ActivityContext::Transition(PlayerbotAI& botAI, ActivityType activity, ActivityResult result, char const* reason,
+    uint32_t nextDuration)
 {
     Player* bot = botAI.GetBot();
     ActivityType const previous = _activity;
-    uint32_t const duration = _elapsed;
+    uint32_t const completedDuration = _elapsed;
 
     _executor->Finish(botAI, result);
     _executor.reset();
@@ -272,8 +245,8 @@ void ActivityContext::Transition(PlayerbotAI& botAI, ActivityType activity, Acti
     TC_LOG_INFO("playerbots.botlife",
         "BotLife bot={} guid={} transition={}->{} reason={} result={} duration_ms={}",
         bot ? bot->GetName() : "<unknown>", bot ? bot->GetGUID().ToString() : "<none>", ToString(previous),
-        ToString(activity), reason, ToString(result), duration);
+        ToString(activity), reason, ToString(result), completedDuration);
 
-    Start(botAI, activity, reason);
+    Start(botAI, activity, reason, nextDuration);
 }
 }

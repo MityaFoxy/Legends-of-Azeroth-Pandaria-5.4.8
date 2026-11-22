@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <limits>
 
+#include "Player.h"
+#include "PlayerbotAI.h"
+
 namespace BotLife
 {
 char const* ToString(ActivityType activity)
@@ -114,8 +117,101 @@ private:
     uint32_t _elapsed;
 };
 
+class RestExecutor final : public ActivityExecutor
+{
+public:
+    explicit RestExecutor(uint32_t duration) : _duration(duration) { }
+
+    ActivityType GetType() const override { return ActivityType::Rest; }
+
+    void Start(PlayerbotAI& botAI) override
+    {
+        _elapsed = 0;
+        _resting = NeedsRest(*botAI.GetBot());
+        if (_resting)
+            Sit(*botAI.GetBot());
+    }
+
+    ActivityResult Update(PlayerbotAI& botAI, uint32_t elapsed) override
+    {
+        Player& bot = *botAI.GetBot();
+        uint32_t const available = std::numeric_limits<uint32_t>::max() - _elapsed;
+        _elapsed += std::min(elapsed, available);
+
+        if (!_resting)
+        {
+            if (!NeedsRest(bot))
+                return ActivityResult::Completed;
+            _resting = true;
+        }
+
+        if (Recovered(bot) || _elapsed >= _duration)
+        {
+            Stand(bot);
+            _resting = false;
+            return ActivityResult::Completed;
+        }
+
+        Sit(bot);
+        return ActivityResult::Running;
+    }
+
+    void Pause(PlayerbotAI& botAI) override { Stand(*botAI.GetBot()); }
+    bool Resume(PlayerbotAI&) override { return true; }
+    void Interrupt(PlayerbotAI& botAI, InterruptReason) override { Reset(*botAI.GetBot()); }
+    void Finish(PlayerbotAI& botAI, ActivityResult) override { Reset(*botAI.GetBot()); }
+    bool HoldsNonCombat() const override { return _resting; }
+
+private:
+    static bool UsesMana(Player const& bot)
+    {
+        return bot.GetPowerType() == POWER_MANA && bot.GetMaxPower(POWER_MANA) > 0;
+    }
+
+    static bool NeedsRest(Player const& bot)
+    {
+        return bot.GetHealthPct() < 50.0f || (UsesMana(bot) && bot.GetPowerPct(POWER_MANA) < 30.0f);
+    }
+
+    static bool Recovered(Player const& bot)
+    {
+        return bot.GetHealthPct() >= 95.0f && (!UsesMana(bot) || bot.GetPowerPct(POWER_MANA) >= 90.0f);
+    }
+
+    void Sit(Player& bot)
+    {
+        if (!bot.IsSitState())
+        {
+            bot.SetStandState(UNIT_STAND_STATE_SIT);
+            _ownsSit = true;
+        }
+    }
+
+    void Stand(Player& bot)
+    {
+        if (_ownsSit && bot.IsSitState())
+            bot.SetStandState(UNIT_STAND_STATE_STAND);
+        _ownsSit = false;
+    }
+
+    void Reset(Player& bot)
+    {
+        Stand(bot);
+        _elapsed = 0;
+        _resting = false;
+    }
+
+    uint32_t _duration;
+    uint32_t _elapsed = 0;
+    bool _resting = false;
+    bool _ownsSit = false;
+};
+
 std::unique_ptr<ActivityExecutor> CreateExecutor(ActivityType activity, uint32_t duration)
 {
+    if (activity == ActivityType::Rest)
+        return std::make_unique<RestExecutor>(duration);
+
     return std::make_unique<TimedStubExecutor>(activity, duration);
 }
 }
