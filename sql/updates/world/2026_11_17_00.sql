@@ -13,9 +13,9 @@ INSERT INTO `smart_scripts` (`entryorguid`, `source_type`, `id`, `link`, `event_
 UPDATE `creature_template` SET `AIName`='SmartAI' WHERE `entry` IN (64861, 66480, 66300);
 
 -- gossip_menu
-ALTER TABLE `gossip_menu` 
+ALTER TABLE `gossip_menu`
 MODIFY COLUMN `VerifiedBuild` int NOT NULL DEFAULT 0 AFTER `TextID`;
-ALTER TABLE `npc_text` 
+ALTER TABLE `npc_text`
 MODIFY COLUMN `VerifiedBuild` int NULL DEFAULT 0 AFTER `Emote7_2`;
 
 
@@ -23,7 +23,7 @@ MODIFY COLUMN `VerifiedBuild` int NULL DEFAULT 0 AFTER `Emote7_2`;
 -- 1706 Cosmetic - Stormwind - Can See Portal to Paw'Don
 
 -- The Mission (29548) Pandria part
--- Phase 
+-- Phase
 -- 1780 Cosmetic - Ally Gunship Bombing NPCs
 -- 1708 Cosmetic - Spawned Player Gyrocopter
 -- 1789 Cosmetic - See Spawned Rogers on Skyfire
@@ -36,68 +36,68 @@ MODIFY COLUMN `VerifiedBuild` int NULL DEFAULT 0 AFTER `Emote7_2`;
 -- 1700 Alliance Arrival - Garrosh'ar Point - Bombing Run
 -- 2108 Cosmetic - Ally Stygian Scar NPCs
 DELETE FROM `phase_area` WHERE `AreaId`=5853 AND `PhaseId` IN (1685,1708,1780);
-INSERT INTO `phase_area` (`AreaId`, `PhaseId`, `Comment`) VALUES 
+INSERT INTO `phase_area` (`AreaId`, `PhaseId`, `Comment`) VALUES
 (5853, 1685, 'Cosmetic - Jade Forest - Paw\'don Village - Doors Closed'),
 (5853, 1780, 'Ally Gunship Bombing NPCs'),
 (5853, 1708, 'Cosmetic - Spawned Player Gyrocopter');
 
--- After The Mission (29548) complete 
+-- After The Mission (29548) complete
 -- Phase 1708, 1789, 1791, 1793, 1868, 1795, 1685, 1700, 2108
 -- Remove 1780 Ally Gunship Bombing NPCs
 DELETE FROM `conditions` WHERE `SourceTypeOrReferenceId`=26 AND `SourceGroup`=1780;
-INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES 
+INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES
 (26, 1780, 0, 0, 0, 9, 0, 29548, 0, 0, 0, 0, 0, '', 'Player has quest The Mission (29548) taken'),
 (26, 1780, 0, 0, 0, 8, 0, 29548, 0, 0, 1, 0, 0, '', 'Player has not quest The Mission (29548) rewarded');
 
 -- Remove 1708 Cosmetic - Spawned Player Gyrocopter
 DELETE FROM `conditions` WHERE `SourceTypeOrReferenceId`=26 AND `SourceGroup`=1708;
-INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES 
+INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES
 (26, 1708, 0, 0, 0, 9, 0, 29548, 0, 0, 0, 0, 0, '', 'Player has quest The Mission (29548) taken'),
 (26, 1708, 0, 0, 0, 8, 0, 31732, 0, 0, 1, 0, 0, '', 'Player has not quest Unleash Hell (31732) rewarded');
 
 -- Phase 1685 Cosmetic - Jade Forest - Paw'don Village - Doors Closed
 DELETE FROM `conditions` WHERE `SourceTypeOrReferenceId`=26 AND `SourceGroup`=1685;
-INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES 
+INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES
 (26, 1685, 0, 0, 0, 8, 0, 29547, 0, 0, 0, 0, 0, '', 'Player has quest The King\'s Command (29547) rewarded'),
 (26, 1685, 0, 0, 0, 8, 0, 31736, 0, 0, 1, 0, 0, '', 'Player has not quest Envoy of the Alliance (31736) rewarded');
 
 -- Unleash Hell(31732) start
 -- 1787 Cosmetic - Paratroopers for Rogers Speech
 -- 1708 Spawned Player Gyrocopter
--- 
+--
 -- 1702 Cosmetic - Garrosh'ar Point - Ga'trul
 -- 1666 Alliance Arrival - Garrosh'ar Point - Horde Alive
 -- 2117 Cosmetic - See Parachutes
 -- 1698 Cosmetic - Garrosh'ar Point - Barricade 1
 -- 1699 Cosmetic - Garrosh'ar Point - Barricade 2
--- 
+--
 -- 1789 Cosmetic - See Spawned Rogers on Skyfire
--- 
+--
 -- Remove 1708 Spawned Player Gyrocopter
 
 -- Mishka
 DELETE FROM `npc_text` WHERE `ID` IN (18718,18720);
-INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES 
+INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES
 (18718, 1, 1, 1, 1, 1, 1, 0, 0, 55214, 55215, 55216, 55217, 55218, 55219, 0, 0, 55960),
 (18720, 1, 1, 1, 0, 0, 0, 0, 0, 55228, 55229, 55230, 0, 0, 0, 0, 0, 55960);
 DELETE FROM `gossip_menu` WHERE (`MenuID`=13265 AND `TextID` IN(18718,18720));
-INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES 
+INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES
 (13265, 18718, 55960),
 (13265, 18720, 55960);
 
 -- Nimm Codejack
 DELETE FROM `npc_text` WHERE `ID`=19264;
-INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES 
+INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES
 (19264, 1, 0, 0, 0, 0, 0, 0, 0, 58098, 0, 0, 0, 0, 0, 0, 0, 55960);
 DELETE FROM `gossip_menu` WHERE (`MenuID`=13518 AND `TextID`=19264);
-INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES 
-(13518, 19264, 55960); 
+INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES
+(13518, 19264, 55960);
 -- Nodd Codejack
 DELETE FROM `npc_text` WHERE `ID`=18451;
-INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES 
+INSERT INTO `npc_text` (`ID`, `Probability0`, `Probability1`, `Probability2`, `Probability3`, `Probability4`, `Probability5`, `Probability6`, `Probability7`, `BroadcastTextID0`, `BroadcastTextID1`, `BroadcastTextID2`, `BroadcastTextID3`, `BroadcastTextID4`, `BroadcastTextID5`, `BroadcastTextID6`, `BroadcastTextID7`, `VerifiedBuild`) VALUES
 (18451, 1, 0, 0, 0, 0, 0, 0, 0, 53772, 0, 0, 0, 0, 0, 0, 0, 55960);
 DELETE FROM `gossip_menu` WHERE (`MenuID`=13117 AND `TextID`=18451);
-INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES 
+INSERT INTO `gossip_menu` (`MenuID`, `TextID`, `VerifiedBuild`) VALUES
 (13117, 18451, 55960);
 
 UPDATE `creature_template` SET `gossip_menu_id`= 13117, `npcflag`=`npcflag`|1 WHERE `entry`=54615; -- Nodd Codejack
@@ -1180,4 +1180,3 @@ UPDATE `creature_template_addon` SET `auras`='132221' WHERE `entry`=40789; -- 40
 UPDATE `gameobject_template_addon` SET `faction`=1732, `flags`=32 WHERE `entry`=215834; -- Gunship Portal
 UPDATE `gameobject_template_addon` SET `faction`=1375, `flags`=32 WHERE `entry`=215835; -- Alliance Gunship Portal Effects
 UPDATE `gameobject_template_addon` SET `flags`=4 WHERE `entry`=215133; -- Applebloom Cider
-
