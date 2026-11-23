@@ -2,6 +2,7 @@
 #define _BOTLIFE_CONFIG_H
 
 #include <cstdint>
+#include <vector>
 
 #include "BotLifeSchedule.h"
 
@@ -14,6 +15,7 @@ bool IsEligible(Player* bot);
 uint32_t StubActivityDuration();
 bool IsSchedulerEnabled();
 ScheduleSettings const& GetScheduleSettings();
+std::vector<uint32_t> SchedulerTestBotGuids();
 }
 
 #endif

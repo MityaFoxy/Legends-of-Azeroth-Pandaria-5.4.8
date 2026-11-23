@@ -3,6 +3,7 @@
 #include "BotLifeQuestAcquire.h"
 #include "BotLifeQuestDiagnostic.h"
 #include "BotLifeQuestRun.h"
+#include "BotLifeConfig.h"
 
 #include <algorithm>
 #include <sstream>
@@ -119,21 +120,23 @@ public:
         // stable per-bot spacing avoids a synchronized five-login burst.
         static size_t nextQuestBot = 0;
         static uint32 lastQuestLogin = 0;
-        std::vector<uint32_t> const questBots = GetQuestRunBotGuids();
         bool const questRun = IsQuestRunEnabled();
+        bool const scheduler = !enabled && !questRun && !IsQuestAcquireEnabled() && !IsQuestPlanEnabled() && IsSchedulerEnabled();
+        std::vector<uint32_t> const questBots = scheduler ? SchedulerTestBotGuids() : GetQuestRunBotGuids();
+        bool const rosterLogin = questRun || scheduler;
         uint32 const loginGuid = enabled ? botGuid :
-            questRun ? (nextQuestBot < questBots.size() ? questBots[nextQuestBot] : 0) :
+            rosterLogin ? (nextQuestBot < questBots.size() ? questBots[nextQuestBot] : 0) :
             IsQuestAcquireEnabled() ? GetQuestAcquireBotGuid() : GetQuestPlanBotGuid();
         if (handler->GetSession() || (args && *args) || !loginGuid ||
-            !(questRun ? IsEligibleBot(loginGuid) : IsOnlyEligibleBot(loginGuid)) ||
+            !(rosterLogin ? IsEligibleBot(loginGuid) : IsOnlyEligibleBot(loginGuid)) ||
             !sPlayerbotAIConfig->enabled || sPlayerbotAIConfig->randomBotAutologin)
         {
             handler->SendSysMessage("Requires console, an unrequested configured test bot and RandomBotAutologin=0.");
             return false;
         }
-        if (questRun && nextQuestBot && GetMSTimeDiffToNow(lastQuestLogin) < 20000 + loginGuid % 7 * 1000)
+        if (rosterLogin && nextQuestBot && GetMSTimeDiffToNow(lastQuestLogin) < 20000 + loginGuid % 7 * 1000)
         {
-            handler->SendSysMessage("QuestRun login spacing: wait up to 26 seconds before requesting the next bot.");
+            handler->SendSysMessage("BotLife login spacing: wait up to 26 seconds before requesting the next bot.");
             return false;
         }
         ObjectGuid const guid = ObjectGuid::Create<HighGuid::Player>(loginGuid);
@@ -143,7 +146,7 @@ public:
             return false;
         }
         sRandomPlayerbotMgr->AddPlayerBot(guid, 0);
-        if (questRun)
+        if (rosterLogin)
         {
             ++nextQuestBot;
             lastQuestLogin = getMSTime();

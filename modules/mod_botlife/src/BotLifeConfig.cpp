@@ -96,4 +96,10 @@ uint32_t EligibleBotCount()
 uint32_t StubActivityDuration() { return config.stubActivityDuration; }
 bool IsSchedulerEnabled() { return config.scheduleEnabled; }
 ScheduleSettings const& GetScheduleSettings() { return config.schedule; }
+std::vector<uint32_t> SchedulerTestBotGuids()
+{
+    if (!config.enabled || !config.scheduleEnabled || config.botGuids.empty() || config.botGuids.size() > 2)
+        return {};
+    return {config.botGuids.begin(), config.botGuids.end()};
+}
 }

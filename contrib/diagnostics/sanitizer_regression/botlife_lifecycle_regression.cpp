@@ -2,6 +2,7 @@
 // This does not substitute for integration testing against a running server.
 #include "BotLife.h"
 #include "BotLifeSchedule.h"
+#include "BotLifeConfig.h"
 #include "Config.h"
 #include "PlayerbotAI.h"
 
@@ -92,6 +93,12 @@ int main()
         testConfig = {};
         testConfig.scheduler = true;
         LoadConfig();
+        assert(SchedulerTestBotGuids() == std::vector<uint32_t>({9, 14}));
+        testConfig.guids = "9,14,584";
+        LoadConfig();
+        assert(SchedulerTestBotGuids().empty());
+        testConfig.guids = "14,9";
+        LoadConfig();
         Player serviceBot;
         PlayerbotAI serviceAI{&serviceBot};
         probe = {};
@@ -106,6 +113,8 @@ int main()
         scheduled.Reset(serviceAI);
         probe = {};
         testConfig = {};
+        LoadConfig();
+        assert(SchedulerTestBotGuids().empty());
     }
     {
         LoadConfig();

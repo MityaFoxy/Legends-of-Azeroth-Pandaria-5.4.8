@@ -10,8 +10,8 @@ AiPlayerbot.BotLife.QuestRun.PrepareCharacter = 0
 
 # Requires a build configured with PLAYERBOTS=1 and BOTLIFE=1.
 # Enable BotLife only for the comma-separated character GUID counters listed below.
-# Normal mode cycles FREE/QUEST/TOWN/REST stubs without gameplay actions.
-# Only explicit TravelTest/QuestAcquire/QuestRun scenarios issue movement.
+# With Scheduler disabled, normal mode cycles timed activity stubs.
+# Gameplay requires the scheduler or an explicit one-shot scenario below.
 AiPlayerbot.BotLife.Enabled = 0
 AiPlayerbot.BotLife.BotGuids =
 AiPlayerbot.BotLife.StubActivityDuration = 10000
@@ -32,6 +32,9 @@ AiPlayerbot.BotLife.StubActivityDuration = 10000
 # quest reset. Changing QuestIds requires a restart. An empty list keeps the
 # non-invasive timed QUEST window (diagnostic, not a completed real quest).
 # TOWN uses only loaded, safe repair NPCs within 150 yd; no distant city routing.
+# Isolated console login supports 1..2 configured BotGuids with all one-shot
+# modes OFF and RandomBotAutologin=0. Each botlife-test-login requests the next
+# GUID once per process, in ascending order, at least 20..26 seconds apart.
 AiPlayerbot.BotLife.Scheduler.Enabled = 0
 AiPlayerbot.BotLife.Scheduler.QuestIds =
 AiPlayerbot.BotLife.Scheduler.InitialSpread = 30000
