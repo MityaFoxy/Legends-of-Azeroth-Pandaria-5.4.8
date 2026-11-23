@@ -70,6 +70,8 @@ char const* ToString(InterruptReason reason)
             return "world-changed";
         case InterruptReason::InvalidTarget:
             return "invalid-target";
+        case InterruptReason::BudgetExpired:
+            return "budget-expired";
     }
 
     return "unknown";

@@ -257,6 +257,16 @@ add_test(NAME botlife_schedule_regression COMMAND botlife_schedule_regression)
 set_tests_properties(botlife_schedule_regression PROPERTIES
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 
+add_executable(botlife_quest_selection_regression botlife_quest_selection_regression.cpp
+  ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeQuestSelection.cpp)
+target_include_directories(botlife_quest_selection_regression PRIVATE ${LOA_SOURCE_DIR}/modules/mod_botlife/src)
+target_compile_options(botlife_quest_selection_regression PRIVATE
+  -fsanitize=address,undefined -fno-omit-frame-pointer -UNDEBUG)
+target_link_options(botlife_quest_selection_regression PRIVATE -fsanitize=address,undefined)
+add_test(NAME botlife_quest_selection_regression COMMAND botlife_quest_selection_regression)
+set_tests_properties(botlife_quest_selection_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
+
 add_executable(botlife_quest_plan_regression botlife_quest_plan_regression.cpp
   ${LOA_SOURCE_DIR}/modules/mod_botlife/src/BotLifeQuestPlan.cpp)
 target_include_directories(botlife_quest_plan_regression PRIVATE ${LOA_SOURCE_DIR}/modules/mod_botlife/src)

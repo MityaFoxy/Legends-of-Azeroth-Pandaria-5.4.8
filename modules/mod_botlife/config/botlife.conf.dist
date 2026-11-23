@@ -21,9 +21,15 @@ AiPlayerbot.BotLife.StubActivityDuration = 10000
 # It replaces the fixed FREE/QUEST/TOWN/REST loop with per-bot bounded plans:
 # an individual initial delay, quest-count/time outing limits, a TOWN service
 # window that yields to native Playerbots, and REST that waits for native regen.
-# This slice does not select autonomous quests or invent town destinations;
-# scheduled QUEST remains non-invasive until a supported selector is added.
+# QuestIds is a comma-separated allowlist (without spaces) of supported
+# ordinary kill quests. When non-empty, scheduler QUEST chooses
+# deterministically, preferring an already active quest over acquiring a new
+# one, then runs the existing native executor.
+# Selection is same-map/phase and fail-closed; no teleport, force-completion or
+# quest reset. Changing QuestIds requires a restart. An empty list keeps the
+# non-invasive timed QUEST window. Town destinations are not selected yet.
 AiPlayerbot.BotLife.Scheduler.Enabled = 0
+AiPlayerbot.BotLife.Scheduler.QuestIds =
 AiPlayerbot.BotLife.Scheduler.InitialSpread = 30000
 AiPlayerbot.BotLife.Scheduler.QuestLimit = 1
 AiPlayerbot.BotLife.Scheduler.OutingDuration = 1800000

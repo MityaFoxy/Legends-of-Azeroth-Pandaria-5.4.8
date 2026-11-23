@@ -26,7 +26,8 @@ enum class InterruptReason : uint8_t
     OutOfWorld,
     Logout,
     WorldChanged,
-    InvalidTarget
+    InvalidTarget,
+    BudgetExpired
 };
 
 class ActivityExecutor

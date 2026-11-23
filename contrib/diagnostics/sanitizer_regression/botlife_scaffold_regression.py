@@ -21,6 +21,7 @@ config_implementation = (root / "modules/mod_botlife/src/BotLifeConfig.cpp").rea
 death_recovery = (root / "modules/mod_botlife/src/BotLifeDeathRecovery.cpp").read_text()
 activity = (root / "modules/mod_botlife/src/BotLifeActivity.cpp").read_text()
 schedule = (root / "modules/mod_botlife/src/BotLifeSchedule.cpp").read_text()
+scheduled_quest = (root / "modules/mod_botlife/src/BotLifeScheduledQuest.cpp").read_text()
 travel_test = (root / "modules/mod_botlife/src/BotLifeTravelTest.cpp").read_text()
 
 assert 'option(BOTLIFE          "Build optional BotLife layer for playerbots"                 0)' in options
@@ -32,6 +33,7 @@ assert "[botlife]" in config
 assert "AiPlayerbot.BotLife.Enabled = 0" in config
 assert "AiPlayerbot.BotLife.BotGuids =" in config
 assert "AiPlayerbot.BotLife.Scheduler.Enabled = 0" in config
+assert "AiPlayerbot.BotLife.Scheduler.QuestIds =" in config
 assert "AiPlayerbot.BotLife.Scheduler.QuestLimit = 1" in config
 assert "AiPlayerbot.BotLife.TravelTest.Enabled = 0" in config
 assert "IsOnlyEligibleBot(botGuid)" in travel_test
@@ -53,6 +55,9 @@ assert "BotLife" not in ai_header
 assert "class PlayerbotAIExtension" in extension
 assert "SuppressBaseNonCombatAction" in extension
 assert "sPlayerbotAIExtensionRegistry->Register(&CreateBotLifeExtension)" in module
+assert "&BotLife::CreateScheduledExecutor" in module
+assert "LoadScheduledQuestConfig" in module
+assert "InitializeScheduledQuestData" in module
 
 for activity in ("Free", "Quest", "Town", "Rest"):
     assert activity in types, activity
@@ -106,6 +111,12 @@ for forbidden in ("Player", "PlayerbotAI", "TeleportTo(", "MovePoint(", "Complet
 assert "durationJitterMs" in schedule
 assert "questLimit" in schedule
 assert "outingLimitMs" in schedule
+
+assert "SelectScheduledQuest" in scheduled_quest
+assert "MakeQuestExecutor" in scheduled_quest
+assert "InterruptReason::BudgetExpired" in scheduled_quest
+for forbidden in ("TeleportTo(", "CompleteQuest(", "RewardQuest(", "KilledMonsterCredit(", "SetHealth(", "SetPower("):
+    assert forbidden not in scheduled_quest, f"Scheduled quest bypasses native mechanics: {forbidden}"
 
 assert len(implementation.splitlines()) < 300, "BotLife.cpp is becoming a monolith; split the next executor"
 
