@@ -1043,7 +1043,6 @@ void AddSC_boss_sha_of_anger();
 void AddSC_generic_pet_scripts();
 void AddSC_monk_pet_scripts();
 void AddSC_priest_pet_scripts();
-void AddSC_warlock_pet_scripts();
 
 // battlegrounds
 
@@ -2115,7 +2114,6 @@ void AddPetScripts()
     AddSC_generic_pet_scripts();
     AddSC_monk_pet_scripts();
     AddSC_priest_pet_scripts();
-    AddSC_warlock_pet_scripts();
 #endif
 }
 
