@@ -27,6 +27,7 @@ ActivityType NextActivity(ActivityType activity)
         case ActivityType::Rest:
             return ActivityType::Free;
         case ActivityType::Leisure:
+        case ActivityType::Walk:
             return ActivityType::Free;
     }
 

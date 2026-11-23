@@ -68,4 +68,25 @@ int main()
         assert(quest.activity == ActivityType::Quest && quest.durationMs == 500);
     }
     assert(starts.size() > 1);
+
+    settings.walkEnabled = true;
+    settings.durationJitterMs = 0;
+    LifeSchedule walking(14, settings);
+    walking.InitialPlan();
+    walking.Complete(ActivityType::Free, ActivityResult::Completed, 1000);
+    auto walk = walking.Complete(ActivityType::Quest, ActivityResult::Failed, 1);
+    assert(walk.activity == ActivityType::Walk);
+    auto cooldown = walking.CooldownRemainingMs();
+    auto leisure = walking.Complete(ActivityType::Walk, ActivityResult::Failed, 1000);
+    assert(leisure.activity == ActivityType::Leisure);
+    assert(walking.CooldownRemainingMs() == cooldown - 1000);
+    leisure = walking.Complete(ActivityType::Leisure, ActivityResult::Completed, 1000);
+    assert(leisure.activity == ActivityType::Leisure); // Failed walk has independent backoff.
+
+    LifeSchedule recovered(14, settings);
+    recovered.InitialPlan();
+    auto recovery = recovered.Complete(ActivityType::Free, ActivityResult::Completed, 1000, {true, false, false});
+    assert(recovery.activity == ActivityType::Rest);
+    recovery = recovered.Complete(ActivityType::Rest, ActivityResult::Completed, 1000, {false, true, false});
+    assert(recovery.activity == ActivityType::Leisure); // No walk with unrepaired gear.
 }

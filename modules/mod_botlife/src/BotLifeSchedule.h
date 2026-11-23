@@ -18,6 +18,8 @@ struct ScheduleSettings
     uint32_t durationJitterMs = 15000;
     uint32_t outingCooldownMs = 5 * 60 * 1000;
     uint32_t leisureDurationMs = 2 * 60 * 1000;
+    bool walkEnabled = false;
+    uint32_t walkDurationMs = 2 * 60 * 1000;
 };
 
 struct ScheduleNeeds
@@ -56,6 +58,7 @@ private:
     uint32_t Mix(uint32_t value) const;
     void ResetOuting();
     ActivityPlan Choose(ScheduleNeeds needs, bool allowQuest);
+    ActivityPlan Break(ScheduleNeeds needs, char const* reason);
 
     uint32_t _botGuid;
     ScheduleSettings _settings;
@@ -64,6 +67,8 @@ private:
     uint32_t _cycle = 0;
     uint32_t _decision = 0;
     uint32_t _cooldownMs = 0, _serviceBackoffMs = 0;
+    uint32_t _walkBackoffMs = 0;
+    bool _lastBreakWalk = false;
 };
 }
 

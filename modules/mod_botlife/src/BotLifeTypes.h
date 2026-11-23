@@ -11,7 +11,8 @@ enum class ActivityType : uint8_t
     Quest,
     Town,
     Rest,
-    Leisure
+    Leisure,
+    Walk
 };
 
 enum class ActivityResult : uint8_t

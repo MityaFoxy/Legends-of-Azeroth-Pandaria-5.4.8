@@ -63,6 +63,9 @@ void LoadConfig()
         sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.Scheduler.OutingCooldown", 300000), 60000, 3600000);
     config.schedule.leisureDurationMs = std::clamp(
         sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.Scheduler.LeisureDuration", 120000), 30000, 3600000);
+    config.schedule.walkEnabled = sConfigMgr->GetBoolDefault("AiPlayerbot.BotLife.Scheduler.Walk.Enabled", false);
+    config.schedule.walkDurationMs = std::clamp(
+        sConfigMgr->GetIntDefault("AiPlayerbot.BotLife.Scheduler.Walk.Duration", 120000), 30000, 300000);
 
     if (config.enabled && config.botGuids.empty())
         TC_LOG_WARN("server.loading", "BotLife is enabled but AiPlayerbot.BotLife.BotGuids is empty; no bots are eligible");

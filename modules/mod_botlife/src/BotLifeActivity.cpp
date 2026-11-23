@@ -22,6 +22,8 @@ char const* ToString(ActivityType activity)
             return "REST";
         case ActivityType::Leisure:
             return "LEISURE";
+        case ActivityType::Walk:
+            return "WALK";
     }
 
     return "UNKNOWN";

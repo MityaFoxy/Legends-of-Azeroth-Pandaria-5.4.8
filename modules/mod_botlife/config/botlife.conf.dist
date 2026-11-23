@@ -44,6 +44,14 @@ AiPlayerbot.BotLife.Scheduler.DurationJitter = 15000
 AiPlayerbot.BotLife.Scheduler.OutingCooldown = 300000
 AiPlayerbot.BotLife.Scheduler.LeisureDuration = 120000
 
+# Independent local walk during downtime, alternated with seated leisure.
+# Explicit opt-in. Selects one visible friendly spawn NPC 25..100 yd away in
+# loaded grids, checks at most 8 routes, then uses native bounded travel.
+# No quest interaction. A dead/moved/missing landmark or unsafe route fails
+# to leisure; success/failure both impose OutingCooldown before another walk.
+AiPlayerbot.BotLife.Scheduler.Walk.Enabled = 0
+AiPlayerbot.BotLife.Scheduler.Walk.Duration = 120000
+
 # Travel uses the native Playerbots stuck watchdog, not a second movement controller.
 # Configure AiPlayerbot.StuckTimeout (4000 ms) and StuckMaxAttempts (3) in playerbots.conf.
 # Native bounded path recovery is reported as Recovering / RecoveryExhausted.

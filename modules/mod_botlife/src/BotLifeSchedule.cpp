@@ -28,6 +28,8 @@ LifeSchedule::LifeSchedule(uint32_t botGuid, ScheduleSettings settings)
     _settings.durationJitterMs = std::min(_settings.durationJitterMs, 30u * 60u * 1000u);
     _settings.outingCooldownMs = std::clamp(_settings.outingCooldownMs, 60000u, 3600000u);
     _settings.leisureDurationMs = std::clamp(_settings.leisureDurationMs, 30000u, 3600000u);
+    _settings.walkDurationMs = std::clamp(_settings.walkDurationMs, 30000u, 300000u);
+    _lastBreakWalk = (_botGuid % 2) != 0;
 }
 
 ActivityPlan LifeSchedule::InitialPlan()
@@ -46,6 +48,7 @@ ActivityPlan LifeSchedule::Complete(ActivityType activity, ActivityResult result
     {
         _cooldownMs -= std::min(_cooldownMs, elapsedMs);
         _serviceBackoffMs -= std::min(_serviceBackoffMs, elapsedMs);
+        _walkBackoffMs -= std::min(_walkBackoffMs, elapsedMs);
     }
     if (activity == ActivityType::Quest)
     {
@@ -76,9 +79,16 @@ ActivityPlan LifeSchedule::Complete(ActivityType activity, ActivityResult result
             if (result == ActivityResult::Failed)
                 _serviceBackoffMs = _settings.outingCooldownMs;
             return needs.recovery ? Plan(ActivityType::Rest, "recovery-needed") :
-                Plan(ActivityType::Leisure, "service-break");
+                Break(needs, "service-break");
         case ActivityType::Rest:
-            return Plan(ActivityType::Leisure, "recovery-break");
+            return Break(needs, "recovery-break");
+        case ActivityType::Walk:
+            _walkBackoffMs = _settings.outingCooldownMs;
+            if (needs.recovery)
+                return Plan(ActivityType::Rest, "recovery-needed");
+            _lastBreakWalk = true;
+            return Plan(ActivityType::Leisure,
+                result == ActivityResult::Failed ? "walk-failed" : "walk-completed");
         case ActivityType::Leisure:
             if (result == ActivityResult::Failed)
                 return Plan(ActivityType::Free, "leisure-unavailable");
@@ -97,8 +107,16 @@ ActivityPlan LifeSchedule::Choose(ScheduleNeeds needs, bool allowQuest)
     if (needs.service && !_serviceBackoffMs)
         return Plan(ActivityType::Town, "service-needed");
     if (!allowQuest || _cooldownMs || !needs.canQuest)
-        return Plan(ActivityType::Leisure, _cooldownMs ? "outing-cooldown" : "quest-unavailable");
+        return Break(needs, _cooldownMs ? "outing-cooldown" : "quest-unavailable");
     return Plan(ActivityType::Quest, "outing-start");
+}
+
+ActivityPlan LifeSchedule::Break(ScheduleNeeds needs, char const* reason)
+{
+    bool const walk = _settings.walkEnabled && needs.canQuest && !needs.recovery &&
+        !needs.service && !_walkBackoffMs && !_lastBreakWalk;
+    _lastBreakWalk = walk;
+    return Plan(walk ? ActivityType::Walk : ActivityType::Leisure, reason);
 }
 
 ActivityPlan LifeSchedule::Plan(ActivityType activity, char const* reason)
@@ -127,6 +145,9 @@ uint32_t LifeSchedule::DurationFor(ActivityType activity) const
             break;
         case ActivityType::Leisure:
             base = _settings.leisureDurationMs;
+            break;
+        case ActivityType::Walk:
+            base = _settings.walkDurationMs;
             break;
     }
 

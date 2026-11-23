@@ -5,6 +5,7 @@
 #include "BotLifeQuestExecutor.h"
 #include "BotLifeQuestSelection.h"
 #include "BotLifeServices.h"
+#include "BotLifeWalk.h"
 
 #include <algorithm>
 #include <charconv>
@@ -212,6 +213,8 @@ std::unique_ptr<ActivityExecutor> CreateScheduledExecutor(ActivityType activity,
         return std::make_unique<ScheduledQuestExecutor>(duration);
     if (IsSchedulerEnabled() && (activity == ActivityType::Town || activity == ActivityType::Leisure))
         return CreateServiceExecutor(activity, duration);
+    if (IsSchedulerEnabled() && activity == ActivityType::Walk)
+        return CreateWalkExecutor(duration);
     return CreateExecutor(activity, duration);
 }
 }

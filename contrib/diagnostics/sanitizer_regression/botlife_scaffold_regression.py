@@ -59,7 +59,7 @@ assert "&BotLife::CreateScheduledExecutor" in module
 assert "LoadScheduledQuestConfig" in module
 assert "InitializeScheduledQuestData" in module
 
-for activity in ("Free", "Quest", "Town", "Rest", "Leisure"):
+for activity in ("Free", "Quest", "Town", "Rest", "Leisure", "Walk"):
     assert activity in types, activity
 for result in ("Running", "Completed", "TemporarilyBlocked", "Failed"):
     assert result in types, result

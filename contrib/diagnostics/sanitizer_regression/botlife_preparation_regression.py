@@ -64,6 +64,7 @@ struct SpellMgr { SpellInfo spell; SpellInfo const* GetSpellInfo(uint32) { retur
 auto* sSpellMgr=&spellMgr;
 struct Creature;
 struct Map {
+    bool Instanceable() const { return false; }
     std::map<uint32,Creature*> creatures;
     Creature* GetCreatureBySpawnId(uint32 guid) { auto i=creatures.find(guid); return i==creatures.end()?nullptr:i->second; }
 };
@@ -142,6 +143,7 @@ public:
     bool CanSeeOrDetect(Creature* npc) const { return (phase&npc->phase)!=0; }
     bool IsValidAttackTarget(Creature* npc) const { return npc->attackable; }
     bool IsHostileTo(Creature* npc) const { return npc->hostile; }
+    bool IsFriendlyTo(Creature* npc) const { return !npc->hostile && !npc->attackable; }
     Creature* GetNPCIfCanInteractWith(Guid guid,uint32) {
         auto* npc=map.GetCreatureBySpawnId(guid.id);
         return interact && npc && npc->alive && npc->repair && !npc->hostile && CanSeeOrDetect(npc) && GetDistance(npc)<5?npc:nullptr;
@@ -214,6 +216,32 @@ struct Scene {
       defeatAreas.clear(); avoidDefeated=false; PathGenerator::rejectContinuation=false; PathGenerator::straight=false; PathGenerator::available=false; PathGenerator::type=PATHFIND_NORMAL; PathGenerator::calls=0; PathGenerator::points.clear(); }
 };
 int main() {
+    { Scene s; s.vendor.x=40; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai);
+      assert(walk->HoldsNonCombat()); assert(walk->Update(s.ai,1)==ActivityResult::Running);
+      assert(walk->ControlsMovement()); walk->Pause(s.ai); assert(!walk->ControlsMovement());
+      assert(walk->Resume(s.ai)); s.bot.x=40;
+      assert(walk->Update(s.ai,1)==ActivityResult::Completed && !walk->ControlsMovement()); }
+    { Scene s; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai);
+      assert(walk->Update(s.ai,1)==ActivityResult::Failed && !walk->HoldsNonCombat()); } // Too close.
+    for(int mode=0;mode<5;++mode) {
+      Scene s; s.vendor.x=40; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai); walk->Update(s.ai,1);
+      if(mode==0) s.vendor.alive=false;
+      if(mode==1) s.vendor.x=50;
+      if(mode==2) s.bot.map.creatures.clear();
+      if(mode==3) s.vendor.hostile=true;
+      if(mode==4) s.vendor.phase=2;
+      assert(walk->Update(s.ai,1)==ActivityResult::Failed && !walk->ControlsMovement());
+    }
+    { Scene s; s.vendor.x=40; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai); walk->Update(s.ai,1);
+      assert(walk->Update(s.ai,60000)==ActivityResult::Failed && !walk->ControlsMovement()); }
+    { Scene s; s.vendor.x=40; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai); walk->Update(s.ai,1);
+      walk->Pause(s.ai); s.vendor.alive=false;
+      assert(walk->Resume(s.ai)); // Terminal result returns to policy without dropping cooldown.
+      assert(walk->Update(s.ai,1)==ActivityResult::Failed && !walk->ControlsMovement()); }
+    { Scene s; s.vendor.x=40; auto walk=CreateWalkExecutor(60000); walk->Start(s.ai); walk->Update(s.ai,1);
+      Creature patrol; patrol.guid=2; patrol.x=20; patrol.hostile=patrol.attackable=true;
+      s.bot.map.creatures[2]=&patrol; clockMs+=500;
+      assert(walk->Update(s.ai,1)==ActivityResult::Failed && !walk->ControlsMovement()); }
     { Scene s; auto leisure=CreateServiceExecutor(ActivityType::Leisure,60000); leisure->Start(s.ai);
       assert(leisure->Update(s.ai,1000)==ActivityResult::Running && s.bot.sitting);
       assert(leisure->HoldsNonCombat() && s.bot.health==100 && s.bot.mana==100);
@@ -456,14 +484,14 @@ int main() {
 '''
 
 production = "\n".join(body(name) for name in (
-    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifeDetour.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp", "BotLifeServices.cpp"))
+    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifeDetour.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp", "BotLifeServices.cpp", "BotLifeWalk.cpp"))
 for forbidden in ("TeleportTo(", "SetHealth(", "SetPower(", "Randomize(", "RewardQuest(", "CharacterDatabase"):
     assert forbidden not in production, forbidden
 
 with tempfile.TemporaryDirectory(prefix="loa-preparation-") as directory:
     cpp = pathlib.Path(directory) / "test.cpp"
     binary = pathlib.Path(directory) / "test"
-    cpp.write_text('#include "BotLifeServices.h"\n' + mocks + production + tests)
+    cpp.write_text('#include "BotLifeServices.h"\n#include "BotLifeWalk.h"\n' + mocks + production + tests)
     subprocess.run([sys.argv[2], "-std=c++20", "-O1", "-g", "-UNDEBUG", "-fsanitize=address,undefined",
                     "-fno-omit-frame-pointer", "-I", str(module),
                     "-I", str(root / "modules/mod_playerbots/src/AI"), str(cpp),
