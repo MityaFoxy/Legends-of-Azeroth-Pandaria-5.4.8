@@ -30,6 +30,7 @@ public:
     float mana = 100;
     Powers powerType = POWER_MANA;
     bool sitting = false;
+    bool sickness = false;
     bool inWorld = true;
     bool removing = false;
     bool alive = true;
@@ -45,6 +46,7 @@ public:
     bool HasPlayerFlag(uint32) const { return ghost; }
     Player* GetCorpse() { return corpse ? this : nullptr; }
     float GetHealthPct() const { return health; }
+    bool HasAura(uint32) const { return sickness; }
     Powers GetPowerType() const { return powerType; }
     uint32 GetMaxPower(Powers) const { return 100; }
     float GetPowerPct(Powers) const { return mana; }

@@ -6,6 +6,7 @@
 #include "BotLifeProvisioning.h"
 #include "BotLifeDefeats.h"
 #include "BotLifeScheduledQuest.h"
+#include "BotLifeServices.h"
 
 #include <boost/filesystem.hpp>
 #include <memory>
@@ -28,7 +29,8 @@ std::unique_ptr<PlayerbotAIExtension> CreateBotLifeExtension()
         BotLife::IsTravelTestEnabled() ? &BotLife::CreateTravelTestExecutor :
         BotLife::IsQuestRunEnabled() ? &BotLife::CreateQuestRunExecutor :
         BotLife::IsQuestAcquireEnabled() ? &BotLife::CreateQuestAcquireExecutor :
-        BotLife::IsQuestPlanEnabled() ? &BotLife::CreateQuestPlanExecutor : nullptr);
+        BotLife::IsQuestPlanEnabled() ? &BotLife::CreateQuestPlanExecutor : nullptr,
+        &BotLife::ReadScheduleNeeds);
 }
 
 class BotLifeWorldScript final : public WorldScript

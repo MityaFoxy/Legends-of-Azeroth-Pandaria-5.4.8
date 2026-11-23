@@ -1,6 +1,7 @@
 // Compile the production context/executor with small world-interface doubles.
 // This does not substitute for integration testing against a running server.
 #include "BotLife.h"
+#include "BotLifeSchedule.h"
 #include "Config.h"
 #include "PlayerbotAI.h"
 
@@ -54,6 +55,7 @@ std::unique_ptr<ActivityExecutor> CreateSingleProbe(PlayerbotAI&)
 }
 
 std::unique_ptr<ActivityExecutor> RejectSingleProbe(PlayerbotAI&) { return nullptr; }
+ScheduleNeeds ServiceNeeds(PlayerbotAI&) { return {false, true, false}; }
 
 void Tick(ActivityContext& context, PlayerbotAI& ai, uint32_t elapsed = 100)
 {
@@ -86,6 +88,25 @@ void CheckCancellation(InterruptReason expected, Change change)
 
 int main()
 {
+    {
+        testConfig = {};
+        testConfig.scheduler = true;
+        LoadConfig();
+        Player serviceBot;
+        PlayerbotAI serviceAI{&serviceBot};
+        probe = {};
+        ActivityContext scheduled(&CreateProbe, nullptr, &ServiceNeeds);
+        Tick(scheduled, serviceAI); // Initial delay.
+        probe.result = ActivityResult::Completed;
+        Tick(scheduled, serviceAI, 30000);
+        assert(scheduled.GetActivity() == ActivityType::Town); // Snapshot reaches the real lifecycle boundary.
+        probe.result = ActivityResult::Failed;
+        Tick(scheduled, serviceAI);
+        assert(scheduled.GetActivity() == ActivityType::Leisure);
+        scheduled.Reset(serviceAI);
+        probe = {};
+        testConfig = {};
+    }
     {
         LoadConfig();
         Player serviceBot;
@@ -217,6 +238,14 @@ int main()
     rest->Start(ai);
     assert(rest->Update(ai, 1) == ActivityResult::Completed);
     assert(bot.sitting); // REST does not undo a foreign sit state.
+
+    bot = {};
+    bot.health = 60;
+    rest = CreateExecutor(ActivityType::Rest, 5000);
+    rest->Start(ai);
+    assert(rest->Update(ai, 1000) == ActivityResult::Running && bot.sitting);
+    rest->Finish(ai, ActivityResult::Failed);
+    assert(!bot.sitting);
 
     bot.guid.value = 99;
     Tick(timer, ai);

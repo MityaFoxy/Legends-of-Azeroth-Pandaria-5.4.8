@@ -20,6 +20,8 @@ char const* ToString(ActivityType activity)
             return "TOWN";
         case ActivityType::Rest:
             return "REST";
+        case ActivityType::Leisure:
+            return "LEISURE";
     }
 
     return "UNKNOWN";
@@ -172,12 +174,14 @@ private:
 
     static bool NeedsRest(Player const& bot)
     {
-        return bot.GetHealthPct() < 50.0f || (UsesMana(bot) && bot.GetPowerPct(POWER_MANA) < 30.0f);
+        return bot.GetHealthPct() < 75.0f || (UsesMana(bot) && bot.GetPowerPct(POWER_MANA) < 50.0f) ||
+            bot.HasAura(15007);
     }
 
     static bool Recovered(Player const& bot)
     {
-        return bot.GetHealthPct() >= 95.0f && (!UsesMana(bot) || bot.GetPowerPct(POWER_MANA) >= 90.0f);
+        return !bot.HasAura(15007) && bot.GetHealthPct() >= 95.0f &&
+            (!UsesMana(bot) || bot.GetPowerPct(POWER_MANA) >= 90.0f);
     }
 
     void Sit(Player& bot)

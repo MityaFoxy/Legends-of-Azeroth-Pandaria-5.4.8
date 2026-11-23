@@ -19,15 +19,19 @@ AiPlayerbot.BotLife.StubActivityDuration = 10000
 # Experimental stage-6 scheduler for normal mode. Off by default and ignored by
 # every one-shot TravelTest/QuestPlan/QuestAcquire/QuestRun mode.
 # It replaces the fixed FREE/QUEST/TOWN/REST loop with per-bot bounded plans:
-# an individual initial delay, quest-count/time outing limits, a TOWN service
-# window that yields to native Playerbots, and REST that waits for native regen.
+# an individual initial delay and quest-count/time outing limits. Needs select
+# REST recovery, TOWN local paid repair or LEISURE (safe sitting, even healthy).
+# OutingCooldown forbids starting a new outing after success/failure. Leisure
+# is independent of resource recovery; unavailable leisure yields bounded FREE.
+# Cooldowns are per live context; they are not persisted across logout/reset yet.
 # QuestIds is a comma-separated allowlist (without spaces) of supported
 # ordinary kill quests. When non-empty, scheduler QUEST chooses
 # deterministically, preferring an already active quest over acquiring a new
 # one, then runs the existing native executor.
 # Selection is same-map/phase and fail-closed; no teleport, force-completion or
 # quest reset. Changing QuestIds requires a restart. An empty list keeps the
-# non-invasive timed QUEST window. Town destinations are not selected yet.
+# non-invasive timed QUEST window (diagnostic, not a completed real quest).
+# TOWN uses only loaded, safe repair NPCs within 150 yd; no distant city routing.
 AiPlayerbot.BotLife.Scheduler.Enabled = 0
 AiPlayerbot.BotLife.Scheduler.QuestIds =
 AiPlayerbot.BotLife.Scheduler.InitialSpread = 30000
@@ -37,6 +41,8 @@ AiPlayerbot.BotLife.Scheduler.QuestDuration = 600000
 AiPlayerbot.BotLife.Scheduler.TownDuration = 120000
 AiPlayerbot.BotLife.Scheduler.RestDuration = 60000
 AiPlayerbot.BotLife.Scheduler.DurationJitter = 15000
+AiPlayerbot.BotLife.Scheduler.OutingCooldown = 300000
+AiPlayerbot.BotLife.Scheduler.LeisureDuration = 120000
 
 # Travel uses the native Playerbots stuck watchdog, not a second movement controller.
 # Configure AiPlayerbot.StuckTimeout (4000 ms) and StuckMaxAttempts (3) in playerbots.conf.

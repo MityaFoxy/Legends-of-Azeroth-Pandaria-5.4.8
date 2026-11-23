@@ -4,6 +4,7 @@
 #include "BotLifeQuestData.h"
 #include "BotLifeQuestExecutor.h"
 #include "BotLifeQuestSelection.h"
+#include "BotLifeServices.h"
 
 #include <algorithm>
 #include <charconv>
@@ -209,6 +210,8 @@ std::unique_ptr<ActivityExecutor> CreateScheduledExecutor(ActivityType activity,
 {
     if (activity == ActivityType::Quest && IsScheduledQuestEnabled())
         return std::make_unique<ScheduledQuestExecutor>(duration);
+    if (IsSchedulerEnabled() && (activity == ActivityType::Town || activity == ActivityType::Leisure))
+        return CreateServiceExecutor(activity, duration);
     return CreateExecutor(activity, duration);
 }
 }

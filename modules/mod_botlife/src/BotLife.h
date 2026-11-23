@@ -12,6 +12,7 @@ class PlayerbotAI;
 namespace BotLife
 {
 class LifeSchedule;
+struct ScheduleNeeds;
 
 enum class InterruptReason : uint8_t
 {
@@ -64,7 +65,9 @@ class ActivityContext final : public PlayerbotAIExtension
 public:
     using ExecutorFactory = std::unique_ptr<ActivityExecutor> (*)(ActivityType, uint32_t);
     using SingleRunFactory = std::unique_ptr<ActivityExecutor> (*)(PlayerbotAI&);
-    explicit ActivityContext(ExecutorFactory factory = &CreateExecutor, SingleRunFactory singleRun = nullptr);
+    using NeedsReader = ScheduleNeeds (*)(PlayerbotAI&);
+    explicit ActivityContext(ExecutorFactory factory = &CreateExecutor, SingleRunFactory singleRun = nullptr,
+        NeedsReader needsReader = nullptr);
     ~ActivityContext() override;
 
     void Observe(PlayerbotAI& botAI) override;
@@ -88,6 +91,7 @@ private:
     std::unique_ptr<LifeSchedule> _schedule;
     ExecutorFactory _factory;
     SingleRunFactory _singleRun;
+    NeedsReader _needsReader;
     bool _singleRunConsumed = false;
     ActivityType _activity;
     uint32_t _elapsed;

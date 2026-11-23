@@ -26,6 +26,8 @@ LifeSchedule::LifeSchedule(uint32_t botGuid, ScheduleSettings settings)
     _settings.townDurationMs = std::clamp(_settings.townDurationMs, MinimumActivityDuration, 60u * 60u * 1000u);
     _settings.restDurationMs = std::clamp(_settings.restDurationMs, MinimumActivityDuration, 60u * 60u * 1000u);
     _settings.durationJitterMs = std::min(_settings.durationJitterMs, 30u * 60u * 1000u);
+    _settings.outingCooldownMs = std::clamp(_settings.outingCooldownMs, 60000u, 3600000u);
+    _settings.leisureDurationMs = std::clamp(_settings.leisureDurationMs, 30000u, 3600000u);
 }
 
 ActivityPlan LifeSchedule::InitialPlan()
@@ -37,38 +39,66 @@ ActivityPlan LifeSchedule::InitialPlan()
     return { ActivityType::Free, std::max(duration, MinimumActivityDuration), "initial-delay" };
 }
 
-ActivityPlan LifeSchedule::Complete(ActivityType activity, ActivityResult result, uint32_t elapsedMs)
+ActivityPlan LifeSchedule::Complete(ActivityType activity, ActivityResult result, uint32_t elapsedMs,
+    ScheduleNeeds needs)
 {
+    if (activity != ActivityType::Quest)
+    {
+        _cooldownMs -= std::min(_cooldownMs, elapsedMs);
+        _serviceBackoffMs -= std::min(_serviceBackoffMs, elapsedMs);
+    }
     if (activity == ActivityType::Quest)
     {
         _outingElapsedMs = SaturatingAdd(_outingElapsedMs, elapsedMs);
         if (result == ActivityResult::Completed)
             ++_completedQuests;
 
-        if (result == ActivityResult::Failed)
-            return Plan(ActivityType::Town, "quest-failed");
-        if (_completedQuests >= _settings.questLimit)
-            return Plan(ActivityType::Town, "quest-limit");
-        if (_outingElapsedMs >= _settings.outingLimitMs)
-            return Plan(ActivityType::Town, "outing-time-limit");
+        if (result == ActivityResult::Failed || _completedQuests >= _settings.questLimit ||
+            _outingElapsedMs >= _settings.outingLimitMs || needs.recovery || needs.service || !needs.canQuest)
+        {
+            char const* reason = result == ActivityResult::Failed ? "quest-failed" :
+                _completedQuests >= _settings.questLimit ? "quest-limit" :
+                _outingElapsedMs >= _settings.outingLimitMs ? "outing-time-limit" : "needs-changed";
+            _cooldownMs = _settings.outingCooldownMs;
+            ResetOuting();
+            ActivityPlan plan = Choose(needs, false);
+            plan.reason = reason;
+            return plan;
+        }
         return Plan(ActivityType::Quest, "continue-outing");
     }
 
     switch (activity)
     {
         case ActivityType::Free:
-            return Plan(ActivityType::Quest, result == ActivityResult::Failed ? "free-failed" : "outing-start");
+            return Choose(needs, true);
         case ActivityType::Town:
-            return Plan(ActivityType::Rest, result == ActivityResult::Failed ? "town-failed" : "town-completed");
+            if (result == ActivityResult::Failed)
+                _serviceBackoffMs = _settings.outingCooldownMs;
+            return needs.recovery ? Plan(ActivityType::Rest, "recovery-needed") :
+                Plan(ActivityType::Leisure, "service-break");
         case ActivityType::Rest:
-            ResetOuting();
-            return Plan(result == ActivityResult::Failed ? ActivityType::Free : ActivityType::Quest,
-                result == ActivityResult::Failed ? "rest-failed" : "rest-completed");
+            return Plan(ActivityType::Leisure, "recovery-break");
+        case ActivityType::Leisure:
+            if (result == ActivityResult::Failed)
+                return Plan(ActivityType::Free, "leisure-unavailable");
+            return Choose(needs, true);
         case ActivityType::Quest:
             break;
     }
 
     return Plan(ActivityType::Free, "invalid-activity");
+}
+
+ActivityPlan LifeSchedule::Choose(ScheduleNeeds needs, bool allowQuest)
+{
+    if (needs.recovery)
+        return Plan(ActivityType::Rest, "recovery-needed");
+    if (needs.service && !_serviceBackoffMs)
+        return Plan(ActivityType::Town, "service-needed");
+    if (!allowQuest || _cooldownMs || !needs.canQuest)
+        return Plan(ActivityType::Leisure, _cooldownMs ? "outing-cooldown" : "quest-unavailable");
+    return Plan(ActivityType::Quest, "outing-start");
 }
 
 ActivityPlan LifeSchedule::Plan(ActivityType activity, char const* reason)
@@ -84,7 +114,7 @@ uint32_t LifeSchedule::DurationFor(ActivityType activity) const
     switch (activity)
     {
         case ActivityType::Free:
-            base = std::max(_settings.initialSpreadMs, MinimumActivityDuration);
+            base = std::max({_settings.leisureDurationMs, _cooldownMs, _serviceBackoffMs});
             break;
         case ActivityType::Quest:
             base = _settings.questDurationMs;
@@ -95,15 +125,20 @@ uint32_t LifeSchedule::DurationFor(ActivityType activity) const
         case ActivityType::Rest:
             base = _settings.restDurationMs;
             break;
+        case ActivityType::Leisure:
+            base = _settings.leisureDurationMs;
+            break;
     }
 
     uint32_t const jitter = std::min(_settings.durationJitterMs, base - MinimumActivityDuration);
-    if (!jitter)
-        return base;
-
     uint64_t const width = uint64_t(jitter) * 2u + 1u;
     int64_t const offset = int64_t(Mix(uint32_t(activity) ^ (_cycle * 0x85ebca6bu) ^ _decision) % width) - jitter;
-    return uint32_t(int64_t(base) + offset);
+    uint32_t duration = uint32_t(int64_t(base) + offset);
+    if (activity == ActivityType::Quest)
+        duration = std::min(duration, _settings.outingLimitMs - std::min(_outingElapsedMs, _settings.outingLimitMs));
+    if (activity == ActivityType::Free)
+        duration = std::max(duration, _cooldownMs); // Jitter cannot shorten a hard cooldown.
+    return duration;
 }
 
 uint32_t LifeSchedule::Mix(uint32_t value) const

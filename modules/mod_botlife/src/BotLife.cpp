@@ -26,14 +26,16 @@ ActivityType NextActivity(ActivityType activity)
             return ActivityType::Rest;
         case ActivityType::Rest:
             return ActivityType::Free;
+        case ActivityType::Leisure:
+            return ActivityType::Free;
     }
 
     return ActivityType::Free;
 }
 }
 
-ActivityContext::ActivityContext(ExecutorFactory factory, SingleRunFactory singleRun)
-    : _factory(factory), _singleRun(singleRun), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
+ActivityContext::ActivityContext(ExecutorFactory factory, SingleRunFactory singleRun, NeedsReader needsReader)
+    : _factory(factory), _singleRun(singleRun), _needsReader(needsReader), _activity(ActivityType::Free), _elapsed(0), _active(false) { }
 
 ActivityContext::~ActivityContext() = default;
 
@@ -156,7 +158,8 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
         case ActivityResult::Completed:
             if (_schedule)
             {
-                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed);
+                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed,
+                    _needsReader ? _needsReader(botAI) : ScheduleNeeds{});
                 Transition(botAI, plan.activity, result, plan.reason, plan.durationMs);
             }
             else
@@ -165,7 +168,8 @@ PlayerbotAIExtensionResult ActivityContext::Update(PlayerbotAI& botAI, uint32_t 
         case ActivityResult::Failed:
             if (_schedule)
             {
-                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed);
+                ActivityPlan const plan = _schedule->Complete(_activity, result, _elapsed,
+                    _needsReader ? _needsReader(botAI) : ScheduleNeeds{});
                 Transition(botAI, plan.activity, result, plan.reason, plan.durationMs);
             }
             else

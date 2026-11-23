@@ -10,7 +10,8 @@ enum class ActivityType : uint8_t
     Free,
     Quest,
     Town,
-    Rest
+    Rest,
+    Leisure
 };
 
 enum class ActivityResult : uint8_t

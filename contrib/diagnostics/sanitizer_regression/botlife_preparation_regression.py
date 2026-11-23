@@ -214,6 +214,28 @@ struct Scene {
       defeatAreas.clear(); avoidDefeated=false; PathGenerator::rejectContinuation=false; PathGenerator::straight=false; PathGenerator::available=false; PathGenerator::type=PATHFIND_NORMAL; PathGenerator::calls=0; PathGenerator::points.clear(); }
 };
 int main() {
+    { Scene s; auto leisure=CreateServiceExecutor(ActivityType::Leisure,60000); leisure->Start(s.ai);
+      assert(leisure->Update(s.ai,1000)==ActivityResult::Running && s.bot.sitting);
+      assert(leisure->HoldsNonCombat() && s.bot.health==100 && s.bot.mana==100);
+      leisure->Pause(s.ai); assert(!s.bot.sitting); assert(leisure->Resume(s.ai));
+      assert(leisure->Update(s.ai,59000)==ActivityResult::Completed && !s.bot.sitting); }
+    { Scene s; s.bot.sitting=true; auto leisure=CreateServiceExecutor(ActivityType::Leisure,60000);
+      leisure->Start(s.ai); leisure->Update(s.ai,1000); leisure->Interrupt(s.ai,InterruptReason::Reset);
+      assert(s.bot.sitting); }
+    { Scene s; s.bot.mounted=true; auto leisure=CreateServiceExecutor(ActivityType::Leisure,60000);
+      leisure->Start(s.ai); assert(leisure->Update(s.ai,60000)==ActivityResult::TemporarilyBlocked);
+      assert(!s.bot.sitting); assert(leisure->Update(s.ai,30000)==ActivityResult::Failed); }
+    { Scene s; auto leisure=CreateServiceExecutor(ActivityType::Leisure,60000); leisure->Start(s.ai);
+      leisure->Update(s.ai,1); Creature patrol; patrol.guid=2; patrol.x=5; patrol.hostile=patrol.attackable=true;
+      s.bot.map.creatures[2]=&patrol; clockMs+=500;
+      assert(leisure->Update(s.ai,500)==ActivityResult::Failed && !s.bot.sitting); }
+    { Scene s; s.bot.items[15].durability=10; auto town=CreateServiceExecutor(ActivityType::Town,60000);
+      assert(ReadScheduleNeeds(s.ai).service); town->Start(s.ai);
+      assert(town->Update(s.ai,1)==ActivityResult::Running && s.bot.repairs==1);
+      assert(town->Update(s.ai,1)==ActivityResult::Completed && !ReadScheduleNeeds(s.ai).service); }
+    { Scene s; s.bot.items[15].durability=10; s.bot.map.creatures.clear();
+      auto town=CreateServiceExecutor(ActivityType::Town,60000); town->Start(s.ai);
+      assert(town->Update(s.ai,1)==ActivityResult::Failed && !town->ControlsMovement()); }
     for(int mode=0;mode<4;++mode) {
       Scene s; Creature mob; mob.guid=2; mob.x=50; mob.y=50; mob.hostile=mob.attackable=true;
       s.bot.map.creatures[2]=&mob; QuestSpawn goal{3,10,1,1,100,0,0};
@@ -434,16 +456,17 @@ int main() {
 '''
 
 production = "\n".join(body(name) for name in (
-    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifeDetour.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp"))
+    "BotLifeReadiness.cpp", "BotLifeSafety.cpp", "BotLifeDetour.cpp", "BotLifePreparation.h", "BotLifePreparation.cpp", "BotLifeServices.cpp"))
 for forbidden in ("TeleportTo(", "SetHealth(", "SetPower(", "Randomize(", "RewardQuest(", "CharacterDatabase"):
     assert forbidden not in production, forbidden
 
 with tempfile.TemporaryDirectory(prefix="loa-preparation-") as directory:
     cpp = pathlib.Path(directory) / "test.cpp"
     binary = pathlib.Path(directory) / "test"
-    cpp.write_text(mocks + production + tests)
+    cpp.write_text('#include "BotLifeServices.h"\n' + mocks + production + tests)
     subprocess.run([sys.argv[2], "-std=c++20", "-O1", "-g", "-UNDEBUG", "-fsanitize=address,undefined",
-                    "-fno-omit-frame-pointer", "-I", str(module), str(cpp),
+                    "-fno-omit-frame-pointer", "-I", str(module),
+                    "-I", str(root / "modules/mod_playerbots/src/AI"), str(cpp),
                     str(module / "BotLifeReadinessPolicy.cpp"), str(module / "BotLifeSafetyPolicy.cpp"),
                     str(module / "BotLifeTravel.cpp"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
