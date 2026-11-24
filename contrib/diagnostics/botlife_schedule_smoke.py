@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import signal
 import socket
@@ -16,35 +15,13 @@ import time
 
 from botlife_quest_group_smoke import stop_server
 from botlife_sanitizer_soak import ConsoleEvents, write_json
+from botlife_schedule_observer import ScheduleObserver
 from sanitizer_soak import SanitizerMonitor, memory, optional_overlay, setting, stamp
 
 
-def inspect_event(line, evidence, cooldown):
-    """Use server timestamps, not polling time, to verify the outing boundary."""
-    match = re.search(r"guid=(\d+)|Low: (\d+)", line)
-    if not match:
-        return
-    guid = int(match.group(1) or match.group(2))
-    if guid not in evidence:
-        raise RuntimeError("Unexpected BotLife actor")
-    row = evidence[guid]
-    when = datetime.datetime.strptime(line.split()[0], "%Y-%m-%d_%H:%M:%S")
-    if "transition=QUEST->" in line:
-        row["last_outing_end"] = when.isoformat()
-        row["outings"] += 1
-    if "activity=QUEST event=start" in line and row["last_outing_end"]:
-        gap = (when - datetime.datetime.fromisoformat(row["last_outing_end"])).total_seconds()
-        row["cooldown_gaps"].append(gap)
-        if gap + 1 < cooldown:
-            raise RuntimeError("Outing restarted before cooldown expired")
-    if "BotLife walk " in line and "result=completed" in line:
-        row["walks"] += 1
-    if "activity=LEISURE result=completed" in line:
-        row["leisure"] += 1
-    if "event=pause reason=combat" in line:
-        row["combat_pauses"] += 1
-    if "event=resume reason=combat-ended" in line:
-        row["combat_resumes"] += 1
+def utc_now():
+    # Test child logs use TZ=UTC. Compare at their one-second precision.
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
 def main():
@@ -58,7 +35,7 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
     guids = sorted(set(map(int, args.guids.split(","))))
-    if not 1 <= len(guids) <= 2 or min(guids) < 1 or max(guids) > 0xFFFFFFFF or args.quest_id <= 0:
+    if not 1 <= len(guids) <= 2 or min(guids) < 1 or max(guids) > 0xFFFFFFFF or not 0 < args.quest_id <= 0xFFFFFFFF:
         parser.error("Require 1..2 positive uint32 GUIDs and a positive quest id")
     if not 180 <= args.seconds <= 3600 or not args.run.is_absolute():
         parser.error("Require fresh absolute run directory and 180..3600 seconds")
@@ -93,8 +70,9 @@ def main():
         write_json(args.run / "status.json", row)
         print(json.dumps(row), flush=True)
 
-    evidence = {guid: dict(walks=0, leisure=0, outings=0, cooldown_gaps=[],
-                           last_outing_end=None, combat_pauses=0, combat_resumes=0) for guid in guids}
+    observer = ScheduleObserver(guids)
+    profile = dict(min_walks=1, min_leisure=1, min_cooldown_gaps=1, min_desync_seconds=1,
+                   max_quest_fraction=0.5, max_outing_active_ms=32000, max_unobserved_seconds=1)
     stop = False
 
     def request_stop(*_):
@@ -105,6 +83,7 @@ def main():
     signal.signal(signal.SIGINT, request_stop)
     child = None
     error = None
+    observation_end = None
     monitor = SanitizerMonitor(logs)
     lock = (args.run.parent / ".botlife-quest-run.lock").open("a")
     try:
@@ -129,12 +108,14 @@ def main():
         git = ["git", "-c", f"safe.directory={source}", "-C", str(source)]
         (args.run / "source-changes.patch").write_bytes(subprocess.check_output([*git, "diff", "HEAD", "--binary"]))
         shutil.copy2(Path(__file__).resolve(), args.run / "controller.py")
+        shutil.copy2(source / "contrib/diagnostics/botlife_schedule_observer.py", args.run / "observer.py")
         write_json(args.run / "manifest.json", dict(time=stamp(), guids=guids, seconds=args.seconds,
                    character_database=database, world_database=connections["WorldDatabaseInfo"][-1],
                    initial=before, quest_id=args.quest_id, cooldown_seconds=60,
+                   acceptance_profile=profile, log_timezone="UTC",
                    binary=str(args.binary), binary_sha256=hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
                    revision=subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip(),
-                   limits="Short scheduler smoke; no forced combat, teleport, equipment grant or quest reset. Native saves persist on test DB."))
+                   limits="Bounded scheduler smoke; a no-eligible probe is not executed quest work. No forced combat, teleport, equipment grant or quest reset. Native saves persist on test DB."))
         world = optional_overlay(base, {
             "LogsDir": '"Logs"', "DataDir": '"/work/loa-runtime/Data"', "WorldServerPort": "8097",
             "BindIP": '"127.0.0.1"', "Console.Enable": "1", "Ra.Enable": "0", "SOAP.Enabled": "0",
@@ -151,8 +132,10 @@ def main():
         life = optional_overlay((source / "modules/mod_botlife/config/botlife.conf.dist").read_text(), {
             "AiPlayerbot.BotLife.Enabled": "1", "AiPlayerbot.BotLife.BotGuids": json.dumps(args.guids),
             "AiPlayerbot.BotLife.Scheduler.Enabled": "1", "AiPlayerbot.BotLife.Scheduler.QuestIds": json.dumps(str(args.quest_id)),
-            "AiPlayerbot.BotLife.Scheduler.InitialSpread": "1000", "AiPlayerbot.BotLife.Scheduler.QuestDuration": "30000",
-            "AiPlayerbot.BotLife.Scheduler.DurationJitter": "0", "AiPlayerbot.BotLife.Scheduler.OutingCooldown": "60000",
+            "AiPlayerbot.BotLife.Scheduler.InitialSpread": "15000", "AiPlayerbot.BotLife.Scheduler.QuestDuration": "30000",
+            "AiPlayerbot.BotLife.Scheduler.OutingDuration": "30000",
+            "AiPlayerbot.BotLife.Scheduler.QuestLimit": "1",
+            "AiPlayerbot.BotLife.Scheduler.DurationJitter": "5000", "AiPlayerbot.BotLife.Scheduler.OutingCooldown": "60000",
             "AiPlayerbot.BotLife.Scheduler.LeisureDuration": "30000", "AiPlayerbot.BotLife.Scheduler.Walk.Enabled": "1",
             "AiPlayerbot.BotLife.Scheduler.Walk.Duration": "60000",
         })
@@ -161,7 +144,7 @@ def main():
         output = (logs / "console.log").open("ab", buffering=0)
         child = subprocess.Popen([str(args.binary), "-c", str(args.run / "worldserver.conf")], cwd=args.run,
                                  stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
-                                 text=True, start_new_session=True)
+                                 text=True, start_new_session=True, env=dict(os.environ, TZ="UTC"))
         event("server_started", pid=child.pid)
         reader = ConsoleEvents(logs / "console.log", logs / "BotLife.log")
         ready = False
@@ -190,27 +173,33 @@ def main():
                 next_login = now + 30
                 event("login_requested", guid=guid)
             for line in reader.read_lines(logs / "BotLife.log").splitlines():
-                inspect_event(line, evidence, 60)
+                observer.inspect(line)
             if now >= sample_at:
                 population = online()
-                if population - requested:
-                    raise RuntimeError("Unexpected online character")
+                observer.population(population, requested)
                 seen |= population
                 if not observing and population == set(guids):
                     observing = True
-                    deadline = now + args.seconds
+                    observer.begin(utc_now())
+                    deadline = time.monotonic() + args.seconds
                     event("observation_started", seconds=args.seconds)
-                event("sample", online=sorted(population), evidence=evidence)
+                event("sample", online=sorted(population), evidence=observer.summary(utc_now()),
+                      desync_samples=observer.desync_samples, desync_seconds=observer.desync_seconds(utc_now()))
                 sample_at = now + 15
             time.sleep(1)
         if not observing or seen != set(guids):
             raise RuntimeError("Roster did not come online before startup deadline")
-        if any(not row["walks"] or not row["leisure"] or not row["cooldown_gaps"] for row in evidence.values()):
-            raise RuntimeError("Missing completed walk/leisure or a verified cooldown gap")
+        for line in reader.read_lines(logs / "BotLife.log").splitlines():
+            observer.inspect(line)
+        observer.population(online(), requested)
+        observation_end = utc_now()
+        observer.validate(observation_end, profile)
     except Exception as exc:
         error = str(exc)
         event("failure", reason=error)
     finally:
+        observation_end = observation_end or utc_now()
+        evidence = observer.summary(observation_end)
         if child and child.poll() is None:
             if stop_server(child, event):
                 error = error or "Forced shutdown"
@@ -223,6 +212,9 @@ def main():
                 error = error or str(exc)
         write_json(args.run / "result.json", dict(error=error, evidence=evidence,
                    combat_observed=any(row["combat_pauses"] for row in evidence.values()),
+                   desync_samples=observer.desync_samples, acceptance_profile=profile,
+                   desync_seconds=observer.desync_seconds(observation_end),
+                   native_quest_execution_observed=all(row["native_quest_seconds"] > 0 for row in evidence.values()),
                    hour_criterion_closed=False))
         event("finished", error=error)
     if error:
