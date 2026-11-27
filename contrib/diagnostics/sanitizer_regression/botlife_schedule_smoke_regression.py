@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Observer acceptance must reflect native lifecycle, time and roster evidence."""
 import datetime
+import argparse
 import pathlib
 import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(sys.argv.pop(1)) / "contrib/diagnostics"))
 from botlife_schedule_observer import ScheduleObserver
+from botlife_schedule_smoke import parse_quest_ids, profile_settings, verify_candidate_roster
 
 
 class EvidenceTests(unittest.TestCase):
@@ -25,8 +27,8 @@ class EvidenceTests(unittest.TestCase):
     def life(self, seconds, suffix, guid=1138):
         self.emit(seconds, f"bot=Test guid=GUID Full: 0x123 Type: Player Low: {guid} {suffix}")
 
-    def start(self, seconds, activity, guid=1138):
-        self.life(seconds, f"activity={activity} event=start reason=test budget_ms=30000", guid)
+    def start(self, seconds, activity, guid=1138, budget=30000):
+        self.life(seconds, f"activity={activity} event=start reason=test budget_ms={budget}", guid)
 
     def transition(self, seconds, before, after, duration, guid=1138):
         self.life(seconds, f"transition={before}->{after} reason=test result=completed duration_ms={duration}", guid)
@@ -220,6 +222,77 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.observer.desync_samples, 0)
         self.assertEqual(self.observer.desync_seconds(self.when(15)), 5)
         self.assertEqual(self.observer.desync_seconds(self.when(15)), 5)
+
+    def test_progress_requires_a_running_quest_and_increasing_count(self):
+        self.emit(0, "quest-run guid=1138 quest=216 event=start resumed=false result=running")
+        self.emit(0, "scheduled-quest guid=1138 event=select quest=216 budget_ms=30000")
+        self.start(0, "QUEST")
+        for when, count in ((1, 0), (2, 1), (3, 1), (4, 2)):
+            self.emit(when, f"quest-run guid=1138 quest=216 event=progress objective=4 count={count} required=8")
+        self.assertEqual(self.row(4)["objective_progress_events"], {"216:4": 2})
+        self.assertEqual(self.row(4)["objective_counts"], {"216:4": 2})
+        self.transition(5, "QUEST", "LEISURE", 5000)
+        self.start(5, "LEISURE")
+        with self.assertRaisesRegex(RuntimeError, "outside a running quest"):
+            self.emit(6, "quest-run guid=1138 quest=216 event=progress objective=4 count=3 required=8")
+
+    def quest_life_trace(self, progress):
+        profile, quest_ms, cooldown_ms = profile_settings("quest-life")
+        self.observer = ScheduleObserver([1138], cooldown=cooldown_ms / 1000)
+        self.observer.begin(self.when(0))
+        self.emit(0, "quest-run guid=1138 quest=216 event=start resumed=false result=running")
+        self.emit(0, f"scheduled-quest guid=1138 event=select quest=216 budget_ms={quest_ms}")
+        self.start(0, "QUEST", budget=quest_ms)
+        if progress:
+            self.emit(20, "quest-run guid=1138 quest=216 event=progress objective=4 count=1 required=8")
+        self.emit(120, "quest-run guid=1138 quest=216 event=finish result=failed rewarded=false reason=budget-expired")
+        self.life(120, "transition=QUEST->LEISURE reason=quest-failed result=failed duration_ms=120000")
+        self.start(120, "LEISURE")
+        for when in range(150, 421, 30):
+            self.emit(when, "service guid=1138 activity=LEISURE result=completed reason=leisure-completed")
+            self.transition(when, "LEISURE", "QUEST" if when == 420 else "LEISURE", 30000)
+            if when < 420:
+                self.start(when, "LEISURE")
+        self.emit(420, "quest-run guid=1138 quest=216 event=start resumed=true result=running")
+        self.emit(420, f"scheduled-quest guid=1138 event=select quest=216 budget_ms={quest_ms}")
+        self.start(420, "QUEST", budget=quest_ms)
+        return profile
+
+    def test_quest_life_profile_requires_progress_not_just_running_time(self):
+        profile = self.quest_life_trace(progress=False)
+        with self.assertRaisesRegex(RuntimeError, "actual objective progress"):
+            self.observer.validate(self.when(450), profile)
+
+    def test_real_progress_then_independent_leisure_and_cooldown_pass(self):
+        profile = self.quest_life_trace(progress=True)
+        self.observer.validate(self.when(450), profile)
+        row = self.row(450)
+        self.assertEqual(row["cooldown_gaps"], [300])
+        self.assertEqual(row["seconds"]["LEISURE"], 300)
+        self.assertEqual(row["native_quest_seconds"], 150)
+
+
+class AllowlistTests(unittest.TestCase):
+    def test_shared_allowlist_is_normalized(self):
+        self.assertEqual(parse_quest_ids("8320,216,216"), [216, 8320])
+
+    def test_bad_allowlist_fails_before_launch(self):
+        for value in ("", "0", "-1", "216,", "a", str(2**32), ",".join(map(str, range(1, 34)))):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                parse_quest_ids(value)
+
+    def test_full_prefilter_must_confirm_each_bot_and_each_quest(self):
+        text = "distance\tguid\tname\tclass\tlevel\tmap\tquest\n27\t101\tAranne\t8\t22\t1\t216\n52\t26\tIbrand\t10\t60\t1\t8320\n"
+        self.assertEqual(verify_candidate_roster(text, [26, 101], [216, 8320]),
+                         [dict(guid=26, quest_id=8320), dict(guid=101, quest_id=216)])
+        for guids, quests in (([26, 1138], [216, 8320]), ([26, 101], [216, 13943])):
+            with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+                verify_candidate_roster(text, guids, quests)
+
+    def test_malformed_prefilter_cannot_authorize_launch(self):
+        for text in ("", "unexpected header", "distance\tguid\tname\tclass\tlevel\tmap\tquest\ninvalid"):
+            with self.subTest(text=text), self.assertRaises(RuntimeError):
+                verify_candidate_roster(text, [26], [8320])
 
 
 if __name__ == "__main__":

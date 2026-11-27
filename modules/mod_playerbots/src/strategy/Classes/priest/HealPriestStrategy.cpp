@@ -15,6 +15,11 @@ HealPriestStrategy::HealPriestStrategy(PlayerbotAI* botAI) : GenericPriestStrate
 
 NextAction** HealPriestStrategy::getDefaultActions()
 {
+    // A solo Discipline priest can open with a known spell even without a usable Shoot.
+    if (!botAI->GetMaster() && !botAI->GetBot()->GetGroup())
+        return NextAction::array(0, new NextAction("smite", ACTION_DEFAULT + 0.1f),
+                                 new NextAction("shoot", ACTION_DEFAULT), nullptr);
+
     return NextAction::array(0, new NextAction("shoot", ACTION_DEFAULT), nullptr);
 }
 

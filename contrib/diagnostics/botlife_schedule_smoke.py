@@ -11,6 +11,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 
 from botlife_quest_group_smoke import stop_server
@@ -24,21 +25,65 @@ def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
+def parse_quest_ids(value):
+    try:
+        ids = sorted(set(int(token) for token in value.split(",")))
+    except ValueError:
+        raise argparse.ArgumentTypeError("Require comma-separated positive uint32 quest IDs") from None
+    if not 1 <= len(ids) <= 32 or not 0 < min(ids) <= max(ids) <= 0xFFFFFFFF:
+        raise argparse.ArgumentTypeError("Require 1..32 positive uint32 quest IDs")
+    return ids
+
+
+def profile_settings(name):
+    if name not in ("smoke", "quest-life"):
+        raise ValueError("Unknown scheduler observation profile")
+    quest_life = name == "quest-life"
+    quest_ms = 120000 if quest_life else 30000
+    cooldown_ms = 300000 if quest_life else 60000
+    profile = dict(min_walks=0 if quest_life else 1, min_leisure=1, min_cooldown_gaps=1,
+                   min_desync_seconds=1, max_quest_fraction=0.5,
+                   max_outing_active_ms=quest_ms + 2000, max_unobserved_seconds=1,
+                   min_native_quest_seconds=1 if quest_life else 0,
+                   min_objective_progress_events=1 if quest_life else 0)
+    return profile, quest_ms, cooldown_ms
+
+
+def verify_candidate_roster(text, guids, quest_ids):
+    lines = text.splitlines()
+    if not lines or lines[0].split("\t")[:7] != ["distance", "guid", "name", "class", "level", "map", "quest"]:
+        raise RuntimeError("Unexpected candidate prefilter format")
+    try:
+        candidates = {(int(row[1]), int(row[6])) for line in lines[1:] if (row := line.split("\t"))}
+    except (ValueError, IndexError):
+        raise RuntimeError("Malformed candidate prefilter row") from None
+    matches = sorted((guid, quest) for guid, quest in candidates if guid in guids and quest in quest_ids)
+    if {guid for guid, _ in matches} != set(guids) or {quest for _, quest in matches} != set(quest_ids):
+        raise RuntimeError("Full prefilter did not confirm the requested bot/quest roster")
+    return [dict(guid=guid, quest_id=quest) for guid, quest in matches]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--config-dir", type=Path, required=True)
     parser.add_argument("--guids", required=True)
-    parser.add_argument("--quest-id", type=int, required=True)
+    quests = parser.add_mutually_exclusive_group(required=True)
+    quests.add_argument("--quest-id", type=int)
+    quests.add_argument("--quest-ids", type=parse_quest_ids)
+    parser.add_argument("--profile", choices=("smoke", "quest-life"), default="smoke")
     parser.add_argument("--seconds", type=int, default=240)
     parser.add_argument("--expected-character-db", required=True)
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
     guids = sorted(set(map(int, args.guids.split(","))))
-    if not 1 <= len(guids) <= 2 or min(guids) < 1 or max(guids) > 0xFFFFFFFF or not 0 < args.quest_id <= 0xFFFFFFFF:
+    quest_ids = args.quest_ids if args.quest_ids is not None else [args.quest_id]
+    if not 1 <= len(guids) <= 2 or min(guids) < 1 or max(guids) > 0xFFFFFFFF or not 0 < min(quest_ids) <= max(quest_ids) <= 0xFFFFFFFF:
         parser.error("Require 1..2 positive uint32 GUIDs and a positive quest id")
     if not 180 <= args.seconds <= 3600 or not args.run.is_absolute():
         parser.error("Require fresh absolute run directory and 180..3600 seconds")
+    if args.profile == "quest-life" and args.seconds < 600:
+        parser.error("quest-life requires at least 600 seconds for work and cooldown")
     os.umask(0o077)
     args.run.mkdir(parents=True, exist_ok=False)
     logs = args.run / "Logs"
@@ -70,9 +115,8 @@ def main():
         write_json(args.run / "status.json", row)
         print(json.dumps(row), flush=True)
 
-    observer = ScheduleObserver(guids)
-    profile = dict(min_walks=1, min_leisure=1, min_cooldown_gaps=1, min_desync_seconds=1,
-                   max_quest_fraction=0.5, max_outing_active_ms=32000, max_unobserved_seconds=1)
+    profile, quest_ms, cooldown_ms = profile_settings(args.profile)
+    observer = ScheduleObserver(guids, cooldown=cooldown_ms / 1000)
     stop = False
 
     def request_stop(*_):
@@ -105,13 +149,24 @@ def main():
         before = sql(f"SELECT guid,name,level,map,position_x,position_y,position_z FROM characters WHERE guid IN ({ids}) ORDER BY guid")
         if len(before.splitlines()) != len(guids):
             raise RuntimeError("Missing configured test characters")
+        candidates = None
+        if args.profile == "quest-life":
+            result = subprocess.run([sys.executable, str(source / "contrib/diagnostics/botlife_quest_candidates.py"),
+                                     "--config", str(args.config_dir / "worldserver.conf")],
+                                    capture_output=True, text=True, timeout=90)
+            if result.returncode:
+                raise RuntimeError("Full read-only candidate prefilter failed (credentials omitted)")
+            (args.run / "candidate-prefilter.tsv").write_text(result.stdout)
+            candidates = verify_candidate_roster(result.stdout, guids, quest_ids)
         git = ["git", "-c", f"safe.directory={source}", "-C", str(source)]
         (args.run / "source-changes.patch").write_bytes(subprocess.check_output([*git, "diff", "HEAD", "--binary"]))
         shutil.copy2(Path(__file__).resolve(), args.run / "controller.py")
         shutil.copy2(source / "contrib/diagnostics/botlife_schedule_observer.py", args.run / "observer.py")
         write_json(args.run / "manifest.json", dict(time=stamp(), guids=guids, seconds=args.seconds,
                    character_database=database, world_database=connections["WorldDatabaseInfo"][-1],
-                   initial=before, quest_id=args.quest_id, cooldown_seconds=60,
+                   initial=before, quest_id=quest_ids[0] if len(quest_ids) == 1 else None,
+                   quest_ids=quest_ids, profile_name=args.profile, cooldown_seconds=cooldown_ms / 1000,
+                   candidate_matches=candidates,
                    acceptance_profile=profile, log_timezone="UTC",
                    binary=str(args.binary), binary_sha256=hashlib.file_digest(args.binary.open("rb"), "sha256").hexdigest(),
                    revision=subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip(),
@@ -131,11 +186,11 @@ def main():
         })
         life = optional_overlay((source / "modules/mod_botlife/config/botlife.conf.dist").read_text(), {
             "AiPlayerbot.BotLife.Enabled": "1", "AiPlayerbot.BotLife.BotGuids": json.dumps(args.guids),
-            "AiPlayerbot.BotLife.Scheduler.Enabled": "1", "AiPlayerbot.BotLife.Scheduler.QuestIds": json.dumps(str(args.quest_id)),
-            "AiPlayerbot.BotLife.Scheduler.InitialSpread": "15000", "AiPlayerbot.BotLife.Scheduler.QuestDuration": "30000",
-            "AiPlayerbot.BotLife.Scheduler.OutingDuration": "30000",
+            "AiPlayerbot.BotLife.Scheduler.Enabled": "1", "AiPlayerbot.BotLife.Scheduler.QuestIds": json.dumps(",".join(map(str, quest_ids))),
+            "AiPlayerbot.BotLife.Scheduler.InitialSpread": "15000", "AiPlayerbot.BotLife.Scheduler.QuestDuration": str(quest_ms),
+            "AiPlayerbot.BotLife.Scheduler.OutingDuration": str(quest_ms),
             "AiPlayerbot.BotLife.Scheduler.QuestLimit": "1",
-            "AiPlayerbot.BotLife.Scheduler.DurationJitter": "5000", "AiPlayerbot.BotLife.Scheduler.OutingCooldown": "60000",
+            "AiPlayerbot.BotLife.Scheduler.DurationJitter": "5000", "AiPlayerbot.BotLife.Scheduler.OutingCooldown": str(cooldown_ms),
             "AiPlayerbot.BotLife.Scheduler.LeisureDuration": "30000", "AiPlayerbot.BotLife.Scheduler.Walk.Enabled": "1",
             "AiPlayerbot.BotLife.Scheduler.Walk.Duration": "60000",
         })
@@ -215,6 +270,7 @@ def main():
                    desync_samples=observer.desync_samples, acceptance_profile=profile,
                    desync_seconds=observer.desync_seconds(observation_end),
                    native_quest_execution_observed=all(row["native_quest_seconds"] > 0 for row in evidence.values()),
+                   objective_progress_observed=all(sum(row["objective_progress_events"].values()) > 0 for row in evidence.values()),
                    hour_criterion_closed=False))
         event("finished", error=error)
     if error:

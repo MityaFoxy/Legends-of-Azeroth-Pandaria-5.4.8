@@ -17,10 +17,12 @@ class ScheduleObserver:
                                last_outing_end=None, combat_pauses=0, combat_resumes=0,
                                quest_selections=0, quests_started=0, quests_completed=0,
                                quest_failures=Counter(), refusals=Counter(), activity_starts=Counter(),
+                               objective_progress_events=Counter(), objective_counts={},
                                max_outing_active_ms=0, max_outing_wall_seconds=0, travel_commands=0) for guid in guids}
         self.states = {guid: dict(activity=None, paused=False, native_quest=False, selected=False, ready_executor=False,
                                  last=None, seconds=Counter(), segments=[], native_seconds=0.0, pause_reason=None,
                                  quest_active_seconds=0.0, quest_wall_seconds=0.0, outing_started=None,
+                                 objective_counts={},
                                  outing_ms=0, continuing=False) for guid in guids}
 
     def begin(self, when):
@@ -87,6 +89,17 @@ class ScheduleObserver:
                     row["quest_failures"][fields.get("reason", "unknown")] += 1
                 elif measured and fields.get("result") == "completed" and fields.get("rewarded") == "true":
                     row["quests_completed"] += 1
+            elif fields.get("event") == "progress":
+                if state["activity"] != "QUEST" or not state["native_quest"] or state["paused"]:
+                    raise RuntimeError("Objective progress outside a running quest")
+                key = fields["quest"] + ":" + fields["objective"]
+                count = int(fields["count"])
+                previous = state["objective_counts"].get(key, 0)
+                if count > previous:
+                    state["objective_counts"][key] = count
+                    if measured:
+                        row["objective_counts"][key] = count
+                        row["objective_progress_events"][key] += 1
         elif "BotLife scheduled-quest " in line and fields.get("event") == "select":
             state["selected"] = "quest" in fields
             if not state["selected"]:
@@ -233,5 +246,9 @@ class ScheduleObserver:
                 raise RuntimeError("Quest outing exceeds the declared profile")
             if row["seconds"].get("UNOBSERVED", 0) > profile["max_unobserved_seconds"]:
                 raise RuntimeError("Incomplete activity coverage")
+            if row["native_quest_seconds"] < profile.get("min_native_quest_seconds", 0):
+                raise RuntimeError("Missing running native quest work")
+            if sum(row["objective_progress_events"].values()) < profile.get("min_objective_progress_events", 0):
+                raise RuntimeError("Missing actual objective progress")
         if len(self.rows) == 2 and self.desync_seconds(when) < profile["min_desync_seconds"]:
             raise RuntimeError("No observed interval with different bot activities")
