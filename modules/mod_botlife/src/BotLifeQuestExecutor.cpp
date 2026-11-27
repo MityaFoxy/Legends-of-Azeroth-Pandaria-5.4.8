@@ -4,6 +4,7 @@
 #include "BotLifeQuestHunt.h"
 #include "BotLifeQuestInteraction.h"
 #include "BotLifeQuestLoot.h"
+#include "BotLifeQuestObject.h"
 #include "BotLifeQuestTurnIn.h"
 #include "BotLifePreparation.h"
 #include "BotLifeProvisioning.h"
@@ -106,7 +107,7 @@ public:
         }
         if (_stage == QuestPlanStage::AwaitCompletion)
         {
-            // Native kill processing must mark Complete. Never manufacture completion.
+            // Native objective processing must mark Complete.
             if (GetMSTimeDiffToNow(_progressAt) >= 180000)
                 return Fail("native-completion-timeout");
             return ActivityResult::Running;
@@ -191,17 +192,7 @@ public:
             {
                 if (_visits >= 128)
                     return Fail("target-limit");
-                // A patrol veto is temporary. Recheck only after a cooldown,
-                // without forgetting permanent visits or resetting run budgets.
-                auto excluded = _visited;
-                for (auto it = _deferred.begin(); it != _deferred.end();)
-                    if (GetMSTimeDiffToNow(it->second) >= 45000)
-                        it = _deferred.erase(it);
-                    else
-                    {
-                        excluded.insert(it->first);
-                        ++it;
-                    }
+                auto const excluded = ExcludedSpawns();
                 std::optional<QuestSpawn> obstructed;
                 uint32 blocker = 0;
                 _target = _hunt.Choose(_data, player, excluded, &obstructed, &blocker);
@@ -238,13 +229,30 @@ public:
                 return ActivityResult::Running;
             }
         }
+        else if (_stage == QuestPlanStage::Interact)
+        {
+            if (!_target)
+            {
+                if (_visits >= 128)
+                    return Fail("target-limit");
+                auto const excluded = ExcludedSpawns();
+                _target = FindNearestQuestSpawn(_data.objectives.front().candidates, player, &excluded);
+            }
+            if (!_target)
+            {
+                if (_deferred.empty())
+                    return Fail("no-quest-object-candidate");
+                WaitForSafety();
+                return ActivityResult::Running;
+            }
+        }
         else if (!_target)
             _target = _stage == QuestPlanStage::Acquire ? plan.starter : plan.ender;
 
         if (!_target)
             return Fail("missing-target");
         _hunt.Safety().SetTarget(_stage == QuestPlanStage::Hunt ? _target->guid : 0);
-        if (!_hunt.Safety().CanApproach(*_target) || (_travel.ControlsMovement() && !_hunt.Safety().RouteSafe()))
+        if (!_hunt.Safety().CanApproach(RouteTarget()) || (_travel.ControlsMovement() && !_hunt.Safety().RouteSafe()))
         {
             if (std::strcmp(_hunt.Safety().Reason(), "hostile-on-route") == 0)
             {
@@ -254,7 +262,7 @@ public:
             }
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=unsafe-route spawn={}",
                 _guid, _data.questId, _target->guid);
-            if (_stage == QuestPlanStage::Hunt)
+            if (HasAlternativeSpawns())
                 DeferTarget();
             else
             {
@@ -262,6 +270,25 @@ public:
                 WaitForSafety();
             }
             return ActivityResult::Running;
+        }
+        char const* objectApproachRejection = nullptr;
+        if (_stage == QuestPlanStage::Interact)
+        {
+            GameObject* object = FindQuestObject(bot, *_target);
+            objectApproachRejection = QuestObjectApproachRejection(bot, object);
+            if (!objectApproachRejection)
+            {
+                _travel.Cancel();
+                CountVisit();
+                QuestObjectUseResult const use = TryUseQuestObject(bot, *object, _data);
+                TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=object spawn={} reason={}",
+                    _guid, _data.questId, _target->guid, use.reason);
+                if (use.retryable)
+                    DeferTarget(use.reason);
+                else
+                    RetireTarget();
+                return ActivityResult::Running;
+            }
         }
         if (!_travelling)
         {
@@ -288,18 +315,17 @@ public:
             {
                 TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=skip spawn={} reason={}",
                     _guid, _data.questId, _target->guid, ToString(_travel.GetFailure()));
-                if (_stage == QuestPlanStage::Hunt)
+                if (HasAlternativeSpawns())
                     DeferTarget();
                 else
                 {
-                    // Acquire/TurnIn have one authoritative interaction target. Hunt-style
-                    // retirement cannot select an alternative and otherwise hot-loops on it.
+                    // Acquire and TurnIn use the interaction target selected by the planner.
                     ClearTarget();
                     WaitForSafety();
                 }
                 return ActivityResult::Running;
             }
-            if (_stage != QuestPlanStage::Hunt || _travel.GetFailure() == TravelFailure::MovementLost ||
+            if (!HasAlternativeSpawns() || _travel.GetFailure() == TravelFailure::MovementLost ||
                 _travel.GetFailure() == TravelFailure::InvalidTarget || _travel.GetFailure() == TravelFailure::RecoveryExhausted)
                 return Fail(ToString(_travel.GetFailure()));
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=skip spawn={} reason={}",
@@ -314,6 +340,13 @@ public:
             {
                 CountVisit(); // Includes inspecting a spawn location already underfoot.
                 RetireTarget(); // No live eligible target at the cached location; try another spawn.
+            }
+            else if (_stage == QuestPlanStage::Interact)
+            {
+                CountVisit();
+                TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=object spawn={} reason={}",
+                    _guid, _data.questId, _target->guid, objectApproachRejection);
+                RetireTarget();
             }
             else if (_stage == QuestPlanStage::Acquire)
             {
@@ -377,7 +410,7 @@ public:
             ++_deaths;
             _preparation.Pause();
             _hunt.Safety().RememberDeath();
-            DeferTarget(false); // Death memory owns retry policy; this is not a route failure.
+            DeferTarget(nullptr); // Death memory owns retry policy.
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=death-wait deaths={}",
                 _guid, _data.questId, _deaths);
         }
@@ -412,6 +445,35 @@ public:
     }
 
 private:
+    bool HasAlternativeSpawns() const
+    {
+        return _stage == QuestPlanStage::Hunt || _stage == QuestPlanStage::Interact;
+    }
+
+    std::unordered_set<uint32_t> ExcludedSpawns()
+    {
+        // Recheck a patrol veto after a cooldown, preserving permanent visits and budgets.
+        auto excluded = _visited;
+        for (auto it = _deferred.begin(); it != _deferred.end();)
+            if (GetMSTimeDiffToNow(it->second) >= 45000)
+                it = _deferred.erase(it);
+            else
+            {
+                excluded.insert(it->first);
+                ++it;
+            }
+        return excluded;
+    }
+
+    QuestSpawn RouteTarget() const
+    {
+        QuestSpawn destination = *_target;
+        // The safety layer resolves creature entries. A gameobject is a fixed destination.
+        if (_stage == QuestPlanStage::Interact)
+            destination.entry = 0;
+        return destination;
+    }
+
     void FinishHuntCombat(Player& bot)
     {
         if (_data.HasLootObjective() && FindQuestCorpse(bot, _engagedGuid, *_target))
@@ -502,7 +564,7 @@ private:
         {
             TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=retire spawn={} reason=blocker-already-attempted blocker={}",
                 _guid, _data.questId, _target ? _target->guid : 0, blocker);
-            if (_stage == QuestPlanStage::Hunt)
+            if (HasAlternativeSpawns())
                 RetireTarget();
             else
             {
@@ -524,7 +586,7 @@ private:
         if (!_target || _detourAttempts >= 8 || _hunt.IsFighting())
             return false;
         _hunt.Safety().SetTarget(_stage == QuestPlanStage::Hunt ? _target->guid : 0);
-        auto point = _hunt.Safety().FindDetour(*_target);
+        auto point = _hunt.Safety().FindDetour(RouteTarget());
         if (!point)
         {
             if (_hunt.Safety().DetourPending())
@@ -562,22 +624,20 @@ private:
         {
             _visited.insert(_target->guid);
             _deferred.erase(_target->guid);
-            _routeFailures.erase(_target->guid);
+            _spawnFailures.erase(_target->guid);
         }
         ClearTarget();
     }
-    void DeferTarget(bool routeFailure = true)
+    void DeferTarget(char const* failure = "repeated-unsafe-route")
     {
         if (_target)
         {
             uint32 const spawn = _target->guid;
-            if (routeFailure && ++_routeFailures[spawn] >= 2)
+            if (failure && ++_spawnFailures[spawn] >= 2)
             {
-                TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=retire spawn={} reason=repeated-unsafe-route failures={}",
-                    _guid, _data.questId, spawn, _routeFailures[spawn]);
-                _visited.insert(spawn);
-                _deferred.erase(spawn);
-                ClearTarget();
+                TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=retire spawn={} reason={} failures={}",
+                    _guid, _data.questId, spawn, failure, _spawnFailures[spawn]);
+                RetireTarget();
                 return;
             }
             _deferred[spawn] = getMSTime();
@@ -609,7 +669,7 @@ private:
     std::unordered_set<uint32_t> _visited;
     std::unordered_set<uint32_t> _countedVisits;
     std::unordered_map<uint32_t, uint32_t> _deferred;
-    std::unordered_map<uint32_t, uint32_t> _routeFailures;
+    std::unordered_map<uint32_t, uint32_t> _spawnFailures;
     std::unordered_map<uint32_t, uint32_t> _counters;
     QuestPlanStage _stage = QuestPlanStage::Rejected;
     ActivityResult _result = ActivityResult::Failed;

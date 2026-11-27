@@ -19,6 +19,7 @@ struct CombatAdmission
 class QuestHunt final : private AttackAction
 {
 public:
+    static constexpr float EngagementDistance = 20.0f;
     explicit QuestHunt(PlayerbotAI& ai) : AttackAction(&ai, "botlife quest hunt"), _safety(*bot) { }
     QuestSafety& Safety() { return _safety; }
     std::optional<QuestSpawn> Choose(QuestPlanData const& data, QuestPlayerSnapshot const& player,

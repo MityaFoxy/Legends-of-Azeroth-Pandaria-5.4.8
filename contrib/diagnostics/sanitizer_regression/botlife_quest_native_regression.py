@@ -29,8 +29,9 @@ def definition(source, signature):
 for forbidden in ("AddQuest(", "CompleteQuest(", "KilledMonsterCredit(", "RewardQuest(",
                   "MoveTo(", "TeleportTo(", "SetQuestStatus(", "CanAddQuest("):
     assert forbidden not in re.sub(r"//[^\n]*", "", native + diagnostic), forbidden
-assert native.count("WorldDatabase.") == 2
+assert native.count("WorldDatabase.") == 3
 assert "l.lootmode=0 OR (l.lootmode & 1)" in native
+assert "pool_gameobject" in native and "game_event_gameobject" in native
 reader = definition(native, "QuestPlayerSnapshot ReadQuestPlayer(")
 assert "WorldDatabase" not in reader
 assert "LIMIT 4097" in native and "GetRowCount() > 4096" in native
@@ -169,6 +170,10 @@ int main()
     Quest mixed = quest;
     mixed.objectives.push_back({11, 42, QUEST_OBJECTIVE_MONSTER, 1, 201, 5, 0, {}, {}});
     assert(!Supported(mixed, true));
+    obj.Type = QUEST_OBJECTIVE_GAMEOBJECT;
+    assert(!Supported(quest, true)); // First object slice requires exactly one credit.
+    obj.Amount = 1;
+    assert(!Supported(quest) && Supported(quest, true));
     obj.Type = QUEST_OBJECTIVE_MONSTER;
     obj.Amount = -1;
     assert(!Supported(quest));
@@ -260,7 +265,8 @@ int main()
 with tempfile.TemporaryDirectory(prefix="botlife-quest-native-") as temp:
     cpp = pathlib.Path(temp) / "test.cpp"
     exe = pathlib.Path(temp) / "test"
-    cpp.write_text(prefix + enums + objective + mocks + definition(native, "bool Supported(") +
+    cpp.write_text(prefix + enums + objective + mocks + definition(native, "QuestObjectiveKind ObjectiveKind(") +
+                   definition(native, "bool Supported(") +
                    reader + definition(diagnostic, "void LoadQuestPlanConfig()") +
                    definition(diagnostic, "uint32_t GetQuestPlanBotGuid()") + tests)
     subprocess.run([compiler, "-std=c++20", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",

@@ -5,11 +5,12 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace BotLife
 {
-enum class QuestPlanStage { Rejected, Acquire, Hunt, AwaitCompletion, TurnIn, Done };
+enum class QuestPlanStage { Rejected, Acquire, Hunt, Interact, AwaitCompletion, TurnIn, Done };
 enum class QuestProgress { NotTaken, Active, Complete, Failed, Rewarded };
 enum class QuestPlanReason
 {
@@ -25,7 +26,7 @@ struct QuestSpawn
     float x = 0, y = 0, z = 0;
 };
 
-enum class QuestObjectiveKind { Kill, Loot };
+enum class QuestObjectiveKind { Kill, Loot, GameObject };
 
 struct QuestObjectiveData
 {
@@ -44,6 +45,7 @@ struct QuestPlanData
     std::vector<QuestObjectiveData> objectives;
 
     bool HasLootObjective() const { return !objectives.empty() && objectives.front().kind == QuestObjectiveKind::Loot; }
+    bool HasObjectObjective() const { return !objectives.empty() && objectives.front().kind == QuestObjectiveKind::GameObject; }
 };
 
 struct QuestPlayerSnapshot
@@ -72,6 +74,8 @@ struct QuestPlan
 };
 
 QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& player);
+std::optional<QuestSpawn> FindNearestQuestSpawn(std::vector<QuestSpawn> const& candidates, QuestPlayerSnapshot const& player,
+    std::unordered_set<uint32_t> const* excluded = nullptr);
 char const* ToString(QuestPlanStage stage);
 char const* ToString(QuestPlanReason reason);
 }

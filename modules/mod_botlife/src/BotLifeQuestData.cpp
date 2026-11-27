@@ -1,4 +1,5 @@
 #include "BotLifeQuestData.h"
+#include "BotLifeQuestObject.h"
 
 #include <algorithm>
 #include <set>
@@ -7,6 +8,7 @@
 #include "Creature.h"
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
+#include "GameObject.h"
 #include "Map.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -16,7 +18,16 @@ namespace BotLife
 {
 namespace
 {
-bool Supported(Quest const& quest, bool allowLoot = false)
+QuestObjectiveKind ObjectiveKind(uint8 type)
+{
+    if (type == QUEST_OBJECTIVE_ITEM)
+        return QuestObjectiveKind::Loot;
+    if (type == QUEST_OBJECTIVE_GAMEOBJECT)
+        return QuestObjectiveKind::GameObject;
+    return QuestObjectiveKind::Kill;
+}
+
+bool Supported(Quest const& quest, bool allowSoloObjective = false)
 {
     // Stage 4 deliberately excludes event, timed, repeatable, scripted and item-use quests.
     uint32 const unsupportedFlags = QUEST_FLAGS_COMPLETION_AREA_TRIGGER | QUEST_FLAGS_TRACKING_EVENT |
@@ -31,8 +42,8 @@ bool Supported(Quest const& quest, bool allowLoot = false)
     std::set<uint32> ids;
     std::set<int8> slots;
     for (QuestObjective const& objective : quest.GetObjectives())
-        if ((objective.Type != QUEST_OBJECTIVE_MONSTER &&
-            !(allowLoot && quest.GetObjectives().size() == 1 && objective.Type == QUEST_OBJECTIVE_ITEM)) ||
+        if ((objective.Type != QUEST_OBJECTIVE_MONSTER && !(allowSoloObjective && quest.GetObjectives().size() == 1 &&
+            (objective.Type == QUEST_OBJECTIVE_ITEM || (objective.Type == QUEST_OBJECTIVE_GAMEOBJECT && objective.Amount == 1)))) ||
             !objective.ID || objective.ObjectID <= 0 ||
             objective.Amount <= 0 || objective.Flags || objective.StorageIndex < 0 ||
             objective.StorageIndex >= QUEST_OBJECTIVES_COUNT || !ids.insert(objective.ID).second ||
@@ -40,9 +51,44 @@ bool Supported(Quest const& quest, bool allowLoot = false)
             return false;
     return true;
 }
+
+void LoadObjectCandidates(QuestPlanData& data)
+{
+    QuestObjectiveData& objective = data.objectives.front();
+    GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(objective.entry);
+    if (!info || !IsSupportedQuestObject(*info, data.questId))
+        return;
+
+    data.error = QuestPlanReason::None;
+    QueryResult rows = WorldDatabase.PQuery(
+        "SELECT g.guid FROM gameobject g WHERE g.id={} "
+        "AND NOT EXISTS (SELECT 1 FROM game_event_gameobject e WHERE e.guid=g.guid) "
+        "AND NOT EXISTS (SELECT 1 FROM pool_gameobject p WHERE p.guid=g.guid) LIMIT 4097", objective.entry);
+    if (!rows)
+        return;
+    if (rows->GetRowCount() > 4096)
+    {
+        data.error = QuestPlanReason::DataLimit;
+        return;
+    }
+    do
+    {
+        uint32 const guid = rows->Fetch()[0].GetUInt32();
+        GameObjectData const* spawn = sObjectMgr->GetGOData(guid);
+        if (!spawn || spawn->id != objective.entry || spawn->phaseid || spawn->phaseGroup || !spawn->phaseMask ||
+            !(spawn->spawnMask & 1) || spawn->ScriptId || spawn->gameEventId || spawn->spawntimesecs < 0 ||
+            spawn->go_state != GO_STATE_READY)
+            continue;
+        MapEntry const* map = sMapStore.LookupEntry(spawn->mapid);
+        if (!map || map->Instanceable() || !Trinity::IsValidMapCoord(spawn->posX, spawn->posY, spawn->posZ))
+            continue;
+        objective.candidates.push_back({guid, spawn->id, spawn->mapid, spawn->phaseMask,
+            spawn->posX, spawn->posY, spawn->posZ});
+    } while (rows->NextRow());
+}
 }
 
-QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowLoot)
+QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowSoloObjective)
 {
     QuestPlanData data;
     data.questId = questId;
@@ -51,11 +97,16 @@ QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowLoot)
         return data;
     data.title = quest->GetLogTitle();
     data.error = QuestPlanReason::UnsupportedQuest;
-    if (!Supported(*quest, allowLoot))
+    if (!Supported(*quest, allowSoloObjective))
         return data;
     for (QuestObjective const& objective : quest->GetObjectives())
-        data.objectives.push_back({objective.ID, uint32(objective.ObjectID), uint32(objective.Amount), {},
-            objective.Type == QUEST_OBJECTIVE_ITEM ? QuestObjectiveKind::Loot : QuestObjectiveKind::Kill});
+        data.objectives.push_back({objective.ID, uint32(objective.ObjectID), uint32(objective.Amount), {}, ObjectiveKind(objective.Type)});
+    if (data.HasObjectObjective())
+    {
+        LoadObjectCandidates(data);
+        if (data.error != QuestPlanReason::None)
+            return data;
+    }
 
     std::set<uint32> starters, enders, entries;
     for (auto const& relation : *sObjectMgr->GetCreatureQuestRelationMapHACK())
@@ -91,7 +142,7 @@ QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowLoot)
             } while (drops->NextRow());
         }
     }
-    else
+    else if (!data.HasObjectObjective())
     {
         // Native KillCredit aliases need not have a spawn of their own.
         for (auto const& [entry, creature] : *sObjectMgr->GetCreatureTemplates())
@@ -165,7 +216,8 @@ QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const& data, Player& player)
         return snapshot;
     Quest const* quest = sObjectMgr->GetQuestTemplate(data.questId);
     // No retained core pointers, and fail closed if objectives were reloaded.
-    if (!quest || !Supported(*quest, data.HasLootObjective()) || quest->GetObjectives().size() != data.objectives.size())
+    if (!quest || !Supported(*quest, data.HasLootObjective() || data.HasObjectObjective()) ||
+        quest->GetObjectives().size() != data.objectives.size())
     {
         snapshot.eligibility = QuestPlanReason::CatalogChanged;
         return snapshot;
@@ -174,8 +226,7 @@ QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const& data, Player& player)
     {
         QuestObjective const& objective = quest->GetObjectives()[i];
         QuestObjectiveData const& cached = data.objectives[i];
-        uint8 const expectedType = cached.kind == QuestObjectiveKind::Loot ? QUEST_OBJECTIVE_ITEM : QUEST_OBJECTIVE_MONSTER;
-        if (objective.Type != expectedType || objective.ID != cached.id ||
+        if (ObjectiveKind(objective.Type) != cached.kind || objective.ID != cached.id ||
             uint32(objective.ObjectID) != cached.entry || uint32(objective.Amount) != cached.amount)
         {
             snapshot.eligibility = QuestPlanReason::CatalogChanged;

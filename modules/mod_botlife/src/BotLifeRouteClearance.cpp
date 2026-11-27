@@ -65,7 +65,7 @@ bool RouteClearance::Start(uint32_t blocker)
             _bot.GetGUID().GetCounter(), blocker, distance, approach.x, approach.y, approach.z);
     }
     _target = target;
-    _engaged = _combatStarted = false;
+    _engaged = _combatStarted = _triedEngagementApproach = false;
     _travel.Start({_bot.GetMapId(), _bot.GetInstanceId(), _bot.GetPhaseMask(), approach.x, approach.y, approach.z, 1.0f});
     return true;
 }
@@ -141,11 +141,42 @@ ClearanceResult RouteClearance::Update(uint32_t elapsed)
     if (_travel.GetStatus() == TravelStatus::Paused && !_travel.Resume())
         return Finish(false, "resume-refused");
     if (_travel.ControlsMovement() && !_hunt.Safety().RouteSafe())
-        return Finish(false, "unsafe-route");
+        return TryEngagementApproach(*current) ? ClearanceResult::Running : Finish(false, "unsafe-route");
     auto const status = _travel.Update(elapsed);
     if (status == TravelStatus::Failed || status == TravelStatus::Cancelled || status == TravelStatus::Arrived)
+    {
+        if (_travel.GetFailure() == TravelFailure::UnsafeRoute)
+        {
+            TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=approach-rejected spawn={} detail={} obstruction={}",
+                _bot.GetGUID().GetCounter(), current->guid, _hunt.Safety().Reason(), _hunt.Safety().Blocker());
+            return TryEngagementApproach(*current) ? ClearanceResult::Running : Finish(false, "unsafe-route");
+        }
         return Finish(false, "approach-failed");
+    }
     return ClearanceResult::Running;
+}
+
+bool RouteClearance::TryEngagementApproach(QuestSpawn const& target)
+{
+    if (_staging || _triedEngagementApproach)
+        return false;
+    float const x = _bot.GetPositionX(), y = _bot.GetPositionY(), z = _bot.GetPositionZ();
+    float const dx = target.x - x, dy = target.y - y, dz = target.z - z;
+    float const distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!std::isfinite(distance) || distance <= QuestHunt::EngagementDistance)
+        return false;
+
+    // Stop inside the ordinary engage range. Native travel validates the new
+    // corridor and CanEngage still checks LOS and the current encounter.
+    float const fraction = (distance - (QuestHunt::EngagementDistance - 2.0f)) / distance;
+    TravelTarget approach{_bot.GetMapId(), _bot.GetInstanceId(), _bot.GetPhaseMask(),
+        x + dx * fraction, y + dy * fraction, z + dz * fraction, 1.0f};
+    _bot.UpdateAllowedPositionZ(approach.x, approach.y, approach.z);
+    _triedEngagementApproach = true;
+    _travel.Start(approach);
+    TC_LOG_INFO("playerbots.botlife", "BotLife clearance guid={} event=engagement-approach spawn={} to=({},{},{})",
+        _bot.GetGUID().GetCounter(), target.guid, approach.x, approach.y, approach.z);
+    return true;
 }
 
 void RouteClearance::Pause() { _travel.Pause(); }

@@ -145,7 +145,7 @@ bool QuestHunt::CanEngage(QuestSpawn const& target, bool allowAssistance) const
         !bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_LOST_CONTROL) &&
         !bot->IsNonMeleeSpellCasted(false) && _safety.CanApproach(target, allowAssistance) &&
         CanAttemptGroup(*npc).allowed &&
-        bot->IsWithinDistInMap(npc, 20.0f) && bot->IsWithinLOSInMap(npc);
+        bot->IsWithinDistInMap(npc, EngagementDistance) && bot->IsWithinLOSInMap(npc);
 }
 
 bool QuestHunt::Engage(QuestSpawn const& target, bool allowAssistance, ObjectGuid* engagedGuid)

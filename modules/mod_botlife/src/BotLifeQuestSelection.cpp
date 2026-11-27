@@ -16,6 +16,7 @@ uint8_t Priority(QuestPlanStage stage)
         case QuestPlanStage::Hunt: return 1;
         case QuestPlanStage::AwaitCompletion: return 2;
         case QuestPlanStage::Acquire: return 3;
+        case QuestPlanStage::Interact:
         case QuestPlanStage::Rejected:
         case QuestPlanStage::Done:
             return std::numeric_limits<uint8_t>::max();

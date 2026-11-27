@@ -25,6 +25,7 @@ public:
     bool HoldsNonCombat() const { return Active() && !_engaged; }
     bool ControlsMovement() const { return _travel.ControlsMovement(); }
 private:
+    bool TryEngagementApproach(QuestSpawn const& target);
     ClearanceResult Finish(bool success, char const* reason);
     Player& _bot;
     QuestHunt& _hunt;
@@ -34,7 +35,7 @@ private:
     QuestSpawn _stagingPoint{};
     std::unordered_set<uint32_t> _attempted;
     uint32_t _engagedAt = 0, _checkedAt = 0;
-    bool _engaged = false, _combatStarted = false, _checked = false, _staging = false;
+    bool _engaged = false, _combatStarted = false, _checked = false, _staging = false, _triedEngagementApproach = false;
 };
 }
 #endif

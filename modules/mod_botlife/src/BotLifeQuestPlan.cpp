@@ -6,15 +6,15 @@
 
 namespace BotLife
 {
-namespace
-{
-std::optional<QuestSpawn> Nearest(std::vector<QuestSpawn> const& candidates, QuestPlayerSnapshot const& player)
+std::optional<QuestSpawn> FindNearestQuestSpawn(std::vector<QuestSpawn> const& candidates, QuestPlayerSnapshot const& player,
+    std::unordered_set<uint32_t> const* excluded)
 {
     std::optional<QuestSpawn> best;
     double bestDistance = std::numeric_limits<double>::infinity();
     for (QuestSpawn const& spawn : candidates)
     {
-        if (spawn.mapId != player.mapId || !(spawn.phaseMask & player.phaseMask) || !spawn.guid || !spawn.entry)
+        if (spawn.mapId != player.mapId || !(spawn.phaseMask & player.phaseMask) || !spawn.guid || !spawn.entry ||
+            (excluded && excluded->count(spawn.guid)))
             continue;
         double const dx = double(spawn.x) - player.x, dy = double(spawn.y) - player.y, dz = double(spawn.z) - player.z;
         double const distance = dx * dx + dy * dy + dz * dz;
@@ -26,7 +26,6 @@ std::optional<QuestSpawn> Nearest(std::vector<QuestSpawn> const& candidates, Que
         }
     }
     return best;
-}
 }
 
 QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& player)
@@ -50,8 +49,8 @@ QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& p
         return reject(player.eligibility);
 
     bool const acquire = player.progress == QuestProgress::NotTaken;
-    plan.starter = Nearest(data.starters, player);
-    plan.ender = Nearest(data.enders, player);
+    plan.starter = FindNearestQuestSpawn(data.starters, player);
+    plan.ender = FindNearestQuestSpawn(data.enders, player);
     if (acquire && !plan.starter)
         return reject(QuestPlanReason::MissingStarter);
     if (!plan.ender)
@@ -65,7 +64,7 @@ QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& p
         uint32_t const left = player.progress == QuestProgress::Complete ? 0 :
             objective.amount - std::min(objective.amount, done);
         plan.objectives.push_back({objective.id, objective.entry, objective.amount, left,
-            left ? Nearest(objective.candidates, player) : std::nullopt});
+            left ? FindNearestQuestSpawn(objective.candidates, player) : std::nullopt});
         remaining |= left != 0;
     }
     for (QuestObjectivePlan const& objective : plan.objectives)
@@ -76,8 +75,10 @@ QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& p
         plan.stage = QuestPlanStage::Acquire;
     else if (player.progress == QuestProgress::Complete)
         plan.stage = QuestPlanStage::TurnIn;
+    else if (!remaining)
+        plan.stage = QuestPlanStage::AwaitCompletion;
     else
-        plan.stage = remaining ? QuestPlanStage::Hunt : QuestPlanStage::AwaitCompletion;
+        plan.stage = data.HasObjectObjective() ? QuestPlanStage::Interact : QuestPlanStage::Hunt;
     return plan;
 }
 
@@ -88,6 +89,7 @@ char const* ToString(QuestPlanStage stage)
         case QuestPlanStage::Rejected: return "Rejected";
         case QuestPlanStage::Acquire: return "Acquire";
         case QuestPlanStage::Hunt: return "Hunt";
+        case QuestPlanStage::Interact: return "Interact";
         case QuestPlanStage::AwaitCompletion: return "AwaitCompletion";
         case QuestPlanStage::TurnIn: return "TurnIn";
         case QuestPlanStage::Done: return "Done";

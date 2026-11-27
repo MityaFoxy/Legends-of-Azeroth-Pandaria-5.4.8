@@ -66,6 +66,18 @@ def new_evidence(roster, turn_in_only=False):
             for guid, quest in roster.items()}
 
 
+def observe_quest_log(text, roster, evidence, seen_online, event):
+    sample_now = False
+    for line in text.splitlines():
+        observed = observe(line, roster, evidence)
+        if observed:
+            guid, kind = observed
+            event("quest_event", guid=guid, kind=kind, detail=line)
+            if kind in ("finish", "cancel") and guid not in seen_online:
+                sample_now = True
+    return sample_now
+
+
 def quest_preflight_error(snapshot, turn_in_only=False):
     statuses = ("1",) if turn_in_only else ("", "3")
     if not snapshot["character"] or snapshot["rewarded"] != "0" or snapshot["active"] not in statuses:
@@ -345,13 +357,11 @@ def main():
                 requested.append(guid)
                 next_login = now + 30
                 event("login_requested", guid=guid)
-            for line in reader.read_lines(logs / "BotLife.log").splitlines():
-                observed = observe(line, roster, evidence)
-                if observed:
-                    event("quest_event", guid=observed[0], kind=observed[1], detail=line)
+            sample_now = observe_quest_log(reader.read_lines(logs / "BotLife.log"),
+                                           roster, evidence, seen_online, event)
             if args.behavior_observation:
                 observe_behavior(reader.read_lines(logs / "Behavior.log"), roster, evidence)
-            if now >= sample_at:
+            if sample_now or now >= sample_at:
                 population = online()
                 if population - set(requested):
                     raise RuntimeError("Unexpected online character")

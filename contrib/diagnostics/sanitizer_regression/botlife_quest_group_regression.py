@@ -11,7 +11,7 @@ sys.path.insert(0, str(root / "contrib/diagnostics"))
 from unittest.mock import Mock
 import signal
 import subprocess
-from botlife_quest_group_smoke import (behavior_observation_error, new_evidence, observe, observe_behavior,
+from botlife_quest_group_smoke import (behavior_observation_error, new_evidence, observe, observe_behavior, observe_quest_log,
                                        observation_error, parse_assignments, preparation_error,
                                        quest_preflight_error, stop_server)
 from botlife_quest_group_smoke import terminal_observation_finished
@@ -38,6 +38,19 @@ class GroupObserverTests(unittest.TestCase):
         self.emit(22, "event=start resumed=true")
         self.emit(22, "event=finish result=failed rewarded=false reason=quest-timeout")
         self.assertFalse(self.rows[22]["success"])
+
+    def test_immediate_turn_in_requests_sample_before_finishing(self):
+        roster = {756: 26717}
+        log = "\n".join(f"quest-run guid=756 quest=26717 {event}" for event in (
+            "event=start resumed=true", "event=stage stage=TurnIn",
+            "event=finish result=completed rewarded=true reason=rewarded"))
+        for seen_online in (set(), {756}):
+            rows = new_evidence(roster, True)
+            emit = Mock()
+            self.assertEqual(observe_quest_log(log, roster, rows, seen_online, emit), not seen_online)
+            self.assertEqual(emit.call_count, 3)
+            self.assertTrue(rows[756]["success"])
+            self.assertEqual(observation_error(roster, rows, seen_online) is None, bool(seen_online))
 
     def test_preflight_rejects_naked_character_without_mutating_it(self):
         self.assertIsNotNone(preparation_error(dict(level="56", equipment_slots="")))

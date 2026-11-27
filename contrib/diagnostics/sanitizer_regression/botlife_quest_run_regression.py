@@ -21,6 +21,7 @@ assert "AiPlayerbot.BotLife.QuestRun.Enabled = 0" in (module.parent / "config/bo
 
 mocks = r'''
 #include "BotLife.h"
+#include "BotLifeQuestObject.h"
 #include "BotLifeQuestPlan.h"
 #include "BotLifeTravel.h"
 #include "BotLifeQuestRoster.h"
@@ -87,6 +88,10 @@ struct Config {
 auto* sConfigMgr=&config;
 struct Creature;
 struct Player;
+struct GameObject {
+    bool near=true;
+    bool IsAtInteractDistance(Player*) const { return near; }
+};
 struct Guid { uint32 value=0; uint32 GetCounter() const { return value; } };
 using ObjectGuid=Guid;
 struct Map {
@@ -121,6 +126,7 @@ struct Player : DamageStats {
     Map map;
     Motion motion; Spline spline; Spline* movespline=&spline;
     Motion* GetMotionMaster() { return &motion; }
+    void UpdateAllowedPositionZ(float, float, float&) const { }
     bool world=true,removing=false,group=false,combat=false,casting=false,autorepeat=false,mounted=false;
     bool visible=true,los=true,validAttack=true,interact=true,eligibleReward=true,inventory=true,rewardEffect=true;
     uint32 state=0,rewards=0,accepts=0,checks=0,inventoryChecks=0,lootAttempts=0;
@@ -151,6 +157,7 @@ struct Player : DamageStats {
     bool CanSeeOrDetect(Creature*) const { return visible; }
     bool IsValidAttackTarget(Creature*) const { return validAttack; }
     bool IsWithinLOSInMap(Creature*) const { return los; }
+    bool IsWithinLOSInMap(GameObject*) const { return los; }
     bool IsWithinDistInMap(Creature* npc,float r) const {
       float dx=npc->x-snapshot.x,dy=npc->y-snapshot.y,dz=npc->z-snapshot.z;
       return dx*dx+dy*dy+dz*dz <= r*r;
@@ -211,6 +218,23 @@ char const* TryLootQuestItem(Player& bot, Creature&, QuestPlanData const& data) 
     ++bot.lootAttempts;
     ++bot.snapshot.counters[data.objectives.front().id];
     return "looted";
+}
+GameObject questObject;
+bool objectBusy=false;
+uint32 objectChecks=0;
+GameObject* FindQuestObject(Player&, QuestSpawn const& target) {
+    return target.guid==12 ? &questObject : nullptr;
+}
+char const* QuestObjectApproachRejection(Player& bot, GameObject const* object) {
+    if (!object) return "object-unavailable";
+    if (!object->near) return "object-out-of-range";
+    return bot.los ? nullptr : "object-line-of-sight-blocked";
+}
+QuestObjectUseResult TryUseQuestObject(Player& bot, GameObject&, QuestPlanData const& data) {
+    ++objectChecks;
+    if (objectBusy) return {"object-not-ready",true};
+    ++bot.snapshot.counters[data.objectives.front().id];
+    return {"used"};
 }
 bool TryAcceptQuest(Player& bot,QuestPlanData const&,QuestSpawn const&,char const*& reason) {
     ++bot.accepts; bot.snapshot.progress=QuestProgress::Active; reason="accepted"; return true;
@@ -285,6 +309,7 @@ struct Scene {
       QuestSafety::safe=QuestSafety::stagingSafe=true; QuestSafety::offerDetour=QuestSafety::pendingDetour=false;
       QuestSafety::blockedTarget=QuestSafety::blocker=0;
       manager={}; allowed=true; eligible={6}; clockMs=1;
+      questObject.near=true; objectBusy=false; objectChecks=0;
       NativeTravelMovement::moves=0; NativeTravelMovement::route=NativeTravelMovement::valid=true;
       NativeTravelMovement::lost=NativeTravelMovement::unsafe=NativeTravelMovement::blocked=false;
       giver.map=enemy.map=&bot.map; giver.x=100; enemy.x=10; enemy.entry=30;
@@ -399,9 +424,21 @@ int main() {
     { Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
       assert(clear.Start(11)); s.enemy.level=15;
       assert(clear.Update(1)==ClearanceResult::Failed && !s.ai.attacks); }
-    { Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
+    for (bool unsafeApproach : {false, true}) {
+      Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
       s.enemy.x=40; assert(clear.Start(11)); NativeTravelMovement::unsafe=true;
-      assert(clear.Update(1)==ClearanceResult::Failed && !clear.ControlsMovement() && !s.ai.attacks); }
+      assert(clear.Update(1)==ClearanceResult::Running && !clear.ControlsMovement() && !s.ai.attacks);
+      NativeTravelMovement::unsafe=unsafeApproach;
+      auto const result=clear.Update(1);
+      assert(NativeTravelMovement::moves==2 && NativeTravelMovement::lastTarget.x==22 && !s.ai.attacks);
+      if (unsafeApproach)
+        assert(result==ClearanceResult::Failed && !clear.Active() && !clear.ControlsMovement());
+      else {
+        assert(result==ClearanceResult::Running && clear.ControlsMovement());
+        s.bot.snapshot.x=22;
+        assert(clear.Update(1)==ClearanceResult::Running && s.ai.attacks==1 && !clear.ControlsMovement());
+      }
+    }
     for(int mode=0;mode<6;++mode) {
       Scene s; QuestHunt hunt(s.ai); RouteClearance clear(s.ai,hunt);
       switch(mode) { case 0:s.enemy.combat=true;break; case 1:s.enemy.taps.insert(9);break;
@@ -566,6 +603,26 @@ int main() {
       s.start(); s.tick(); s.enemy.alive=false; s.bot.victim=nullptr; s.ai.state=0;
       assert(s.run->Resume(s.ai));
       s.tick(); assert(!s.bot.lootAttempts && s.bot.snapshot.counters.empty()); }
+    { Scene s; s.data.objectives={{1,40,1,{{12,40,1,1,10,0,0}},QuestObjectiveKind::GameObject}};
+      questObject.near=false; s.start();
+      assert(s.tick()==ActivityResult::Running && s.run->ControlsMovement() && !s.ai.attacks);
+      questObject.near=true; s.bot.snapshot.x=10;
+      assert(s.tick()==ActivityResult::Running && s.bot.snapshot.counters[1]==1 && !s.bot.rewards);
+      assert(s.tick()==ActivityResult::Running && s.bot.snapshot.counters[1]==1 && !s.ai.attacks);
+      s.bot.snapshot.progress=QuestProgress::Complete; s.bot.snapshot.x=100;
+      assert(s.tick()==ActivityResult::Completed && s.bot.rewards==1); }
+    for (bool stillBusy : {false,true}) {
+      Scene s; s.data.objectives={{1,40,1,{{12,40,1,1,10,0,0}},QuestObjectiveKind::GameObject}};
+      s.bot.snapshot.x=10; objectBusy=true; s.start();
+      assert(s.tick()==ActivityResult::Running && objectChecks==1 && s.bot.snapshot.counters.empty());
+      objectBusy=stillBusy;
+      assert(s.tick(44999)==ActivityResult::Running && objectChecks==1);
+      assert(s.tick()==ActivityResult::Running && objectChecks==2);
+      if (stillBusy)
+        assert(s.tick()==ActivityResult::Failed && objectChecks==2 && s.bot.snapshot.counters.empty());
+      else
+        assert(s.tick()==ActivityResult::Running && objectChecks==2 && s.bot.snapshot.counters[1]==1);
+    }
     // New quest acquisition is one stage, never the terminal result.
     { Scene s; s.bot.snapshot.progress=QuestProgress::NotTaken; s.bot.snapshot.x=100; s.start();
       assert(s.tick()==ActivityResult::Running && s.bot.accepts==1 && !s.bot.rewards);
