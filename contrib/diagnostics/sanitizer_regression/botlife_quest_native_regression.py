@@ -29,7 +29,8 @@ def definition(source, signature):
 for forbidden in ("AddQuest(", "CompleteQuest(", "KilledMonsterCredit(", "RewardQuest(",
                   "MoveTo(", "TeleportTo(", "SetQuestStatus(", "CanAddQuest("):
     assert forbidden not in re.sub(r"//[^\n]*", "", native + diagnostic), forbidden
-assert native.count("WorldDatabase.") == 1
+assert native.count("WorldDatabase.") == 2
+assert "l.lootmode=0 OR (l.lootmode & 1)" in native
 reader = definition(native, "QuestPlayerSnapshot ReadQuestPlayer(")
 assert "WorldDatabase" not in reader
 assert "LIMIT 4097" in native and "GetRowCount() > 4096" in native
@@ -162,7 +163,12 @@ int main()
     {
         obj.Type = type;
         assert(!Supported(quest));
+        assert(Supported(quest, true) == (type == QUEST_OBJECTIVE_ITEM));
     }
+    obj.Type = QUEST_OBJECTIVE_ITEM;
+    Quest mixed = quest;
+    mixed.objectives.push_back({11, 42, QUEST_OBJECTIVE_MONSTER, 1, 201, 5, 0, {}, {}});
+    assert(!Supported(mixed, true));
     obj.Type = QUEST_OBJECTIVE_MONSTER;
     obj.Amount = -1;
     assert(!Supported(quest));

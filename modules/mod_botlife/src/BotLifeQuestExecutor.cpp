@@ -3,12 +3,14 @@
 #include "BotLifeQuestData.h"
 #include "BotLifeQuestHunt.h"
 #include "BotLifeQuestInteraction.h"
+#include "BotLifeQuestLoot.h"
 #include "BotLifeQuestTurnIn.h"
 #include "BotLifePreparation.h"
 #include "BotLifeProvisioning.h"
 #include "BotLifeRouteClearance.h"
 #include "BotLifeAbilities.h"
 
+#include "Creature.h"
 #include "Log.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -77,7 +79,7 @@ public:
         }
         if (_hadQuest && player.progress == QuestProgress::NotTaken)
             return Fail("quest-removed"); // Never reaccept or reset a lost quest.
-        for (QuestKillObjective const& objective : _data.objectives)
+        for (QuestObjectiveData const& objective : _data.objectives)
         {
             auto const current = player.counters.find(objective.id);
             uint32 const value = current == player.counters.end() ? 0 : current->second;
@@ -118,6 +120,8 @@ public:
                 _preparation.RequireRecovery();
             return ActivityResult::Running; // Next tick rechecks readiness before resuming the preserved route.
         }
+        if (_looting)
+            return UpdateLoot(bot, elapsed);
         if (!_engaged && !_hunt.IsFighting())
         {
             if (_preparation.NeedsService())
@@ -171,7 +175,7 @@ public:
                 if (GetMSTimeDiffToNow(_engagedAt) >= 30000 && _hunt.CancelUnstartedAttack(*_target))
                     RetireTarget();
                 else if (!_hunt.IsAlive(*_target))
-                    RetireTarget();
+                    FinishHuntCombat(bot);
                 else if (GetMSTimeDiffToNow(_engagedAt) >= 30000 && !_hunt.IsFighting())
                     RetireTarget();
                 return ActivityResult::Running; // Combat engine owns the target, even before combat flag.
@@ -221,7 +225,7 @@ public:
             {
                 _travel.Cancel();
                 _travelling = false;
-                if (_hunt.Engage(*_target))
+                if (_hunt.Engage(*_target, false, _data.HasLootObjective() ? &_engagedGuid : nullptr))
                 {
                     CountVisit();
                     _engaged = true;
@@ -359,7 +363,7 @@ public:
             return true; // Re-read native status/counters and choose a fresh target on Update.
         }
         if (_engaged)
-            RetireTarget();
+            FinishHuntCombat(*ai.GetBot());
         return !_travelling || _travel.Resume();
     }
     bool SuspendForDeath(PlayerbotAI&) override
@@ -404,10 +408,71 @@ public:
         // non-combat spline to finish. Do not cancel that spline, but prevent
         // base AI from continuously replacing it before BotLife can acquire
         // the now-idle movement slot.
-        return _travelling || _waitingSafety || _preparation.HoldsNonCombat() || _clearance.HoldsNonCombat();
+        return _travelling || _looting || _waitingSafety || _preparation.HoldsNonCombat() || _clearance.HoldsNonCombat();
     }
 
 private:
+    void FinishHuntCombat(Player& bot)
+    {
+        if (_data.HasLootObjective() && FindQuestCorpse(bot, _engagedGuid, *_target))
+        {
+            _engaged = false;
+            _looting = true;
+            _lootStartedAt = getMSTime();
+            return;
+        }
+        RetireTarget();
+    }
+
+    ActivityResult UpdateLoot(Player& bot, uint32_t elapsed)
+    {
+        Creature* corpse = FindQuestCorpse(bot, _engagedGuid, *_target);
+        if (!corpse)
+            return FinishLoot("loot-corpse-unavailable");
+        if (GetMSTimeDiffToNow(_lootStartedAt) >= 20000)
+            return FinishLoot("loot-timeout");
+        if (_hunt.IsFighting())
+            return ActivityResult::Running;
+        if (corpse->GetLootRecipient() != &bot)
+            return FinishLoot("loot-not-owned");
+
+        QuestSpawn destination = *_target;
+        destination.x = corpse->GetPositionX();
+        destination.y = corpse->GetPositionY();
+        destination.z = corpse->GetPositionZ();
+        _hunt.Safety().SetTarget(0);
+        if (!_hunt.Safety().CanApproach(destination) || (_travel.ControlsMovement() && !_hunt.Safety().RouteSafe()))
+            return FinishLoot("loot-unsafe-route");
+        if (bot.IsWithinDistInMap(corpse, INTERACTION_DISTANCE) && bot.IsWithinLOSInMap(corpse))
+        {
+            _travel.Cancel();
+            return FinishLoot(TryLootQuestItem(bot, *corpse, _data));
+        }
+        if (!_travelling)
+        {
+            TravelTarget point = _context;
+            point.x = destination.x;
+            point.y = destination.y;
+            point.z = destination.z;
+            _travel.Start(point);
+            _travelling = true;
+        }
+        TravelStatus const travel = _travel.Update(elapsed);
+        if (travel == TravelStatus::Failed || travel == TravelStatus::Cancelled || travel == TravelStatus::Arrived)
+            return FinishLoot("loot-out-of-range");
+        return ActivityResult::Running;
+    }
+
+    ActivityResult FinishLoot(char const* reason)
+    {
+        TC_LOG_INFO("playerbots.botlife", "BotLife quest-run guid={} quest={} event=loot spawn={} reason={}",
+            _guid, _data.questId, _target->guid, reason);
+        if (std::strcmp(reason, "loot-storage-refused") == 0)
+            return Fail(reason);
+        RetireTarget();
+        return ActivityResult::Running;
+    }
+
     void CountVisit()
     {
         if (!_visitCounted)
@@ -486,7 +551,8 @@ private:
     {
         _clearance.Cancel();
         _travel.Cancel();
-        _travelling = _engaged = _visitCounted = _detouring = false;
+        _travelling = _engaged = _looting = _visitCounted = _detouring = false;
+        _engagedGuid = {};
         _target.reset();
         _hunt.Safety().SetTarget(0);
     }
@@ -534,6 +600,9 @@ private:
     RouteClearance _clearance;
     TravelTarget _context;
     std::optional<QuestSpawn> _target;
+    ObjectGuid _engagedGuid;
+    uint32 _lootStartedAt = 0;
+    bool _looting = false;
     QuestSpawn _detourPoint{};
     uint32 _detourAttempts = 0;
     bool _detouring = false;

@@ -7,7 +7,7 @@ class Player;
 
 namespace BotLife
 {
-QuestPlanData LoadQuestPlanData(uint32_t questId);
+QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowLoot = false);
 QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const& data, Player& player);
 }
 #endif

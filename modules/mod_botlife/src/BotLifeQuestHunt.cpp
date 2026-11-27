@@ -42,7 +42,7 @@ std::optional<QuestSpawn> QuestHunt::Choose(QuestPlanData const& data, QuestPlay
     double obstructionDistance = std::numeric_limits<double>::infinity();
     std::optional<QuestSpawn> best;
     double distance = std::numeric_limits<double>::infinity();
-    for (QuestKillObjective const& objective : data.objectives)
+    for (QuestObjectiveData const& objective : data.objectives)
     {
         auto const counter = player.counters.find(objective.id);
         if (counter != player.counters.end() && counter->second >= objective.amount)
@@ -148,7 +148,7 @@ bool QuestHunt::CanEngage(QuestSpawn const& target, bool allowAssistance) const
         bot->IsWithinDistInMap(npc, 20.0f) && bot->IsWithinLOSInMap(npc);
 }
 
-bool QuestHunt::Engage(QuestSpawn const& target, bool allowAssistance)
+bool QuestHunt::Engage(QuestSpawn const& target, bool allowAssistance, ObjectGuid* engagedGuid)
 {
     // Caller releases its travel first. Do not let AttackAction clear a foreign
     // point/follow/scripted route while switching to the native combat engine.
@@ -161,6 +161,8 @@ bool QuestHunt::Engage(QuestSpawn const& target, bool allowAssistance)
     CombatAdmission const admission = CanAttemptGroup(*enemy);
     if (!admission.allowed || !Attack(enemy))
         return false; // Existing Playerbots engine owns spells, chase and melee.
+    if (engagedGuid)
+        *engagedGuid = enemy->GetGUID();
     TC_LOG_INFO("playerbots.botlife", "BotLife combat-admission guid={} spawn={} allowed=true reason={} level={} elite={} assistants={}",
         bot->GetGUID().GetCounter(), target.guid, admission.reason, enemy->GetLevel(), enemy->isElite(), AssistanceCount());
     return true;

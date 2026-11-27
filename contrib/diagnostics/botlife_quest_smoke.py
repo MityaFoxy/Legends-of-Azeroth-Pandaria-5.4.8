@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--run", required=True, type=Path)
     parser.add_argument("--config-dir", required=True, type=Path)
     parser.add_argument("--mode", required=True, choices=("diagnostic", "acquire", "travel", "quest"))
+    parser.add_argument("--fresh-quest", action="store_true", help="Start quest mode with a quest never taken")
     parser.add_argument("--destination", help='Travel-only target: "mapId x y z"')
     parser.add_argument("--guid", required=True, type=int)
     parser.add_argument("--quest", required=True, type=int)
@@ -28,6 +29,8 @@ def main():
         parser.error("Require a fresh absolute run path and positive GUID/QuestId")
     if (args.mode == "travel") != bool(args.destination):
         parser.error("--destination is required only for travel mode")
+    if args.fresh_quest and args.mode != "quest":
+        parser.error("--fresh-quest is valid only in quest mode")
     os.umask(0o077)
     args.run.mkdir(parents=True, exist_ok=False)
     logs = args.run / "Logs"
@@ -88,13 +91,14 @@ def main():
         before = quest_state()
         if before and args.mode not in ("travel", "quest"):
             raise RuntimeError("Selected quest already taken or rewarded; choose a different scenario")
-        if args.mode == "quest" and before != f"{args.quest}\t3":
-            raise RuntimeError("Full-cycle smoke requires the already accepted INCOMPLETE quest")
+        if args.mode == "quest" and before != ("" if args.fresh_quest else f"{args.quest}\t3"):
+            raise RuntimeError("Expected an untaken quest" if args.fresh_quest else
+                               "Quest smoke requires the already accepted INCOMPLETE quest")
         character = sql(f"SELECT guid,name,level,map,position_x,position_y,position_z FROM characters WHERE guid={args.guid}")
         if not character:
             raise RuntimeError("Character not found")
         write_json(args.run / "manifest.json", dict(time=stamp(), mode=args.mode, guid=args.guid,
-                   quest=args.quest, character=character, quest_before=before, binary=str(args.binary),
+                   quest=args.quest, fresh_quest=args.fresh_quest, character=character, quest_before=before, binary=str(args.binary),
                    destination=args.destination, objectives_before=objectives(),
                    backup="No database dump requested; native character saves persist"))
         source = Path(__file__).resolve().parents[2]

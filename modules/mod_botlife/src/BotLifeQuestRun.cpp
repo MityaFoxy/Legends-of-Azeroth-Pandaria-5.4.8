@@ -53,7 +53,7 @@ void InitializeQuestRunData()
     {
         auto const [it, inserted] = catalogs.try_emplace(quest);
         if (inserted)
-            it->second = LoadQuestPlanData(quest);
+            it->second = LoadQuestPlanData(quest, roster.size() == 1);
         TC_LOG_WARN("server.loading", "BotLife one-shot QuestRun guid={} quest={} catalog={}; native acceptance, combat and turn-in enabled",
             guid, quest, ToString(it->second.error));
     }

@@ -4,6 +4,7 @@
 #include "BotLifeQuestPlan.h"
 #include "AttackActions.h"
 #include "BotLifeSafety.h"
+#include "ObjectGuid.h"
 #include <unordered_set>
 
 namespace BotLife
@@ -27,7 +28,7 @@ public:
     CombatAdmission CanAttempt(Creature& enemy, bool recovering = false) const;
     CombatAdmission CanAttemptGroup(Creature& enemy, bool recovering = false) const;
     bool CanEngage(QuestSpawn const& target, bool allowAssistance = false) const;
-    bool Engage(QuestSpawn const& target, bool allowAssistance = false);
+    bool Engage(QuestSpawn const& target, bool allowAssistance = false, ObjectGuid* engagedGuid = nullptr);
     bool IsAlive(QuestSpawn const& target) const;
     bool IsFighting() const;
     bool CancelUnstartedAttack(QuestSpawn const& target);

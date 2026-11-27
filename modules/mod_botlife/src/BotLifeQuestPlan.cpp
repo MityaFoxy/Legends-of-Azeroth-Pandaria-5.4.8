@@ -58,7 +58,7 @@ QuestPlan BuildQuestPlan(QuestPlanData const& data, QuestPlayerSnapshot const& p
         return reject(QuestPlanReason::MissingEnder);
 
     bool remaining = false;
-    for (QuestKillObjective const& objective : data.objectives)
+    for (QuestObjectiveData const& objective : data.objectives)
     {
         auto const counter = player.counters.find(objective.id);
         uint32_t const done = acquire || counter == player.counters.end() ? 0 : counter->second;

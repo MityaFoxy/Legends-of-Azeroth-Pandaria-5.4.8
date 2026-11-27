@@ -16,7 +16,7 @@ namespace BotLife
 {
 namespace
 {
-bool Supported(Quest const& quest)
+bool Supported(Quest const& quest, bool allowLoot = false)
 {
     // Stage 4 deliberately excludes event, timed, repeatable, scripted and item-use quests.
     uint32 const unsupportedFlags = QUEST_FLAGS_COMPLETION_AREA_TRIGGER | QUEST_FLAGS_TRACKING_EVENT |
@@ -31,7 +31,9 @@ bool Supported(Quest const& quest)
     std::set<uint32> ids;
     std::set<int8> slots;
     for (QuestObjective const& objective : quest.GetObjectives())
-        if (objective.Type != QUEST_OBJECTIVE_MONSTER || !objective.ID || !objective.ObjectID ||
+        if ((objective.Type != QUEST_OBJECTIVE_MONSTER &&
+            !(allowLoot && quest.GetObjectives().size() == 1 && objective.Type == QUEST_OBJECTIVE_ITEM)) ||
+            !objective.ID || objective.ObjectID <= 0 ||
             objective.Amount <= 0 || objective.Flags || objective.StorageIndex < 0 ||
             objective.StorageIndex >= QUEST_OBJECTIVES_COUNT || !ids.insert(objective.ID).second ||
             !slots.insert(objective.StorageIndex).second)
@@ -40,7 +42,7 @@ bool Supported(Quest const& quest)
 }
 }
 
-QuestPlanData LoadQuestPlanData(uint32_t questId)
+QuestPlanData LoadQuestPlanData(uint32_t questId, bool allowLoot)
 {
     QuestPlanData data;
     data.questId = questId;
@@ -49,10 +51,11 @@ QuestPlanData LoadQuestPlanData(uint32_t questId)
         return data;
     data.title = quest->GetLogTitle();
     data.error = QuestPlanReason::UnsupportedQuest;
-    if (!Supported(*quest))
+    if (!Supported(*quest, allowLoot))
         return data;
     for (QuestObjective const& objective : quest->GetObjectives())
-        data.objectives.push_back({objective.ID, objective.ObjectID, uint32(objective.Amount), {}});
+        data.objectives.push_back({objective.ID, uint32(objective.ObjectID), uint32(objective.Amount), {},
+            objective.Type == QUEST_OBJECTIVE_ITEM ? QuestObjectiveKind::Loot : QuestObjectiveKind::Kill});
 
     std::set<uint32> starters, enders, entries;
     for (auto const& relation : *sObjectMgr->GetCreatureQuestRelationMapHACK())
@@ -62,16 +65,44 @@ QuestPlanData LoadQuestPlanData(uint32_t questId)
         enders.insert(relation.second);
     entries.insert(starters.begin(), starters.end());
     entries.insert(enders.begin(), enders.end());
-    // Native KillCredit aliases matter: the credit entry need not itself have a spawn.
-    std::unordered_map<uint32, std::set<uint32>> sources;
-    for (auto const& [entry, creature] : *sObjectMgr->GetCreatureTemplates())
-        for (QuestKillObjective const& objective : data.objectives)
-            if (entry == objective.entry || std::find(std::begin(creature.KillCredit),
-                std::end(creature.KillCredit), objective.entry) != std::end(creature.KillCredit))
+    std::unordered_map<uint32_t, std::set<uint32_t>> sources;
+    if (data.HasLootObjective())
+    {
+        QuestObjectiveData const& objective = data.objectives.front();
+        // Index direct quest drops. The live loot view decides what actually rolled.
+        if (QueryResult drops = WorldDatabase.PQuery(
+            "SELECT DISTINCT t.entry FROM creature_loot_template l "
+            "JOIN creature_template t ON t.lootid=l.entry "
+            "WHERE l.item={} AND l.ChanceOrQuestChance<0 AND l.mincountOrRef>0 "
+            "AND l.groupid=0 AND (l.lootmode=0 OR (l.lootmode & 1)) AND t.rank=0 "
+            "AND NOT EXISTS (SELECT 1 FROM conditions k WHERE k.SourceTypeOrReferenceId=1 "
+            "AND k.SourceGroup=l.entry AND k.SourceEntry=l.item) LIMIT 257", objective.entry))
+        {
+            if (drops->GetRowCount() > 256)
             {
+                data.error = QuestPlanReason::DataLimit;
+                return data;
+            }
+            do
+            {
+                uint32 const entry = drops->Fetch()[0].GetUInt32();
                 sources[objective.id].insert(entry);
                 entries.insert(entry);
-            }
+            } while (drops->NextRow());
+        }
+    }
+    else
+    {
+        // Native KillCredit aliases need not have a spawn of their own.
+        for (auto const& [entry, creature] : *sObjectMgr->GetCreatureTemplates())
+            for (QuestObjectiveData const& objective : data.objectives)
+                if (entry == objective.entry || std::find(std::begin(creature.KillCredit),
+                    std::end(creature.KillCredit), objective.entry) != std::end(creature.KillCredit))
+                {
+                    sources[objective.id].insert(entry);
+                    entries.insert(entry);
+                }
+    }
     // Bound startup work; never silently publish a truncated plan.
     if (entries.size() > 256)
     {
@@ -112,7 +143,7 @@ QuestPlanData LoadQuestPlanData(uint32_t questId)
             data.starters.push_back(candidate);
         if (enders.count(spawn->id))
             data.enders.push_back(candidate);
-        for (QuestKillObjective& objective : data.objectives)
+        for (QuestObjectiveData& objective : data.objectives)
             if (sources[objective.id].count(spawn->id))
                 objective.candidates.push_back(candidate);
     } while (result->NextRow());
@@ -134,7 +165,7 @@ QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const& data, Player& player)
         return snapshot;
     Quest const* quest = sObjectMgr->GetQuestTemplate(data.questId);
     // No retained core pointers, and fail closed if objectives were reloaded.
-    if (!quest || !Supported(*quest) || quest->GetObjectives().size() != data.objectives.size())
+    if (!quest || !Supported(*quest, data.HasLootObjective()) || quest->GetObjectives().size() != data.objectives.size())
     {
         snapshot.eligibility = QuestPlanReason::CatalogChanged;
         return snapshot;
@@ -142,8 +173,10 @@ QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const& data, Player& player)
     for (size_t i = 0; i < data.objectives.size(); ++i)
     {
         QuestObjective const& objective = quest->GetObjectives()[i];
-        QuestKillObjective const& cached = data.objectives[i];
-        if (objective.ID != cached.id || objective.ObjectID != cached.entry || uint32(objective.Amount) != cached.amount)
+        QuestObjectiveData const& cached = data.objectives[i];
+        uint8 const expectedType = cached.kind == QuestObjectiveKind::Loot ? QUEST_OBJECTIVE_ITEM : QUEST_OBJECTIVE_MONSTER;
+        if (objective.Type != expectedType || objective.ID != cached.id ||
+            uint32(objective.ObjectID) != cached.entry || uint32(objective.Amount) != cached.amount)
         {
             snapshot.eligibility = QuestPlanReason::CatalogChanged;
             return snapshot;

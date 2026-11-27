@@ -46,6 +46,7 @@ constexpr uint32 QUEST_FLAGS_PARTY_ACCEPT=8, MAX_QUEST_LOG_SIZE=25;
 constexpr uint32 BOT_STATE_COMBAT=1;
 constexpr uint32 BOT_STATE_NON_COMBAT=0;
 constexpr uint32 IDLE_MOTION_TYPE=0;
+constexpr float INTERACTION_DISTANCE=5;
 constexpr uint32 UNIT_FIELD_MIN_DAMAGE=0, UNIT_FIELD_MAX_DAMAGE=1;
 constexpr uint32 UNIT_FIELD_MIN_OFF_HAND_DAMAGE=2, UNIT_FIELD_MAX_OFF_HAND_DAMAGE=3;
 enum WeaponAttackType { BASE_ATTACK, OFF_ATTACK };
@@ -85,6 +86,9 @@ struct Config {
 } config;
 auto* sConfigMgr=&config;
 struct Creature;
+struct Player;
+struct Guid { uint32 value=0; uint32 GetCounter() const { return value; } };
+using ObjectGuid=Guid;
 struct Map {
     std::unordered_map<uint32,Creature*> creatures;
     Creature* GetCreatureBySpawnId(uint32 id) { auto i=creatures.find(id); return i==creatures.end()?nullptr:i->second; }
@@ -99,6 +103,10 @@ struct Creature : DamageStats {
     template<class T> bool IsHostileTo(T*) const { return hostile; }
     float x=0,y=0,z=0;
     std::set<uint32> taps;
+    uint32 guid=11;
+    Player* recipient=nullptr;
+    Guid GetGUID() const { return {guid}; }
+    Player* GetLootRecipient() const { return recipient; }
     bool IsAlive() const { return alive; } bool IsInWorld() const { return world; }
     bool IsInCombat() const { return combat; } bool IsInEvadeMode() const { return evade; }
     bool isElite() const { return elite; } uint32 GetOwnerGUID() const { return owner; }
@@ -108,7 +116,6 @@ struct Creature : DamageStats {
     bool hasInvolvedQuest(uint32) const { return involved; } bool hasQuest(uint32) const { return offers; }
     float GetPositionX() const { return x; } float GetPositionY() const { return y; } float GetPositionZ() const { return z; }
 };
-struct Guid { uint32 value=6; uint32 GetCounter() const { return value; } };
 struct Player : DamageStats {
     uint32 guid=6;
     Map map;
@@ -116,7 +123,7 @@ struct Player : DamageStats {
     Motion* GetMotionMaster() { return &motion; }
     bool world=true,removing=false,group=false,combat=false,casting=false,autorepeat=false,mounted=false;
     bool visible=true,los=true,validAttack=true,interact=true,eligibleReward=true,inventory=true,rewardEffect=true;
-    uint32 state=0,rewards=0,accepts=0,checks=0,inventoryChecks=0;
+    uint32 state=0,rewards=0,accepts=0,checks=0,inventoryChecks=0,lootAttempts=0;
     float health=100,mana=100;
     bool usesMana=false;
     bool usableOffhand=false;
@@ -195,7 +202,16 @@ bool IsEligibleBot(uint32 guid) { return allowed && eligible.count(guid); }
 uint32 EligibleBotCount() { return allowed ? eligible.size() : 0; }
 char const* ToString(InterruptReason) { return "cancelled"; }
 QuestPlayerSnapshot ReadQuestPlayer(QuestPlanData const&,Player& bot) { return bot.snapshot; }
-QuestPlanData LoadQuestPlanData(uint32) { return {}; }
+QuestPlanData LoadQuestPlanData(uint32, bool=false) { return {}; }
+Creature* FindQuestCorpse(Player& bot, ObjectGuid guid, QuestSpawn const& target) {
+    auto* npc=bot.map.GetCreatureBySpawnId(target.guid);
+    return npc && !npc->alive && npc->guid==guid.value ? npc : nullptr;
+}
+char const* TryLootQuestItem(Player& bot, Creature&, QuestPlanData const& data) {
+    ++bot.lootAttempts;
+    ++bot.snapshot.counters[data.objectives.front().id];
+    return "looted";
+}
 bool TryAcceptQuest(Player& bot,QuestPlanData const&,QuestSpawn const&,char const*& reason) {
     ++bot.accepts; bot.snapshot.progress=QuestProgress::Active; reason="accepted"; return true;
 }
@@ -537,6 +553,19 @@ int main() {
       assert(s.bot.checks==1 && s.bot.inventoryChecks==1);
       for(int i=0;i<5;++i) assert(s.tick()==ActivityResult::Completed);
       assert(s.bot.rewards==1 && s.bot.accepts==0); }
+    { Scene s; s.data.objectives[0].kind=QuestObjectiveKind::Loot; s.enemy.recipient=&s.bot;
+      s.start(); s.tick(); assert(s.ai.attacks==1 && !s.bot.lootAttempts);
+      s.bot.combat=true; s.run->Pause(s.ai); s.enemy.alive=false;
+      s.bot.combat=false; s.bot.victim=nullptr; s.ai.state=0; assert(s.run->Resume(s.ai));
+      assert(s.run->HoldsNonCombat());
+      assert(s.tick()==ActivityResult::Running && s.run->ControlsMovement() && !s.bot.lootAttempts);
+      s.bot.snapshot.x=s.enemy.x;
+      assert(s.tick()==ActivityResult::Running && s.bot.lootAttempts==1 && s.bot.snapshot.counters[1]==1);
+      s.tick(); assert(s.bot.lootAttempts==1 && !s.bot.rewards); }
+    { Scene s; s.data.objectives[0].kind=QuestObjectiveKind::Loot;
+      s.start(); s.tick(); s.enemy.alive=false; s.bot.victim=nullptr; s.ai.state=0;
+      assert(s.run->Resume(s.ai));
+      s.tick(); assert(!s.bot.lootAttempts && s.bot.snapshot.counters.empty()); }
     // New quest acquisition is one stage, never the terminal result.
     { Scene s; s.bot.snapshot.progress=QuestProgress::NotTaken; s.bot.snapshot.x=100; s.start();
       assert(s.tick()==ActivityResult::Running && s.bot.accepts==1 && !s.bot.rewards);

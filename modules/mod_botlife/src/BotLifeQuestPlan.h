@@ -25,10 +25,13 @@ struct QuestSpawn
     float x = 0, y = 0, z = 0;
 };
 
-struct QuestKillObjective
+enum class QuestObjectiveKind { Kill, Loot };
+
+struct QuestObjectiveData
 {
     uint32_t id = 0, entry = 0, amount = 0;
     std::vector<QuestSpawn> candidates;
+    QuestObjectiveKind kind = QuestObjectiveKind::Kill;
 };
 
 // Owned values, shared read-only after startup. Never retains Quest/Creature pointers.
@@ -38,7 +41,9 @@ struct QuestPlanData
     std::string title;
     QuestPlanReason error = QuestPlanReason::MissingQuest;
     std::vector<QuestSpawn> starters, enders;
-    std::vector<QuestKillObjective> objectives;
+    std::vector<QuestObjectiveData> objectives;
+
+    bool HasLootObjective() const { return !objectives.empty() && objectives.front().kind == QuestObjectiveKind::Loot; }
 };
 
 struct QuestPlayerSnapshot

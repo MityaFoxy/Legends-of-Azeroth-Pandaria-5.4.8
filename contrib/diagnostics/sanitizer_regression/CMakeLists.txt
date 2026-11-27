@@ -292,6 +292,10 @@ set_tests_properties(botlife_quest_acquire_regression PROPERTIES
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME botlife_quest_run_regression COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_run_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+add_test(NAME botlife_quest_loot_regression COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/botlife_quest_loot_regression.py ${LOA_SOURCE_DIR} ${CMAKE_CXX_COMPILER})
+set_tests_properties(botlife_quest_loot_regression PROPERTIES
+  ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 set_tests_properties(botlife_quest_run_regression PROPERTIES
   ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1;ASAN_OPTIONS=halt_on_error=1:detect_leaks=1")
 add_test(NAME botlife_quest_group_regression COMMAND ${Python3_EXECUTABLE}
